@@ -162,7 +162,7 @@ func (e *Engine) Shutdown() {
 // NewAgent 创建一个新的对话 Agent。
 // systemPrompt 为空时不注入 system 消息。
 func (e *Engine) NewAgent(systemPrompt string) *runtime.Agent {
-	return e.runtime.New(systemPrompt)
+	return e.runtime.NewAgent(systemPrompt)
 }
 
 // Skills 返回当前对 LLM 可见的 skill 摘要列表。

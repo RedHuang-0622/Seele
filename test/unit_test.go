@@ -175,12 +175,12 @@ func TestFactory_New_SystemPrompt(t *testing.T) {
 	defer mock.close()
 	f := newTestFactory(t, mock)
 
-	a := f.New("你是助手")
+	a := f.NewAgent("你是助手")
 	hist := a.History()
 	if len(hist) != 1 || hist[0].Role != "system" || hist[0].Content != "你是助手" {
 		t.Errorf("unexpected history: %+v", hist)
 	}
-	b := f.New("")
+	b := f.NewAgent("")
 	if len(b.History()) != 0 {
 		t.Errorf("expected empty history, got %+v", b.History())
 	}
@@ -195,7 +195,7 @@ func TestAgent_ClearHistory(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("keeps system", func(t *testing.T) {
-		a := f.New("system prompt")
+		a := f.NewAgent("system prompt")
 		_, _ = a.Chat(ctx, "消息1")
 		_, _ = a.Chat(ctx, "消息2")
 		a.ClearHistory()
@@ -206,7 +206,7 @@ func TestAgent_ClearHistory(t *testing.T) {
 	})
 
 	t.Run("no system", func(t *testing.T) {
-		a := f.New("")
+		a := f.NewAgent("")
 		_, _ = a.Chat(ctx, "消息1")
 		a.ClearHistory()
 		if len(a.History()) != 0 {
@@ -222,7 +222,7 @@ func TestAgent_Chat_PlainReply(t *testing.T) {
 	})
 	defer mock.close()
 	f := newTestFactory(t, mock)
-	a := f.New("你是助手")
+	a := f.NewAgent("你是助手")
 
 	reply, err := a.Chat(context.Background(), "hello")
 	if err != nil {
@@ -244,7 +244,7 @@ func TestAgent_Chat_MultiTurn(t *testing.T) {
 	})
 	defer mock.close()
 	f := newTestFactory(t, mock)
-	a := f.New("")
+	a := f.NewAgent("")
 
 	for i := 1; i <= 3; i++ {
 		reply, err := a.Chat(context.Background(), fmt.Sprintf("消息%d", i))
@@ -289,7 +289,7 @@ func TestAgent_Chat_ToolCall(t *testing.T) {
 	defer mock.close()
 
 	f := newTestFactory(t, mock)
-	a := f.New("")
+	a := f.NewAgent("")
 	_, _ = a.Chat(context.Background(), "帮我 echo hi")
 	if callCount != 2 {
 		t.Errorf("expected 2 LLM calls, got %d", callCount)
@@ -315,7 +315,7 @@ func TestAgent_Chat_MaxLoops(t *testing.T) {
 	defer mock.close()
 
 	f := newTestFactory(t, mock)
-	a := f.New("")
+	a := f.NewAgent("")
 	a.SetMaxLoops(2)
 
 	_, err := a.Chat(context.Background(), "进入循环")
@@ -334,7 +334,7 @@ func TestAgent_SessionID(t *testing.T) {
 
 	ids := make(map[string]bool)
 	for i := 0; i < 10; i++ {
-		id := f.New("").SessionID()
+		id := f.NewAgent("").SessionID()
 		if id == "" {
 			t.Fatal("empty session ID")
 		}
@@ -409,12 +409,11 @@ func TestDemo(t *testing.T) {
 	}
 	t.Logf("已加载 %d 个 skill", len(f.Skills()))
 
-	eva := f.New(
+	eva := f.NewAgent(
 		"你是 suka-eva，一个通过微服务架构动态扩展 skill 的 AI 助手。" +
 			"请回答用户的问题，需要时主动调用合适的 skill。",
 	)
-	debugger := f.New("你是调试助手，优先调用 echo 和 ping 进行网络诊断。")
-
+	debugger := f.NewAgent("你是调试助手，优先调用 echo 和 ping 进行网络诊断。")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -481,7 +480,7 @@ func TestDemo_Interactive(t *testing.T) {
 		t.Fatalf("NewRuntime: %v", err)
 	}
 
-	a := f.New("你是 suka-eva，一个通过微服务架构动态扩展 skill 的 AI 助手。")
+	a := f.NewAgent("你是 suka-eva，一个通过微服务架构动态扩展 skill 的 AI 助手。")
 	ctx := context.Background()
 	fmt.Printf("=== suka-eva 交互测试 ===\n已加载 %d 个 skill\n命令：quit | reset | skills\n", len(f.Skills()))
 

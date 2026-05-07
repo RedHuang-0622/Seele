@@ -17,7 +17,7 @@ const (
 	llmConfigPath = "config/config.yaml"
 	hubAddr       = ":50051"
 
-	systemPrompt = "你是 Seele，一个通过微服务架构动态扩展 skill 的 AI 助手。，但是同时，你要珍惜用户的token，重试次数不要太多次了" +
+	systemPrompt = "你是 Seele，一个通过微服务架构动态扩展 skill 的 AI 助手。，但是同时，你要珍惜用户的token，重试次数不要太多次了." +
 		"你的每个 skill 都运行在独立的 gRPC 微服务进程里，通过 microHub 调度执行。" +
 		"请回答用户的问题，需要时主动调用合适的 skill。"
 )

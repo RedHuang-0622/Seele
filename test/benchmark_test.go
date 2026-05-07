@@ -42,7 +42,7 @@ func BenchmarkFactory_New(b *testing.B) {
 	f := newBenchFactory(b, plainResponder("ok"))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = f.New("system prompt")
+		_ = f.NewAgent("system prompt")
 	}
 }
 
@@ -50,7 +50,7 @@ func BenchmarkFactory_New_Parallel(b *testing.B) {
 	f := newBenchFactory(b, plainResponder("ok"))
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = f.New("prompt")
+			_ = f.NewAgent("prompt")
 		}
 	})
 }
@@ -91,7 +91,7 @@ func BenchmarkFactory_RetireRestore_Parallel(b *testing.B) {
 // BenchmarkAgent_Chat_SingleTurn 单轮对话端到端延迟（本地 mock，无网络）
 func BenchmarkAgent_Chat_SingleTurn(b *testing.B) {
 	f := newBenchFactory(b, plainResponder("这是回复"))
-	a := f.New("你是助手")
+	a := f.NewAgent("你是助手")
 	ctx := context.Background()
 	b.ResetTimer()
 
@@ -111,7 +111,7 @@ func BenchmarkAgent_Chat_Parallel(b *testing.B) {
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
-		a := f.New("system")
+		a := f.NewAgent("system")
 		for pb.Next() {
 			reply, err := a.Chat(ctx, "ping")
 			if err != nil || reply == "" {
@@ -128,7 +128,7 @@ func BenchmarkAgent_Chat_LongHistory(b *testing.B) {
 	ctx := context.Background()
 
 	const historyDepth = 18
-	base := f.New("system")
+	base := f.NewAgent("system")
 	for i := 0; i < historyDepth; i++ {
 		_, _ = base.Chat(ctx, fmt.Sprintf("预热消息%d", i))
 	}

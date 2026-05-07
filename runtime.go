@@ -51,9 +51,9 @@ func NewRuntime(llmCfg LLMConfig, hub *hubbase.BaseHub, timeOut time.Duration) (
 
 // ── Agent 工厂方法 ────────────────────────────────────────────────
 
-// New 创建一个新 Agent。
+// NewAgent 创建一个新 Agent。
 // systemPrompt 为空时不注入 system 消息。
-func (f *Runtime) New(systemPrompt string) *Agent {
+func (f *Runtime) NewAgent(systemPrompt string) *Agent {
 	a := &Agent{
 		runtime:   f,
 		sessionID: fmt.Sprintf("sess_%d", time.Now().UnixNano()),
