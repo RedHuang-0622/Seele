@@ -131,9 +131,10 @@ type chatCompletionStreamRequest struct {
 
 // streamDelta 对应一个 SSE data 帧中 choices[0].delta 的字段。
 type streamDelta struct {
-	Role      string `json:"role,omitempty"`
-	Content   string `json:"content,omitempty"`
-	ToolCalls []struct {
+	Role             string `json:"role,omitempty"`
+	Content          string `json:"content,omitempty"`
+	ReasoningContent string `json:"reasoning_content,omitempty"` // 思索文段
+	ToolCalls        []struct {
 		Index    int    `json:"index"`
 		ID       string `json:"id,omitempty"`
 		Type     string `json:"type,omitempty"`
@@ -222,7 +223,8 @@ type sseState struct {
 
 	// sb 累积纯文本回复，每个文本 delta 追加进来。
 	sb strings.Builder
-
+	// reasoningSB 累积思索文段，按需返回给调用方。
+	reasoningSB strings.Builder // 累积思索文段，按需返回给调用方
 	// isToolMode 标记当前流是否为 tool_call 模式。
 	// 一旦收到第一个 tool_call 帧就锁定为 true，不可逆。
 	// 锁定后忽略所有文本帧（正常情况下也不会再有文本帧）。
@@ -287,7 +289,9 @@ func (c *chatClient) processFrame(payload string, state *sseState, onChunk func(
 		state.sb.WriteString(delta.Content)
 		onChunk(delta.Content) // 实时推给调用方，用户立刻看到这个 token
 	}
-
+	if delta.ReasoningContent != "" {
+		state.reasoningSB.WriteString(delta.ReasoningContent)
+	}
 	return nil
 }
 
@@ -316,12 +320,12 @@ func (c *chatClient) completeStream(
 	messages []Message,
 	tools []Tool,
 	onChunk func(delta string),
-) (content string, toolCalls []ToolCall, err error) {
+) (content string, reasoning_content string, toolCalls []ToolCall, err error) {
 
 	// 1. 建立 SSE 连接
 	body, err := c.doStreamRequest(ctx, messages, tools)
 	if err != nil {
-		return "", nil, fmt.Errorf("chatClient stream: %w", err)
+		return "", "", nil, fmt.Errorf("chatClient stream: %w", err)
 	}
 	defer body.Close()
 
@@ -342,7 +346,7 @@ func (c *chatClient) completeStream(
 			payload := strings.TrimPrefix(line, "data: ")
 			if payload != "" {
 				if err := c.processFrame(payload, state, onChunk); err != nil {
-					return "", nil, fmt.Errorf("chatClient stream: %w", err)
+					return "", "", nil, fmt.Errorf("chatClient stream: %w", err)
 				}
 			}
 		}
@@ -351,13 +355,13 @@ func (c *chatClient) completeStream(
 			break
 		}
 		if readErr != nil {
-			return "", nil, fmt.Errorf("chatClient stream: read SSE: %w", readErr)
+			return "", "", nil, fmt.Errorf("chatClient stream: read SSE: %w", readErr)
 		}
 	}
 
 	// 3. 根据模式返回结果
 	if state.isToolMode {
-		return "", buildToolCalls(state.tcMap), nil
+		return "", state.reasoningSB.String(), buildToolCalls(state.tcMap), nil
 	}
-	return state.sb.String(), nil, nil
+	return state.sb.String(), state.reasoningSB.String(), nil, nil
 }

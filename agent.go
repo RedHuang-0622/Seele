@@ -79,9 +79,10 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 		}
 
 		a.history = append(a.history, Message{
-			Role:      "assistant",
-			Content:   msg.Content,
-			ToolCalls: msg.ToolCalls,
+			Role:             "assistant",
+			Content:          msg.Content,
+			ReasoningContent: msg.ReasoningContent,
+			ToolCalls:        msg.ToolCalls,
 		})
 
 		if len(msg.ToolCalls) == 0 {
@@ -104,11 +105,11 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 				elapsed := time.Since(start).Milliseconds()
 
 				if dispErr != nil {
-					log.Printf("[Agent %s] tool_call %s FAILED (%dms): %v",
+					log.Printf("[agent.go_Chat_line107] AgentSessionID:[%s] tool_call %s FAILED (%dms): %v",
 						a.sessionID, tc.Function.Name, elapsed, dispErr)
 					results[i] = dispatchResult{tc, fmt.Sprintf(`{"error":%q}`, dispErr.Error())}
 				} else {
-					log.Printf("[Agent %s] tool_call %s OK (%dms)",
+					log.Printf("[agent.go_Chat_line111] AgentSessionID:[%s] tool_call %s OK (%dms)",
 						a.sessionID, tc.Function.Name, elapsed)
 					results[i] = dispatchResult{tc, result}
 				}
@@ -128,7 +129,7 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 		tools = a.runtime.tools()
 	}
 
-	return "", fmt.Errorf("agent[%s]: reached maxLoops (%d) without a final text reply",
+	return "", fmt.Errorf("[agent.go_Chat_line131] AgentSessionID:[%s] reached maxLoops (%d) without a final text reply",
 		a.sessionID, a.maxLoops)
 }
 
@@ -149,30 +150,32 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 
 	for loop := 0; loop < a.maxLoops; loop++ {
 		// 先开启接收的循环，防止这轮loop的内容跳过开头部分
-		fullContent, toolCalls, err := a.runtime.llm.completeStream(
+		fullContent, reasoningContent, toolCalls, err := a.runtime.llm.completeStream(
 			ctx, a.history, tools,
 			func(delta string) {
 				onChunk(delta)
 			},
 		)
 		if err != nil {
-			return "", fmt.Errorf("agent[%s] stream loop %d: %w", a.sessionID, loop, err)
+			return "", fmt.Errorf("[agent.go_ChatStream_line160] AgentSessionID:[%s] stream loop %d: %w", a.sessionID, loop, err)
 		}
 
 		// ── 无 tool_calls → 最终文本回复，流已经推完了 ───────────────
 		if len(toolCalls) == 0 {
 			a.history = append(a.history, Message{
-				Role:    "assistant",
-				Content: fullContent,
+				Role:             "assistant",
+				Content:          fullContent,
+				ReasoningContent: reasoningContent,
 			})
 			return fullContent, nil
 		}
 
 		// ── 有 tool_calls → 并发 dispatch，等全部完成再追加 history ───
 		a.history = append(a.history, Message{
-			Role:      "assistant",
-			Content:   "",
-			ToolCalls: toolCalls,
+			Role:             "assistant",
+			Content:          "",
+			ReasoningContent: reasoningContent,
+			ToolCalls:        toolCalls,
 		})
 
 		type dispatchResult struct {
@@ -191,11 +194,11 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 				elapsed := time.Since(start).Milliseconds()
 
 				if dispErr != nil {
-					log.Printf("[Agent %s] tool_call %s FAILED (%dms): %v",
+					log.Printf("[agent.go_ChatStream_line197] AgentSessionID:[%s] tool_call %s FAILED (%dms): %v",
 						a.sessionID, tc.Function.Name, elapsed, dispErr)
 					results[i] = dispatchResult{tc, fmt.Sprintf(`{"error":%q}`, dispErr.Error())}
 				} else {
-					log.Printf("[Agent %s] tool_call %s OK (%dms)",
+					log.Printf("[agent.go_ChatStream_line204] AgentSessionID:[%s] tool_call %s OK (%dms)",
 						a.sessionID, tc.Function.Name, elapsed)
 					results[i] = dispatchResult{tc, result}
 				}
@@ -215,6 +218,6 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 		tools = a.runtime.tools()
 	}
 
-	return "", fmt.Errorf("agent[%s]: reached maxLoops (%d) without a final text reply",
+	return "", fmt.Errorf("[agent.go_ChatStream_line218] AgentSessionID:[%s] reached maxLoops (%d) without a final text reply",
 		a.sessionID, a.maxLoops)
 }

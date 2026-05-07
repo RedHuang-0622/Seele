@@ -7,11 +7,12 @@ package Seele
 // Message 是 LLM 对话历史中的一条记录。
 // Role: "system" | "user" | "assistant" | "tool"
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"` // role="tool" 时使用
-	Name       string     `json:"name,omitempty"`         // role="tool" 时填工具名
+	Role             string     `json:"role"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"` // 思索文段
+	Content          string     `json:"content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"` // role="tool" 时使用
+	Name             string     `json:"name,omitempty"`         // role="tool" 时填工具名
 }
 
 // ToolCall 是 LLM assistant 消息中发起的工具调用。
