@@ -60,7 +60,7 @@ func RunREPL(ctx context.Context, opts REPLOptions) {
 		line := strings.TrimSpace(scanner.Text())
 		var err error
 		switch line {
-		case "", "exit", "quit":
+		case "exit", "quit":
 			fmt.Fprintln(out, "Bye.")
 			return
 		case "/help":

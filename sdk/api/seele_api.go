@@ -116,6 +116,12 @@ func New(opts Options) (*Engine, error) {
 		return nil, fmt.Errorf("seele/api: registry init %q: %w", opts.RegistryPath, err)
 	}
 
+	// ── 启动时探活，标记不可达的地址为 offline ──────────
+	registry.ProbeAllOnStartup()
+
+	// ── 启动后台探活，定期尝试恢复 offline 的地址 ───────
+	registry.StartHealthProbe(context.Background(), 15*time.Second)
+
 	// 2. 启动 Hub
 	hub := hubbase.New(&registryRouter{})
 	eng := &Engine{
@@ -124,7 +130,7 @@ func New(opts Options) (*Engine, error) {
 		shutdown: make(chan struct{}),
 	}
 	go func() {
-		if err := hub.ServeAsync(opts.HubAddr, 0); err != nil {
+		if err := hub.ServeAsync(opts.HubAddr, 5); err != nil {
 			opts.Logger.Errorf("hub exited: %v", err)
 		}
 	}()
@@ -313,28 +319,43 @@ type registryRouter struct{}
 func (r *registryRouter) ServiceName() string { return "seele-sdk-hub" }
 
 func (r *registryRouter) Execute(req *pb.ToolRequest) ([]hubbase.DispatchTarget, error) {
-	t, ok := registry.SelectToolByMethod(req.Method)
-	if !ok {
-		return nil, fmt.Errorf("no tool registered for method=%q", req.Method)
+	tools := registry.GetOnlineTools()
+	if req == nil {
+		return nil, nil
 	}
-	return []hubbase.DispatchTarget{
-		{Addr: t.Addr, Request: req, Stream: true},
-	}, nil
+	for _, t := range tools {
+		if t.Method == req.Method {
+			return []hubbase.DispatchTarget{
+				{Addr: t.Addr, Request: req, Stream: true},
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("no online tool for method=%q", req.Method)
 }
 
 func (r *registryRouter) OnResults(results []hubbase.DispatchResult) {
-	for _, res := range results {
-		if !res.AllOK() {
-			log.Printf("[seele/api hub] dispatch error addr=%s: %v", res.Target.Addr, res.Err)
+	for _, ri := range results {
+		// 如果 ri.Err 不为空，说明 gRPC 层面的连接彻底断了（比如你日志里的 wsarecv 错误）
+		if ri.Err != nil {
+			log.Printf("[%s] ✗ addr=%s 关键错误，尝试强制下线: %v", r.ServiceName(), ri.Target.Addr, ri.Err)
+			registry.MarkOffline(ri.Target.Addr)
+			continue
+		}
+
+		for _, resp := range ri.Responses {
+			// 如果业务逻辑返回错误（比如 Tool 内部逻辑报错但连接还在）
+			// 你可以根据需求决定是否要下线，通常保持在线即可
+			if resp.Status != "ok" && resp.Status != "partial" {
+				log.Printf("[%s] ✗ tool=%s 业务报错: %s", r.ServiceName(), resp.ToolName, resp.Status)
+			}
 		}
 	}
 }
-
 func (r *registryRouter) Addrs() []string {
-	tools := registry.GetAllTools()
-	addrs := make([]string, len(tools))
-	for i, t := range tools {
-		addrs[i] = t.Addr
+	tools := registry.GetOnlineTools()
+	addrs := make([]string, 0, len(tools))
+	for _, t := range tools {
+		addrs = append(addrs, t.Addr)
 	}
 	return addrs
 }

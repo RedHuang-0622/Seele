@@ -88,9 +88,12 @@ func (f *Runtime) Restore(name string) {
 // Skills 返回当前对 LLM 可见的 skill 摘要列表（已排除 retired 项）。
 func (f *Runtime) Skills() []SkillInfo {
 	retired := f.retiredSnapshot()
-	all := registry.GetAllTools()
+	all := registry.GetOnlineTools()
 	result := make([]SkillInfo, 0, len(all))
 	for _, t := range all {
+		if registry.IsOffline(t.Addr) {
+			continue
+		}
 		if _, blocked := retired[t.Name]; blocked {
 			continue
 		}
@@ -109,17 +112,17 @@ func (f *Runtime) Skills() []SkillInfo {
 // tools 构建当前对 LLM 可见的工具列表，每次调用都实时读取 registry。
 func (f *Runtime) tools() []Tool {
 	retired := f.retiredSnapshot()
-	all := registry.GetAllTools()
+	all := registry.GetOnlineTools()
 	result := make([]Tool, 0, len(all))
 	for _, t := range all {
+		if registry.IsOffline(t.Addr) {
+			continue
+		}
 		if _, blocked := retired[t.Name]; blocked {
 			continue
 		}
 		// Method 优先使用 registry 的 Method 字段，回退到 method
 		desc := t.Method
-		if desc == "" {
-			desc = t.Method
-		}
 		result = append(result, Tool{
 			Type: "function",
 			Function: ToolFunction{
