@@ -2,15 +2,7 @@
 
 ## 快速索引
 
-| 场景 | 示例文件 |
-|------|---------|
-| Hello World | `01_quick_start/main.go` |
-| 挂载 MCP Server | `02_mcp_server/main.go` |
-| 流式输出 + 历史管理 | `03_streaming_chat/main.go` |
-| 多 Agent / AgentPool | `04_multi_agent/main.go` |
-| 动态工具管理 | `05_dynamic_tools/main.go` |
-| 封装为 HTTP 服务 | `06_web_service/main.go` |
-| 生产级完整示例 | `07_production/main.go` |
+example_implement/*
 
 ---
 
@@ -20,8 +12,8 @@
 
 ```yaml
 agent:
-  ai_url:     "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  ai_name:    "qwen-plus"
+  ai_url:     ""
+  ai_name:    ""
   ai_api_key: "sk-xxxx"
   max_tokens: 4096
   timeout:    60
