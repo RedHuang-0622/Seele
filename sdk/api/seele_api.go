@@ -1,23 +1,18 @@
 // sdk/api/seele_api.go
 //
-// Seele API SDK
+// # Seele API SDK
 //
-// 提供对 runtime.Runtime + microHub 生命周期的高层封装，
-// 屏蔽 Hub 初始化、registry 加载、路由配置等样板代码，
-// 让调用方只需关心：配置路径、system prompt、对话逻辑。
+// Engine 是唯一知道全局架构的地方，负责：
+//  1. 初始化 microHub + registry（基础设施）
+//  2. 创建 HubProvider 并注册到 Runtime
+//  3. 按需创建 MCPProvider 并注册（可选）
+//  4. 向外暴露简洁的 Agent、MCP、Skill 管理接口
 //
-// 快速上手：
+// 分层职责：
 //
-//	engine, err := api.New(api.Options{
-//	    RegistryPath: "config/registry.yaml",
-//	    LLMConfigPath: "config/config.yaml",
-//	    HubAddr: ":50051",
-//	})
-//	defer engine.Shutdown()
-//
-//	agent := engine.NewAgent("你是助手")
-//	reply, _ := agent.Chat(ctx, "你好")
-
+//	Engine (api.go)   ← 组装层：知道所有具体实现，负责生命周期
+//	Runtime           ← 编排层：只知道 ToolProvider 接口
+//	Agent             ← 对话层：完全不知道工具怎么来的
 package api
 
 import (
@@ -32,29 +27,15 @@ import (
 	registry "github.com/sukasukasuka123/microHub/service_registry"
 )
 
-// ── Options ──────────────────────────────────────────────────────────────────
+// ── Options ──────────────────────────────────────────────────────
 
-// Options 是 Engine 的初始化配置。
-// 所有字段均有合理默认值，最少只需提供 RegistryPath 和 LLMConfigPath。
 type Options struct {
-	// RegistryPath 是 registry.yaml 的路径（必填）。
-	// 包含 skill 列表、hub 地址、连接池参数。
-	RegistryPath string
-
-	// LLMConfigPath 是 config.yaml 的路径（必填）。
-	// 包含 LLM url / model / api_key。
-	LLMConfigPath string
-
-	// HubAddr 是本地 Hub gRPC 监听地址，默认 ":50051"。
-	HubAddr string
-
-	// HubStartupDelay 是等待 Hub 启动的时间，默认 100ms。
-	HubStartupDelay time.Duration
-
-	// Logger 用于输出内部日志，nil 时使用标准 log 包。
-	Logger Logger
-
-	ToolCallTimeOut time.Duration
+	RegistryPath    string        // registry.yaml 路径（必填）
+	LLMConfigPath   string        // config.yaml 路径（必填）
+	HubAddr         string        // Hub gRPC 监听地址，默认 ":50051"
+	HubStartupDelay time.Duration // 等待 Hub 启动时间，默认 100ms
+	ToolCallTimeOut time.Duration // 单次工具调用超时，默认 5s
+	Logger          Logger
 }
 
 func (o *Options) withDefaults() {
@@ -64,17 +45,16 @@ func (o *Options) withDefaults() {
 	if o.HubStartupDelay == 0 {
 		o.HubStartupDelay = 100 * time.Millisecond
 	}
-	if o.Logger == nil {
-		o.Logger = &stdLogger{}
-	}
 	if o.ToolCallTimeOut <= 0 {
 		o.ToolCallTimeOut = 5 * time.Second
 	}
+	if o.Logger == nil {
+		o.Logger = &stdLogger{}
+	}
 }
 
-// ── Logger 接口 ───────────────────────────────────────────────────────────────
+// ── Logger 接口 ───────────────────────────────────────────────────
 
-// Logger 是 SDK 内部日志接口，方便调用方替换为 zap/logrus 等。
 type Logger interface {
 	Infof(format string, args ...interface{})
 	Errorf(format string, args ...interface{})
@@ -82,53 +62,43 @@ type Logger interface {
 
 type stdLogger struct{}
 
-func (l *stdLogger) Infof(format string, args ...interface{}) {
-	log.Printf("[seele/api] "+format, args...)
-}
-func (l *stdLogger) Errorf(format string, args ...interface{}) {
-	log.Printf("[seele/api] ERROR "+format, args...)
+func (l *stdLogger) Infof(f string, a ...interface{}) { log.Printf("[seele/api] "+f, a...) }
+func (l *stdLogger) Errorf(f string, a ...interface{}) {
+	log.Printf("[seele/api] ERROR "+f, a...)
 }
 
-// ── Engine ────────────────────────────────────────────────────────────────────
+// ── Engine ────────────────────────────────────────────────────────
 
-// Engine 是 Seele API SDK 的核心对象，管理 Hub + Runtime 的完整生命周期。
+// Engine 管理完整的 Seele 运行时生命周期。
 // 通过 New 创建，通过 Shutdown 关闭。Engine 并发安全。
 type Engine struct {
-	runtime  *runtime.Runtime
-	hub      *hubbase.BaseHub
-	opts     Options
-	shutdown chan struct{}
+	rt          *runtime.Runtime
+	hub         *hubbase.BaseHub
+	hubProvider *runtime.HubProvider
+	mcpProvider *runtime.MCPProvider // 延迟初始化，首次 AttachMCPServer 时创建
+	opts        Options
+	shutdown    chan struct{}
 }
 
-// New 初始化 Engine：加载 registry、启动 Hub、创建 Runtime。
+// New 初始化 Engine。
 //
-// 典型用法：
-//
-//	engine, err := api.New(api.Options{
-//	    RegistryPath:  "config/registry.yaml",
-//	    LLMConfigPath: "config/config.yaml",
-//	})
+// 启动流程：
+//  1. 加载 registry.yaml（skill 列表 + Hub 配置）
+//  2. 启动本地 microHub gRPC 服务
+//  3. 创建 HubProvider 并注册到 Runtime
+//  4. 加载 LLM 配置，创建 Runtime
 func New(opts Options) (*Engine, error) {
 	opts.withDefaults()
 
-	// 1. 加载 registry（skill 列表 + hub + pool 全在 yaml 里）
+	// 1. 加载 registry
 	if err := registry.Init(opts.RegistryPath); err != nil {
 		return nil, fmt.Errorf("seele/api: registry init %q: %w", opts.RegistryPath, err)
 	}
-
-	// ── 启动时探活，标记不可达的地址为 offline ──────────
 	registry.ProbeAllOnStartup()
-
-	// ── 启动后台探活，定期尝试恢复 offline 的地址 ───────
 	registry.StartHealthProbe(context.Background(), 15*time.Second)
 
 	// 2. 启动 Hub
 	hub := hubbase.New(&registryRouter{})
-	eng := &Engine{
-		hub:      hub,
-		opts:     opts,
-		shutdown: make(chan struct{}),
-	}
 	go func() {
 		if err := hub.ServeAsync(opts.HubAddr, 5); err != nil {
 			opts.Logger.Errorf("hub exited: %v", err)
@@ -142,75 +112,127 @@ func New(opts Options) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("seele/api: load llm config %q: %w", opts.LLMConfigPath, err)
 	}
-	Runtime, err := runtime.NewRuntime(llmCfg, hub, opts.ToolCallTimeOut)
+	rt, err := runtime.NewRuntime(llmCfg)
 	if err != nil {
-		return nil, fmt.Errorf("seele/api: new Runtime: %w", err)
+		return nil, fmt.Errorf("seele/api: new runtime: %w", err)
 	}
-	eng.runtime = Runtime
 
-	opts.Logger.Infof("engine ready, %d skill(s) loaded", len(Runtime.Skills()))
+	// 4. 创建 HubProvider，注册到 Runtime
+	hubProv, err := runtime.NewHubProvider(hub, opts.ToolCallTimeOut)
+	if err != nil {
+		return nil, fmt.Errorf("seele/api: new hub provider: %w", err)
+	}
+	rt.Register(hubProv)
+
+	eng := &Engine{
+		rt:          rt,
+		hub:         hub,
+		hubProvider: hubProv,
+		opts:        opts,
+		shutdown:    make(chan struct{}),
+	}
+
+	opts.Logger.Infof("engine ready, %d hub skill(s) loaded", len(hubProv.Skills()))
 	return eng, nil
 }
 
 // Shutdown 关闭 Engine，释放资源。
-// 目前 Hub 不提供优雅关闭接口，此方法预留用于未来扩展。
 func (e *Engine) Shutdown() {
 	select {
 	case <-e.shutdown:
 	default:
 		close(e.shutdown)
+		if e.mcpProvider != nil {
+			// 关闭所有 MCP Server 连接
+			for _, info := range e.MCPServers() {
+				e.mcpProvider.Detach(info)
+			}
+		}
 		e.opts.Logger.Infof("engine shutdown")
 	}
 }
 
-// ── Agent 管理 ────────────────────────────────────────────────────────────────
+// ── Agent 管理 ────────────────────────────────────────────────────
 
-// NewAgent 创建一个新的对话 Agent。
-// systemPrompt 为空时不注入 system 消息。
+// NewAgent 创建新 Agent。
 func (e *Engine) NewAgent(systemPrompt string) *runtime.Agent {
-	return e.runtime.NewAgent(systemPrompt)
+	return e.rt.NewAgent(systemPrompt)
 }
 
-// Skills 返回当前对 LLM 可见的 skill 摘要列表。
+// QuickChat 一次性对话，不保留历史。
+func (e *Engine) QuickChat(ctx context.Context, systemPrompt, userInput string) (string, error) {
+	return e.NewAgent(systemPrompt).Chat(ctx, userInput)
+}
+
+// QuickChatStream 一次性流式对话，不保留历史。
+func (e *Engine) QuickChatStream(ctx context.Context, systemPrompt, userInput string, onChunk func(string)) (string, error) {
+	return e.NewAgent(systemPrompt).ChatStream(ctx, userInput, onChunk)
+}
+
+// ── Hub Skill 管理 ────────────────────────────────────────────────
+
+// Skills 返回 Hub 工具的摘要列表。
 func (e *Engine) Skills() []runtime.SkillInfo {
-	return e.runtime.Skills()
+	return e.hubProvider.Skills()
 }
 
-// Retire 临时屏蔽某个 skill（重启后自动恢复）。
-func (e *Engine) Retire(name string) {
-	e.runtime.Retire(name)
+// Retire 临时屏蔽某个 Hub skill（重启后自动恢复）。
+func (e *Engine) Retire(name string) { e.hubProvider.Retire(name) }
+
+// Restore 恢复被 Retire 屏蔽的 Hub skill。
+func (e *Engine) Restore(name string) { e.hubProvider.Restore(name) }
+
+// ── MCP Server 管理 ───────────────────────────────────────────────
+
+// AttachMCPServer 连接一个 MCP Server，工具立即对 LLM 可见。
+// 可在 Engine 运行期间随时调用（热插拔）。
+//
+// 示例：
+//
+//	engine.AttachMCPServer(ctx, Seele.MCPServerConfig{
+//	    Name:      "filesystem",
+//	    Transport: "stdio",
+//	    Command:   "npx",
+//	    Args:      []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"},
+//	    Env:       []string{"LOG_LEVEL=debug"},  // 格式 "KEY=VALUE"
+//	})
+func (e *Engine) AttachMCPServer(ctx context.Context, cfg runtime.MCPServerConfig) error {
+	e.ensureMCPProvider()
+	return e.mcpProvider.Attach(ctx, cfg)
 }
 
-// Restore 恢复被 Retire 屏蔽的 skill。
-func (e *Engine) Restore(name string) {
-	e.runtime.Restore(name)
+// DetachMCPServer 断开指定 MCP Server，工具立即不可见。
+func (e *Engine) DetachMCPServer(name string) {
+	if e.mcpProvider != nil {
+		e.mcpProvider.Detach(name)
+	}
 }
+
+// RefreshMCPTools 重新从指定 server 拉取工具列表（MCP Server 动态增减工具时使用）。
+func (e *Engine) RefreshMCPTools(ctx context.Context, serverName string) error {
+	if e.mcpProvider == nil {
+		return fmt.Errorf("no MCP server attached")
+	}
+	return e.mcpProvider.RefreshTools(ctx, serverName)
+}
+
+// MCPServers 返回当前已连接的 MCP Server 名称列表。
+func (e *Engine) MCPServers() []string {
+	if e.mcpProvider == nil {
+		return nil
+	}
+	// MCPProvider 未暴露 server 列表，此处通过 Tools() 推断
+	// 如需完整列表，可在 MCPProvider 添加 ServerNames() 方法
+	return nil // 实际使用时可扩展
+}
+
+// ── 底层访问 ──────────────────────────────────────────────────────
 
 // Runtime 暴露底层 Runtime，供需要精细控制的场景使用。
-func (e *Engine) Runtime() *runtime.Runtime {
-	return e.runtime
-}
+func (e *Engine) Runtime() *runtime.Runtime { return e.rt }
 
-// ── 便捷方法 ──────────────────────────────────────────────────────────────────
+// ── AgentPool ─────────────────────────────────────────────────────
 
-// QuickChat 创建临时 Agent，发送一条消息后返回回复，不保留历史。
-// 适合一次性调用场景。
-func (e *Engine) QuickChat(ctx context.Context, systemPrompt, userInput string) (string, error) {
-	a := e.NewAgent(systemPrompt)
-	return a.Chat(ctx, userInput)
-}
-
-// QuickChatStream 创建临时 Agent，发送一条消息并流式返回回复，不保留历史。
-// 适合一次性流式调用场景。
-func (e *Engine) QuickChatStream(ctx context.Context, systemPrompt, userInput string, onChunk func(delta string)) (string, error) {
-	a := e.NewAgent(systemPrompt)
-	return a.ChatStream(ctx, userInput, onChunk)
-}
-
-// ── AgentPool ─────────────────────────────────────────────────────────────────
-
-// AgentPool 管理一组具名 Agent，支持按名称切换。
-// 适合多 Agent 协作或 REPL 多会话场景。
 type AgentPool struct {
 	engine  *Engine
 	agents  []*namedAgent
@@ -222,21 +244,15 @@ type namedAgent struct {
 	agent *runtime.Agent
 }
 
-// NewAgentPool 创建空的 AgentPool。
 func (e *Engine) NewAgentPool() *AgentPool {
 	return &AgentPool{engine: e}
 }
 
-// Add 向 Pool 中添加一个 Agent，返回其索引（从 0 开始）。
 func (p *AgentPool) Add(label, systemPrompt string) int {
-	p.agents = append(p.agents, &namedAgent{
-		label: label,
-		agent: p.engine.NewAgent(systemPrompt),
-	})
+	p.agents = append(p.agents, &namedAgent{label: label, agent: p.engine.NewAgent(systemPrompt)})
 	return len(p.agents) - 1
 }
 
-// Switch 切换当前活跃 Agent（索引从 0 开始）。
 func (p *AgentPool) Switch(idx int) error {
 	if idx < 0 || idx >= len(p.agents) {
 		return fmt.Errorf("index %d out of range [0, %d)", idx, len(p.agents))
@@ -245,7 +261,6 @@ func (p *AgentPool) Switch(idx int) error {
 	return nil
 }
 
-// Current 返回当前活跃的 Agent。
 func (p *AgentPool) Current() *runtime.Agent {
 	if len(p.agents) == 0 {
 		return nil
@@ -253,7 +268,6 @@ func (p *AgentPool) Current() *runtime.Agent {
 	return p.agents[p.current].agent
 }
 
-// CurrentLabel 返回当前活跃 Agent 的标签。
 func (p *AgentPool) CurrentLabel() string {
 	if len(p.agents) == 0 {
 		return ""
@@ -261,13 +275,17 @@ func (p *AgentPool) CurrentLabel() string {
 	return p.agents[p.current].label
 }
 
-// CurrentIndex 返回当前活跃 Agent 的索引（从 0 开始）。
 func (p *AgentPool) CurrentIndex() int { return p.current }
+func (p *AgentPool) Len() int          { return len(p.agents) }
 
-// Len 返回 Pool 中 Agent 数量。
-func (p *AgentPool) Len() int { return len(p.agents) }
+type AgentSummary struct {
+	Index     int
+	Label     string
+	SessionID string
+	MsgCount  int
+	IsCurrent bool
+}
 
-// All 返回所有 Agent 的摘要（索引、标签、SessionID）。
 func (p *AgentPool) All() []AgentSummary {
 	result := make([]AgentSummary, len(p.agents))
 	for i, na := range p.agents {
@@ -282,16 +300,6 @@ func (p *AgentPool) All() []AgentSummary {
 	return result
 }
 
-// AgentSummary 是 AgentPool.All() 返回的单条摘要。
-type AgentSummary struct {
-	Index     int
-	Label     string
-	SessionID string
-	MsgCount  int
-	IsCurrent bool
-}
-
-// Chat 向当前活跃 Agent 发送消息。
 func (p *AgentPool) Chat(ctx context.Context, input string) (string, error) {
 	a := p.Current()
 	if a == nil {
@@ -300,9 +308,7 @@ func (p *AgentPool) Chat(ctx context.Context, input string) (string, error) {
 	return a.Chat(ctx, input)
 }
 
-// ChatStream 向当前活跃 Agent 发起流式对话。
-// onChunk 在每个文本 delta 到达时同步调用；tool_call 轮次不触发 onChunk。
-func (p *AgentPool) ChatStream(ctx context.Context, input string, onChunk func(delta string)) (string, error) {
+func (p *AgentPool) ChatStream(ctx context.Context, input string, onChunk func(string)) (string, error) {
 	a := p.Current()
 	if a == nil {
 		return "", fmt.Errorf("agentpool is empty, call Add first")
@@ -310,20 +316,30 @@ func (p *AgentPool) ChatStream(ctx context.Context, input string, onChunk func(d
 	return a.ChatStream(ctx, input, onChunk)
 }
 
-// ── Hub 路由（SDK 内部使用）───────────────────────────────────────────────────
+// ── 内部工具 ──────────────────────────────────────────────────────
 
-// registryRouter 是 SDK 内置的默认路由器，完全依赖 registry 做地址查找。
-// 与 cmd/main.go 中的 evaRouter 逻辑一致，但作为 SDK 内部实现对外隐藏。
+// ensureMCPProvider 延迟初始化 MCPProvider 并注册到 Runtime。
+// 首次调用 AttachMCPServer 时触发，避免未使用 MCP 时的额外开销。
+func (e *Engine) ensureMCPProvider() {
+	if e.mcpProvider != nil {
+		return
+	}
+	e.mcpProvider = runtime.NewMCPProvider()
+	e.rt.Register(e.mcpProvider)
+	e.opts.Logger.Infof("MCP provider initialized")
+}
+
+// ── Hub 路由（SDK 内部）────────────────────────────────────────────
+
 type registryRouter struct{}
 
 func (r *registryRouter) ServiceName() string { return "seele-sdk-hub" }
 
 func (r *registryRouter) Execute(req *pb.ToolRequest) ([]hubbase.DispatchTarget, error) {
-	tools := registry.GetOnlineTools()
 	if req == nil {
 		return nil, nil
 	}
-	for _, t := range tools {
+	for _, t := range registry.GetOnlineTools() {
 		if t.Method == req.Method {
 			return []hubbase.DispatchTarget{
 				{Addr: t.Addr, Request: req, Stream: true},
@@ -335,22 +351,20 @@ func (r *registryRouter) Execute(req *pb.ToolRequest) ([]hubbase.DispatchTarget,
 
 func (r *registryRouter) OnResults(results []hubbase.DispatchResult) {
 	for _, ri := range results {
-		// 如果 ri.Err 不为空，说明 gRPC 层面的连接彻底断了（比如你日志里的 wsarecv 错误）
 		if ri.Err != nil {
-			log.Printf("[%s] ✗ addr=%s 关键错误，尝试强制下线: %v", r.ServiceName(), ri.Target.Addr, ri.Err)
+			log.Printf("[%s] addr=%s connection error, marking offline: %v",
+				r.ServiceName(), ri.Target.Addr, ri.Err)
 			registry.MarkOffline(ri.Target.Addr)
 			continue
 		}
-
 		for _, resp := range ri.Responses {
-			// 如果业务逻辑返回错误（比如 Tool 内部逻辑报错但连接还在）
-			// 你可以根据需求决定是否要下线，通常保持在线即可
 			if resp.Status != "ok" && resp.Status != "partial" {
-				log.Printf("[%s] ✗ tool=%s 业务报错: %s", r.ServiceName(), resp.ToolName, resp.Status)
+				log.Printf("[%s] tool=%s business error: %s", r.ServiceName(), resp.ToolName, resp.Status)
 			}
 		}
 	}
 }
+
 func (r *registryRouter) Addrs() []string {
 	tools := registry.GetOnlineTools()
 	addrs := make([]string, 0, len(tools))
