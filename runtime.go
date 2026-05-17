@@ -63,14 +63,17 @@ func (r *Runtime) Unregister(name string) {
 
 // NewAgent 创建绑定到本 Runtime 的 Agent。
 // systemPrompt 为空时不注入 system 消息。
-func (r *Runtime) NewAgent(systemPrompt string) *Agent {
+func (r *Runtime) NewAgent(systemPrompt string, loopTimes int) *Agent {
+	if loopTimes == 0 {
+		loopTimes = 8 // 默认值
+	}
 	a := &Agent{
 		runtime:   r,
 		sessionID: fmt.Sprintf("sess_%d", time.Now().UnixNano()),
-		maxLoops:  8,
+		maxLoops:  loopTimes,
 	}
 	if systemPrompt != "" {
-		a.history = []Message{{Role: "system", Content: systemPrompt}}
+		a.history = []Message{{Role: "system", Content: &systemPrompt}}
 	}
 	return a
 }

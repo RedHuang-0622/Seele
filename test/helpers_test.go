@@ -1,0 +1,233 @@
+// test/helpers_test.go
+//
+// 测试基础设施：mock Provider 和通用辅助函数。
+// 不含 LLM mock——编排查直接用 mock Agent，不需 LLM。
+package test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+
+	runtime "github.com/sukasukasuka123/Seele"
+	"github.com/sukasukasuka123/Seele/workplan"
+)
+
+// =============================================================================
+// mockProvider —— 基于内存 map 的 ToolProvider，用于单元测试
+// =============================================================================
+
+type mockProvider struct {
+	name    string
+	tools   []runtime.Tool
+	toolIdx map[string]struct{}
+}
+
+func newMockProvider(name string) *mockProvider {
+	return &mockProvider{
+		name:    name,
+		toolIdx: make(map[string]struct{}),
+	}
+}
+
+func (p *mockProvider) ProviderName() string              { return p.name }
+func (p *mockProvider) Tools() []runtime.Tool             { return p.tools }
+func (p *mockProvider) HasTool(name string) bool          { _, ok := p.toolIdx[name]; return ok }
+func (p *mockProvider) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
+	return `{"status":"ok","tool":"` + name + `","args":` + argsJSON + `}`, nil
+}
+
+func (p *mockProvider) AddTool(name, desc string) {
+	p.tools = append(p.tools, runtime.Tool{
+		Type: "function",
+		Function: runtime.ToolFunction{
+			Name:        name,
+			Description: desc,
+			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+	})
+	p.toolIdx[name] = struct{}{}
+}
+
+// =============================================================================
+// mockLLMServer —— OpenAI 兼容的 /chat/completions mock 端点
+// =============================================================================
+
+// mockLLMResponse 是一次 LLM 调用的预设回复。
+// content 非空表示纯文本回复，toolCalls 非空表示工具调用回复。
+type mockLLMResponse struct {
+	content   string
+	toolCalls []runtime.ToolCall
+}
+
+// mockLLMServer 提供 OpenAI 兼容的 /chat/completions 端点，
+// 按 FIFO 顺序返回预先编排的回复，用于控制 Agent ReAct 循环。
+type mockLLMServer struct {
+	server      *httptest.Server
+	mu          sync.Mutex
+	queue       []mockLLMResponse
+	defaultText string
+}
+
+func newMockLLMServer() *mockLLMServer {
+	m := &mockLLMServer{defaultText: `"ok"`}
+	m.server = httptest.NewServer(http.HandlerFunc(m.handler))
+	return m
+}
+
+// EnqueueText 向回复队列追加一条纯文本回复。
+func (m *mockLLMServer) EnqueueText(content string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.queue = append(m.queue, mockLLMResponse{content: content})
+}
+
+// EnqueueToolCalls 向回复队列追加一条工具调用回复。
+func (m *mockLLMServer) EnqueueToolCalls(toolCalls []runtime.ToolCall) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.queue = append(m.queue, mockLLMResponse{toolCalls: toolCalls})
+}
+
+func (m *mockLLMServer) URL() string { return m.server.URL }
+
+func (m *mockLLMServer) Close() { m.server.Close() }
+
+func (m *mockLLMServer) handler(w http.ResponseWriter, r *http.Request) {
+	var resp mockLLMResponse
+	m.mu.Lock()
+	if len(m.queue) > 0 {
+		resp = m.queue[0]
+		m.queue = m.queue[1:]
+	} else {
+		resp = mockLLMResponse{content: m.defaultText}
+	}
+	m.mu.Unlock()
+
+	msg := map[string]interface{}{
+		"role": "assistant",
+	}
+	if len(resp.toolCalls) > 0 {
+		msg["tool_calls"] = resp.toolCalls
+		msg["content"] = nil
+	} else {
+		msg["content"] = resp.content
+	}
+
+	body := map[string]interface{}{
+		"id": "mock",
+		"choices": []map[string]interface{}{
+			{
+				"index":         0,
+				"message":       msg,
+				"finish_reason": "stop",
+			},
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(body)
+}
+
+// =============================================================================
+// autoMockLLM —— 按对话状态自动切换 tool_calls / text 的 mock LLM
+// =============================================================================
+
+// autoMockLLM 根据对话历史自动决定返回 tool_calls 还是文本回复。
+// 规则：
+//   - 若最后一条消息是 tool 角色 → 返回 finalText（工具已执行完毕）
+//   - 若提供了 tools 且最后一条消息是 user → 返回 tool_calls
+//   - 其他情况 → 返回 defaultText
+//
+// 适合并发 Agent 测试：每个 Agent 的 ReAct 循环独立推进，不依赖队列顺序。
+type autoMockLLM struct {
+	server      *httptest.Server
+	toolName    string
+	toolArgs    string
+	finalText   string
+	defaultText string
+}
+
+func newAutoMockLLM(toolName, toolArgs, finalText string) *autoMockLLM {
+	m := &autoMockLLM{
+		toolName:    toolName,
+		toolArgs:    toolArgs,
+		finalText:   finalText,
+		defaultText: `"ok"`,
+	}
+	m.server = httptest.NewServer(http.HandlerFunc(m.handler))
+	return m
+}
+
+func (m *autoMockLLM) URL() string    { return m.server.URL }
+func (m *autoMockLLM) Close()         { m.server.Close() }
+
+func (m *autoMockLLM) handler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Messages []runtime.Message `json:"messages"`
+		Tools    []runtime.Tool    `json:"tools"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", 400)
+		return
+	}
+
+	var content *string
+	var toolCalls []runtime.ToolCall
+
+	lastRole := ""
+	if len(req.Messages) > 0 {
+		lastRole = req.Messages[len(req.Messages)-1].Role
+	}
+
+	if lastRole == "tool" {
+		// 工具结果已返回 → 给出最终文本
+		s := m.finalText
+		content = &s
+	} else if len(req.Tools) > 0 && m.toolName != "" {
+		// 有可用工具且未执行 → 发起 tool_call
+		toolCalls = []runtime.ToolCall{
+			{
+				ID:   "call_auto",
+				Type: "function",
+				Function: runtime.ToolCallFunction{
+					Name:      m.toolName,
+					Arguments: m.toolArgs,
+				},
+			},
+		}
+	} else {
+		s := m.defaultText
+		content = &s
+	}
+
+	msg := map[string]interface{}{"role": "assistant"}
+	if len(toolCalls) > 0 {
+		msg["tool_calls"] = toolCalls
+		msg["content"] = nil
+	} else {
+		msg["content"] = content
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id": "auto_mock",
+		"choices": []map[string]interface{}{
+			{"index": 0, "message": msg, "finish_reason": "stop"},
+		},
+	})
+}
+
+// =============================================================================
+// rtAgentFactory —— 将 Runtime.NewAgent 适配为 workplan.AgentFactory
+// =============================================================================
+
+// rtAgentFactory 从 Runtime 创建 Agent，用于 WorkPlan 测试。
+// 每个 Agent 是 Runtime.NewAgent 返回的真实 Agent，会走完整的 LLM ReAct 循环。
+type rtAgentFactory struct {
+	rt *runtime.Runtime
+}
+
+func (f *rtAgentFactory) NewAgent(systemPrompt string) workplan.Agent {
+	return f.rt.NewAgent(systemPrompt, 1)
+}

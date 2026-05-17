@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(go test *)",
+      "Bash(docker compose *)",
+      "Bash(docker build *)",
+      "Bash(docker run *)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(docker exec *)"
+    ]
+  }
+}

@@ -45,7 +45,7 @@ func RunREPL(ctx context.Context, opts REPLOptions) {
 		in = os.Stdin
 	}
 
-	agent := opts.Engine.NewAgent(opts.SystemPrompt)
+	agent := opts.Engine.NewAgent(opts.SystemPrompt, 8)
 	scanner := bufio.NewScanner(in)
 
 	fmt.Fprint(out, opts.Prompt)

@@ -9,7 +9,7 @@ package Seele
 type Message struct {
 	Role             string     `json:"role"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"` // 思索文段
-	Content          string     `json:"content,omitempty"`
+	Content          *string    `json:"content,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string     `json:"tool_call_id,omitempty"` // role="tool" 时使用
 	Name             string     `json:"name,omitempty"`         // role="tool" 时填工具名

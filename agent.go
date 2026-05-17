@@ -67,7 +67,7 @@ func (a *Agent) SetMaxLoops(n int) {
 // 每轮开始前都会实时读取 registry 刷新工具列表，支持热更新。
 func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 	if userInput != "" {
-		a.history = append(a.history, Message{Role: "user", Content: userInput})
+		a.history = append(a.history, Message{Role: "user", Content: &userInput})
 	}
 
 	tools := a.runtime.tools()
@@ -86,7 +86,7 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 		})
 
 		if len(msg.ToolCalls) == 0 {
-			return msg.Content, nil
+			return *msg.Content, nil
 		}
 
 		type dispatchResult struct {
@@ -122,14 +122,14 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 				Role:       "tool",
 				ToolCallID: r.tc.ID,
 				Name:       r.tc.Function.Name,
-				Content:    r.content,
+				Content:    &r.content,
 			})
 		}
 
 		tools = a.runtime.tools()
 	}
 
-	return "", fmt.Errorf("[agent.go_Chat_line131] AgentSessionID:[%s] reached maxLoops (%d) without a final text reply",
+	return "", fmt.Errorf("[agent.go_Chat_line132] AgentSessionID:[%s] reached maxLoops (%d) without a final text reply",
 		a.sessionID, a.maxLoops)
 }
 
@@ -143,7 +143,7 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 // 所有 chunk 拼接即完整回复，也作为返回值返回（同时追加进 history）。
 func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(delta string)) (string, error) {
 	if userInput != "" {
-		a.history = append(a.history, Message{Role: "user", Content: userInput})
+		a.history = append(a.history, Message{Role: "user", Content: &userInput})
 	}
 
 	tools := a.runtime.tools()
@@ -164,7 +164,7 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 		if len(toolCalls) == 0 {
 			a.history = append(a.history, Message{
 				Role:             "assistant",
-				Content:          fullContent,
+				Content:          &fullContent,
 				ReasoningContent: reasoningContent,
 			})
 			return fullContent, nil
@@ -173,7 +173,7 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 		// ── 有 tool_calls → 并发 dispatch，等全部完成再追加 history ───
 		a.history = append(a.history, Message{
 			Role:             "assistant",
-			Content:          "",
+			Content:          &fullContent,
 			ReasoningContent: reasoningContent,
 			ToolCalls:        toolCalls,
 		})
@@ -211,7 +211,7 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 				Role:       "tool",
 				ToolCallID: r.tc.ID,
 				Name:       r.tc.Function.Name,
-				Content:    r.content,
+				Content:    &r.content,
 			})
 		}
 

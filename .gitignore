@@ -1,3 +1,9 @@
 bin/*
 # environment
 config/*
+# test artifacts
+test/report/*
+test/log/*
+
+# ops tools (multi-agent automated运维 system)
+ops_tools/

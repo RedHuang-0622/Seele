@@ -36,7 +36,7 @@ func main() {
 	}
 
 	// ── 3. 创建 Agent 并对话 ──────────────────────────────────────
-	agent := engine.NewAgent("你是一个天气助手，可以查询城市天气。")
+	agent := engine.NewAgent("你是一个天气助手，可以查询城市天气。", 8)
 
 	// 第一轮：LLM 会自动调用 weather tool
 	reply, err := agent.Chat(ctx, "北京今天天气怎么样？")

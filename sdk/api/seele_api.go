@@ -155,18 +155,18 @@ func (e *Engine) Shutdown() {
 // ── Agent 管理 ────────────────────────────────────────────────────
 
 // NewAgent 创建新 Agent。
-func (e *Engine) NewAgent(systemPrompt string) *runtime.Agent {
-	return e.rt.NewAgent(systemPrompt)
+func (e *Engine) NewAgent(systemPrompt string, loopTimes int) *runtime.Agent {
+	return e.rt.NewAgent(systemPrompt, loopTimes)
 }
 
 // QuickChat 一次性对话，不保留历史。
 func (e *Engine) QuickChat(ctx context.Context, systemPrompt, userInput string) (string, error) {
-	return e.NewAgent(systemPrompt).Chat(ctx, userInput)
+	return e.NewAgent(systemPrompt, 8).Chat(ctx, userInput)
 }
 
 // QuickChatStream 一次性流式对话，不保留历史。
 func (e *Engine) QuickChatStream(ctx context.Context, systemPrompt, userInput string, onChunk func(string)) (string, error) {
-	return e.NewAgent(systemPrompt).ChatStream(ctx, userInput, onChunk)
+	return e.NewAgent(systemPrompt, 8).ChatStream(ctx, userInput, onChunk)
 }
 
 // ── Hub Skill 管理 ────────────────────────────────────────────────
@@ -249,7 +249,7 @@ func (e *Engine) NewAgentPool() *AgentPool {
 }
 
 func (p *AgentPool) Add(label, systemPrompt string) int {
-	p.agents = append(p.agents, &namedAgent{label: label, agent: p.engine.NewAgent(systemPrompt)})
+	p.agents = append(p.agents, &namedAgent{label: label, agent: p.engine.NewAgent(systemPrompt, 8)})
 	return len(p.agents) - 1
 }
 

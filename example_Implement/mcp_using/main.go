@@ -74,7 +74,7 @@ func main() {
 	// 多个 MCP Server 时，工具名自动加前缀：filesystem__read_file
 	// 单个 MCP Server 时，工具名保持原样：read_file
 	fmt.Println("\n=== 所有可用工具 ===")
-	agent := engine.NewAgent("你是文件管理助手，可以读写文件和发起 HTTP 请求。")
+	agent := engine.NewAgent("你是文件管理助手，可以读写文件和发起 HTTP 请求。", 8)
 
 	// ── 使用示例 ─────────────────────────────────────────────────
 	// LLM 会自动选择合适的工具（Hub skill 或 MCP tool）
