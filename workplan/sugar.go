@@ -1,5 +1,7 @@
 package workplan
 
+import "strings"
+
 // =============================================================================
 // sugar.go —— 公有语法糖层
 // =============================================================================
@@ -177,7 +179,7 @@ func Default(nextID string) SwitchCase {
 func Contains(substr string) func(string) bool {
 	return func(s string) bool {
 		return len(s) > 0 && len(substr) > 0 &&
-			stringContains(s, substr)
+			strings.Contains(s, substr)
 	}
 }
 
@@ -341,19 +343,6 @@ func (wp *WorkPlan) resolveID(id, prefix string) string {
 		return id
 	}
 	return wp.primitiveAutoID(prefix)
-}
-
-// stringContains 避免直接依赖 strings 包（sugar.go 不应有太多 import）
-func stringContains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
-		func() bool {
-			for i := 0; i <= len(s)-len(sub); i++ {
-				if s[i:i+len(sub)] == sub {
-					return true
-				}
-			}
-			return false
-		}())
 }
 
 // =============================================================================

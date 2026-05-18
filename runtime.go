@@ -65,7 +65,7 @@ func (r *Runtime) Unregister(name string) {
 // systemPrompt 为空时不注入 system 消息。
 func (r *Runtime) NewAgent(systemPrompt string, loopTimes int) *Agent {
 	if loopTimes == 0 {
-		loopTimes = 8 // 默认值
+		loopTimes = 4 // 默认值
 	}
 	a := &Agent{
 		runtime:   r,

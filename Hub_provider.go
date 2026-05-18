@@ -3,6 +3,7 @@ package Seele
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -14,6 +15,10 @@ import (
 	hubbase "github.com/sukasukasuka123/microHub/root_class/hub"
 	registry "github.com/sukasukasuka123/microHub/service_registry"
 )
+
+// ErrToolUnavailable 表示工具暂时不可达（连接池满、超时、网络抖动等），
+// 与工具返回的业务错误不同。调用方可据此决定重试而非将错误注入对话历史。
+var ErrToolUnavailable = errors.New("tool temporarily unavailable")
 
 // HubProvider 将现有 microHub + registry 封装为 ToolProvider。
 //
@@ -166,6 +171,9 @@ func (p *HubProvider) Dispatch(ctx context.Context, name, argsJSON string) (stri
 	}
 
 	if len(errs) > 0 && len(parts) == 0 {
+		if allTransportErrors(results) {
+			return "", fmt.Errorf("%w: HubProvider: skill %q: %s", ErrToolUnavailable, name, strings.Join(errs, "; "))
+		}
 		return "", fmt.Errorf("HubProvider: skill %q failed: %s", name, strings.Join(errs, "; "))
 	}
 	return strings.Join(parts, "\n"), nil
@@ -204,6 +212,20 @@ func (p *HubProvider) retiredSnapshot() map[string]struct{} {
 		snap[k] = struct{}{}
 	}
 	return snap
+}
+
+// allTransportErrors 判断所有 DispatchResult 是否均为传输层错误（工具不可达）。
+// 若任一结果包含业务层响应（工具正常处理了请求并返回了结果/错误），则返回 false。
+func allTransportErrors(results []hubbase.DispatchResult) bool {
+	if len(results) == 0 {
+		return true
+	}
+	for _, r := range results {
+		if r.Err == nil && len(r.Responses) > 0 {
+			return false // 工具收到请求并给出了业务响应
+		}
+	}
+	return true
 }
 
 // buildParameters 将 microHub input_schema 转为 OpenAI JSON Schema。

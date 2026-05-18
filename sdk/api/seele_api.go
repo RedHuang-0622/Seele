@@ -221,9 +221,7 @@ func (e *Engine) MCPServers() []string {
 	if e.mcpProvider == nil {
 		return nil
 	}
-	// MCPProvider 未暴露 server 列表，此处通过 Tools() 推断
-	// 如需完整列表，可在 MCPProvider 添加 ServerNames() 方法
-	return nil // 实际使用时可扩展
+	return e.mcpProvider.ServerNames()
 }
 
 // ── 底层访问 ──────────────────────────────────────────────────────

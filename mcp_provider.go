@@ -66,6 +66,17 @@ func NewMCPProvider() *MCPProvider {
 
 func (p *MCPProvider) ProviderName() string { return "mcp" }
 
+// ServerNames 返回当前已连接的所有 MCP Server 名称。
+func (p *MCPProvider) ServerNames() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	names := make([]string, 0, len(p.servers))
+	for name := range p.servers {
+		names = append(names, name)
+	}
+	return names
+}
+
 // ── Attach / Detach ───────────────────────────────────────────────
 
 // Attach 连接一个 MCP Server，完成握手并拉取工具列表。

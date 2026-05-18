@@ -65,7 +65,7 @@ func (c *HarnessConfig) withDefaults() {
 		return
 	}
 	if c.MaxLoops <= 0 {
-		c.MaxLoops = 8
+		c.MaxLoops = 4
 	}
 }
 

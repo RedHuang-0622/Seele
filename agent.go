@@ -2,6 +2,7 @@ package Seele
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -47,12 +48,20 @@ func (a *Agent) ClearHistory() {
 	a.history = sys
 }
 
+// MaxLoops 返回当前的最大 tool_call 循环次数。
+func (a *Agent) MaxLoops() int { return a.maxLoops }
+
 // SetMaxLoops 设置单次 Chat 调用中最多允许的 tool_call 循环次数。
 // 默认值为 8；设置过大可能导致长时间阻塞。
 func (a *Agent) SetMaxLoops(n int) {
 	if n > 0 {
 		a.maxLoops = n
 	}
+}
+
+// ForceAppendHistory 直接向对话历史追加一条消息（仅用于测试）。
+func (a *Agent) ForceAppendHistory(msg Message) {
+	a.history = append(a.history, msg)
 }
 
 // Chat 追加 userInput 消息，驱动 LLM 推理并自动执行 tool_calls，
@@ -73,6 +82,16 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 	tools := a.runtime.tools()
 
 	for loop := 0; loop < a.maxLoops; loop++ {
+		if NeedCompression(a.history) {
+			compressed, err := CompressHistory(ctx, a.runtime.llm, a.history, MaxContextTokens)
+			if err != nil {
+				log.Printf("[agent.Chat] session:[%s] compression failed: %v, using hard trim", a.sessionID, err)
+				a.history = TrimHistory(a.history, MaxContextTokens)
+			} else {
+				a.history = compressed
+			}
+		}
+
 		msg, err := a.runtime.llm.complete(ctx, a.history, tools)
 		if err != nil {
 			return "", fmt.Errorf("agent[%s] chat loop %d: %w", a.sessionID, loop, err)
@@ -89,57 +108,22 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 			return *msg.Content, nil
 		}
 
-		type dispatchResult struct {
-			tc      ToolCall
-			content string
-		}
-		results := make([]dispatchResult, len(msg.ToolCalls))
-
-		var wg sync.WaitGroup
-		for i, tc := range msg.ToolCalls {
-			wg.Add(1)
-			go func(i int, tc ToolCall) {
-				defer wg.Done()
-				start := time.Now()
-				result, dispErr := a.runtime.dispatch(ctx, tc.Function.Name, tc.Function.Arguments)
-				elapsed := time.Since(start).Milliseconds()
-
-				if dispErr != nil {
-					log.Printf("[agent.go_Chat_line107] AgentSessionID:[%s] tool_call %s FAILED (%dms): %v",
-						a.sessionID, tc.Function.Name, elapsed, dispErr)
-					results[i] = dispatchResult{tc, fmt.Sprintf(`{"error":%q}`, dispErr.Error())}
-				} else {
-					log.Printf("[agent.go_Chat_line111] AgentSessionID:[%s] tool_call %s OK (%dms)",
-						a.sessionID, tc.Function.Name, elapsed)
-					results[i] = dispatchResult{tc, result}
-				}
-			}(i, tc)
-		}
-		wg.Wait()
-
-		for _, r := range results {
-			a.history = append(a.history, Message{
-				Role:       "tool",
-				ToolCallID: r.tc.ID,
-				Name:       r.tc.Function.Name,
-				Content:    &r.content,
-			})
-		}
-
+		a.dispatchToolCalls(ctx, msg.ToolCalls)
 		tools = a.runtime.tools()
 	}
 
-	return "", fmt.Errorf("[agent.go_Chat_line132] AgentSessionID:[%s] reached maxLoops (%d) without a final text reply",
+	return "", fmt.Errorf("[agent.Chat] session:[%s] reached maxLoops (%d) without a final text reply",
 		a.sessionID, a.maxLoops)
 }
 
 // ChatStream 与 Chat 行为完全一致，但最终的文本回复改为流式推送。
 //
 // 流程：
-//   - tool_call 轮次：走非流式 complete（LLM 必须返回完整 JSON 才能 dispatch）
-//   - 最终文本轮次：走流式 completeStream，每个 delta 同步调用 onChunk
+//   - tool_call 轮次：completeStream 的 delta 缓冲到 chunks，不推送 onChunk；
+//     若 LLM 返回 tool_call JSON 碎片，不会泄露给用户
+//   - 最终文本轮次：确认无 tool_calls 后，将缓冲的 chunks 全部推送给 onChunk
 //
-// onChunk 在 LLM 推送每个文本 token 时被同步调用；
+// onChunk 在确认是文本回复后同步调用；
 // 所有 chunk 拼接即完整回复，也作为返回值返回（同时追加进 history）。
 func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(delta string)) (string, error) {
 	if userInput != "" {
@@ -149,19 +133,32 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 	tools := a.runtime.tools()
 
 	for loop := 0; loop < a.maxLoops; loop++ {
-		// 先开启接收的循环，防止这轮loop的内容跳过开头部分
+		if NeedCompression(a.history) {
+			compressed, err := CompressHistory(ctx, a.runtime.llm, a.history, MaxContextTokens)
+			if err != nil {
+				log.Printf("[agent.ChatStream] session:[%s] compression failed: %v, using hard trim", a.sessionID, err)
+				a.history = TrimHistory(a.history, MaxContextTokens)
+			} else {
+				a.history = compressed
+			}
+		}
+
+		// 先缓冲所有 delta，确认非 tool_call 轮次后才推送，防止 tool_call JSON 碎片泄露
+		var chunks []string
 		fullContent, reasoningContent, toolCalls, err := a.runtime.llm.completeStream(
 			ctx, a.history, tools,
 			func(delta string) {
-				onChunk(delta)
+				chunks = append(chunks, delta)
 			},
 		)
 		if err != nil {
-			return "", fmt.Errorf("[agent.go_ChatStream_line160] AgentSessionID:[%s] stream loop %d: %w", a.sessionID, loop, err)
+			return "", fmt.Errorf("[agent.ChatStream] session:[%s] stream loop %d: %w", a.sessionID, loop, err)
 		}
 
-		// ── 无 tool_calls → 最终文本回复，流已经推完了 ───────────────
 		if len(toolCalls) == 0 {
+			for _, c := range chunks {
+				onChunk(c)
+			}
 			a.history = append(a.history, Message{
 				Role:             "assistant",
 				Content:          &fullContent,
@@ -170,7 +167,7 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 			return fullContent, nil
 		}
 
-		// ── 有 tool_calls → 并发 dispatch，等全部完成再追加 history ───
+		// tool_call 轮次：丢弃缓冲的 chunks，仅保留结构化 tool_calls
 		a.history = append(a.history, Message{
 			Role:             "assistant",
 			Content:          &fullContent,
@@ -178,12 +175,29 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 			ToolCalls:        toolCalls,
 		})
 
-		type dispatchResult struct {
-			tc      ToolCall
-			content string
-		}
-		results := make([]dispatchResult, len(toolCalls))
+		a.dispatchToolCalls(ctx, toolCalls)
+		tools = a.runtime.tools()
+	}
 
+	return "", fmt.Errorf("[agent.ChatStream] session:[%s] reached maxLoops (%d) without a final text reply",
+		a.sessionID, a.maxLoops)
+}
+
+// dispatchToolCalls 并发执行 tool_calls，处理瞬时错误重试，将结果追加到 history。
+//
+// 瞬时错误（ErrToolUnavailable）不注入 history，最多重试 3 次；
+// 业务错误包装为 {"error":"..."} 注入 history 供 LLM 感知。
+func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []ToolCall) {
+	type dispatchResult struct {
+		tc        ToolCall
+		content   string
+		transient bool
+	}
+
+	const maxDispatchRetries = 3
+	var results []dispatchResult
+	for retries := 0; retries < maxDispatchRetries; retries++ {
+		results = make([]dispatchResult, len(toolCalls))
 		var wg sync.WaitGroup
 		for i, tc := range toolCalls {
 			wg.Add(1)
@@ -194,30 +208,49 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 				elapsed := time.Since(start).Milliseconds()
 
 				if dispErr != nil {
-					log.Printf("[agent.go_ChatStream_line197] AgentSessionID:[%s] tool_call %s FAILED (%dms): %v",
-						a.sessionID, tc.Function.Name, elapsed, dispErr)
-					results[i] = dispatchResult{tc, fmt.Sprintf(`{"error":%q}`, dispErr.Error())}
+					if errors.Is(dispErr, ErrToolUnavailable) {
+						log.Printf("[agent.dispatch] session:[%s] tool_call %s UNAVAILABLE (%dms), retry %d/%d: %v",
+							a.sessionID, tc.Function.Name, elapsed, retries+1, maxDispatchRetries, dispErr)
+						results[i] = dispatchResult{tc: tc, transient: true}
+					} else {
+						log.Printf("[agent.dispatch] session:[%s] tool_call %s FAILED (%dms): %v",
+							a.sessionID, tc.Function.Name, elapsed, dispErr)
+						results[i] = dispatchResult{tc: tc, content: fmt.Sprintf(`{"error":%q}`, dispErr.Error())}
+					}
 				} else {
-					log.Printf("[agent.go_ChatStream_line204] AgentSessionID:[%s] tool_call %s OK (%dms)",
+					log.Printf("[agent.dispatch] session:[%s] tool_call %s OK (%dms)",
 						a.sessionID, tc.Function.Name, elapsed)
-					results[i] = dispatchResult{tc, result}
+					results[i] = dispatchResult{tc: tc, content: result}
 				}
 			}(i, tc)
 		}
 		wg.Wait()
 
+		hasTransient := false
 		for _, r := range results {
-			a.history = append(a.history, Message{
-				Role:       "tool",
-				ToolCallID: r.tc.ID,
-				Name:       r.tc.Function.Name,
-				Content:    &r.content,
-			})
+			if r.transient {
+				hasTransient = true
+				break
+			}
 		}
-
-		tools = a.runtime.tools()
+		if !hasTransient {
+			break
+		}
+		log.Printf("[agent.dispatch] session:[%s] transient dispatch, retrying in 2s (attempt %d/%d)",
+			a.sessionID, retries+1, maxDispatchRetries)
+		time.Sleep(2 * time.Second)
 	}
 
-	return "", fmt.Errorf("[agent.go_ChatStream_line218] AgentSessionID:[%s] reached maxLoops (%d) without a final text reply",
-		a.sessionID, a.maxLoops)
+	for _, r := range results {
+		if r.transient {
+			continue
+		}
+		content := TruncateToolResult(r.content)
+		a.history = append(a.history, Message{
+			Role:       "tool",
+			ToolCallID: r.tc.ID,
+			Name:       r.tc.Function.Name,
+			Content:    &content,
+		})
+	}
 }

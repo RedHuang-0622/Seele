@@ -65,10 +65,11 @@ type mockLLMResponse struct {
 // mockLLMServer 提供 OpenAI 兼容的 /chat/completions 端点，
 // 按 FIFO 顺序返回预先编排的回复，用于控制 Agent ReAct 循环。
 type mockLLMServer struct {
-	server      *httptest.Server
-	mu          sync.Mutex
-	queue       []mockLLMResponse
-	defaultText string
+	server           *httptest.Server
+	mu               sync.Mutex
+	queue            []mockLLMResponse
+	defaultText      string
+	compressResponse string // 若设置且请求无 tools，返回此压缩摘要
 }
 
 func newMockLLMServer() *mockLLMServer {
@@ -96,7 +97,33 @@ func (m *mockLLMServer) URL() string { return m.server.URL }
 func (m *mockLLMServer) Close() { m.server.Close() }
 
 func (m *mockLLMServer) handler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Messages []runtime.Message `json:"messages"`
+		Tools    []runtime.Tool    `json:"tools"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", 400)
+		return
+	}
+
 	var resp mockLLMResponse
+
+	// 压缩调用检测：无 tools 且设置了 compressResponse
+	if len(req.Tools) == 0 && m.compressResponse != "" {
+		resp = mockLLMResponse{content: m.compressResponse}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id": "compress_mock",
+			"choices": []map[string]interface{}{
+				{"index": 0, "message": map[string]interface{}{
+					"role":    "assistant",
+					"content": resp.content,
+				}, "finish_reason": "stop"},
+			},
+		})
+		return
+	}
+
 	m.mu.Lock()
 	if len(m.queue) > 0 {
 		resp = m.queue[0]
@@ -231,3 +258,6 @@ type rtAgentFactory struct {
 func (f *rtAgentFactory) NewAgent(systemPrompt string) workplan.Agent {
 	return f.rt.NewAgent(systemPrompt, 1)
 }
+
+// strPtr 返回字符串指针，用于构造 Message.Content。
+func strPtr(s string) *string { return &s }

@@ -314,9 +314,14 @@ func (wp *WorkPlan) primitiveFork(ctx context.Context, n *node, prevJSON string)
 	results := make([]branchResult, len(n.forkBranches))
 	var wg sync.WaitGroup
 
+	const maxConcurrentFork = 3
+	sem := make(chan struct{}, maxConcurrentFork)
+
 	for i, branch := range n.forkBranches {
 		wg.Add(1)
 		go func(i int, b ForkBranch) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			defer wg.Done()
 			input := wp.primitiveRenderInput(b.Input, prevJSON)
 			prompt := b.SystemPrompt
