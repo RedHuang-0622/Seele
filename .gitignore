@@ -1,6 +1,5 @@
 bin/*
 # environment
-config/*
 # test artifacts
 test/report/*
 test/log/*
