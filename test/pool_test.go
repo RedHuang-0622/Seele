@@ -27,7 +27,8 @@ import (
 	"testing"
 	"time"
 
-	runtime "github.com/sukasukasuka123/Seele"
+	core "github.com/sukasukasuka123/Seele/core"
+	types "github.com/sukasukasuka123/Seele/types"
 )
 
 // =============================================================================
@@ -42,7 +43,7 @@ func TestPool_AgentPipeline(t *testing.T) {
 		llmSrv := newAutoMockLLM("tool_0", `{}`, `"all done"`)
 		defer llmSrv.Close()
 
-		rt, _ := runtime.NewRuntime(runtime.LLMConfig{
+		rt, _ := core.NewRuntime(types.LLMConfig{
 			BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
 		})
 		prov := newMockProvider("pressure")
@@ -88,7 +89,7 @@ func TestPool_AgentPipeline(t *testing.T) {
 		llmSrv := newAutoMockLLM("tool_0", `{}`, `"all done"`)
 		defer llmSrv.Close()
 
-		rt, _ := runtime.NewRuntime(runtime.LLMConfig{
+		rt, _ := core.NewRuntime(types.LLMConfig{
 			BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
 		})
 		prov := newMockProvider("fork_sim")
@@ -208,7 +209,7 @@ func TestPool_AgentConnectionRelease(t *testing.T) {
 	llmSrv := newAutoMockLLM("tool_0", `{}`, `"done"`)
 	defer llmSrv.Close()
 
-	rt, _ := runtime.NewRuntime(runtime.LLMConfig{
+	rt, _ := core.NewRuntime(types.LLMConfig{
 		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
 	})
 
@@ -266,7 +267,7 @@ func TestPool_AgentQueueBuildup(t *testing.T) {
 	llmSrv := newAutoMockLLM("tool_0", `{}`, `"done"`)
 	defer llmSrv.Close()
 
-	rt, _ := runtime.NewRuntime(runtime.LLMConfig{
+	rt, _ := core.NewRuntime(types.LLMConfig{
 		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 10,
 	})
 
@@ -465,7 +466,7 @@ func TestPool_RegisterUnregisterRace(t *testing.T) {
 	llmSrv := newAutoMockLLM("stable_tool", `{}`, `"done"`)
 	defer llmSrv.Close()
 
-	rt, _ := runtime.NewRuntime(runtime.LLMConfig{
+	rt, _ := core.NewRuntime(types.LLMConfig{
 		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
 	})
 

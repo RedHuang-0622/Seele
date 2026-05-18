@@ -1,9 +1,12 @@
-package Seele
+package history
 
 import (
 	"context"
 	"fmt"
 	"log"
+
+	llm "github.com/sukasukasuka123/Seele/llm"
+	types "github.com/sukasukasuka123/Seele/types"
 )
 
 // keepRecent 在压缩时始终保留的最后 N 条非 system 消息。
@@ -32,7 +35,7 @@ const compressMaxTokens = 300
 //  4. 若压缩后 token 数仍超限，fallback 到硬截断
 //
 // 返回压缩后的 history；永远不会返回 nil。
-func CompressHistory(ctx context.Context, client *chatClient, history []Message, maxTokens int) ([]Message, error) {
+func CompressHistory(ctx context.Context, client *llm.ChatClient, history []types.Message, maxTokens int) ([]types.Message, error) {
 	if maxTokens <= 0 {
 		maxTokens = MaxContextTokens
 	}
@@ -44,7 +47,7 @@ func CompressHistory(ctx context.Context, client *chatClient, history []Message,
 		return TrimHistory(history, maxTokens), nil
 	}
 
-	keep := rest[len(rest)-keepRecent:]        // 最近 N 条完整保留
+	keep := rest[len(rest)-keepRecent:]         // 最近 N 条完整保留
 	compressible := rest[:len(rest)-keepRecent] // 剩余为可压缩部分
 
 	if len(compressible) == 0 {
@@ -62,10 +65,10 @@ func CompressHistory(ctx context.Context, client *chatClient, history []Message,
 	}
 
 	// 4. 组装压缩后的 history：system + 压缩摘要 + 近期消息
-	compressed := make([]Message, 0, len(sys)+1+len(keep))
+	compressed := make([]types.Message, 0, len(sys)+1+len(keep))
 	compressed = append(compressed, sys...)
 	summaryText := "[Context summary of earlier execution: " + summary + "]"
-	compressed = append(compressed, Message{
+	compressed = append(compressed, types.Message{
 		Role:    "system",
 		Content: &summaryText,
 	})
@@ -87,7 +90,7 @@ func CompressHistory(ctx context.Context, client *chatClient, history []Message,
 // ── 内部辅助 ───────────────────────────────────────────────────────
 
 // splitSystem 分离 system 消息和非 system 消息。
-func splitSystem(msgs []Message) (sys, rest []Message) {
+func splitSystem(msgs []types.Message) (sys, rest []types.Message) {
 	for _, m := range msgs {
 		if m.Role == "system" {
 			sys = append(sys, m)
@@ -99,7 +102,7 @@ func splitSystem(msgs []Message) (sys, rest []Message) {
 }
 
 // buildCompressInput 将可压缩消息序列化为 LLM 可读的文本。
-func buildCompressInput(msgs []Message) string {
+func buildCompressInput(msgs []types.Message) string {
 	var b []byte
 	for _, m := range msgs {
 		switch m.Role {
@@ -131,30 +134,30 @@ func buildCompressInput(msgs []Message) string {
 
 // callCompressLLM 调用 chatClient 生成压缩摘要。
 // 使用空的工具列表，确保 LLM 不会发起 tool_call。
-func callCompressLLM(ctx context.Context, client *chatClient, input string) (string, error) {
+func callCompressLLM(ctx context.Context, client *llm.ChatClient, input string) (string, error) {
 	if input == "" {
 		return "no previous context to summarize", nil
 	}
 
 	// 保存原始配置
-	origMaxTokens := client.cfg.MaxTokens
-	origTemperature := client.cfg.Temperature
+	origMaxTokens := client.Cfg.MaxTokens
+	origTemperature := client.Cfg.Temperature
 
 	// 临时覆盖：低 max_tokens + 低温 = 简洁摘要
-	client.cfg.MaxTokens = compressMaxTokens
-	client.cfg.Temperature = 0.3
+	client.Cfg.MaxTokens = compressMaxTokens
+	client.Cfg.Temperature = 0.3
 	defer func() {
-		client.cfg.MaxTokens = origMaxTokens
-		client.cfg.Temperature = origTemperature
+		client.Cfg.MaxTokens = origMaxTokens
+		client.Cfg.Temperature = origTemperature
 	}()
 
-	messages := []Message{
+	messages := []types.Message{
 		{Role: "system", Content: strPtr(compressSystemPrompt)},
 		{Role: "user", Content: &input},
 	}
 
 	// 不传 tools → LLM 无法发起 tool_call，直接返回文本
-	msg, err := client.complete(ctx, messages, nil)
+	msg, err := client.Complete(ctx, messages, nil)
 	if err != nil {
 		return "", err
 	}

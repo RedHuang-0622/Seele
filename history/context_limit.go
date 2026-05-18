@@ -1,6 +1,10 @@
-package Seele
+package history
 
-import "strings"
+import (
+	"strings"
+
+	types "github.com/sukasukasuka123/Seele/types"
+)
 
 // ── 上下文预算常量 ─────────────────────────────────────────────────
 
@@ -34,7 +38,7 @@ func EstimateTokens(text string) int {
 
 // EstimateMessageTokens 估算单条 Message 的 token 开销。
 // 包含 role 字段的固定开销（约 10 token）和内容 token。
-func EstimateMessageTokens(msg Message) int {
+func EstimateMessageTokens(msg types.Message) int {
 	n := 10 // role + JSON 结构开销
 	if msg.Content != nil {
 		n += EstimateTokens(*msg.Content)
@@ -57,7 +61,7 @@ func EstimateMessageTokens(msg Message) int {
 }
 
 // EstimateHistoryTokens 估算全部历史消息的总 token 数。
-func EstimateHistoryTokens(msgs []Message) int {
+func EstimateHistoryTokens(msgs []types.Message) int {
 	total := 0
 	for _, m := range msgs {
 		total += EstimateMessageTokens(m)
@@ -89,14 +93,14 @@ func TruncateToolResult(content string) string {
 //   - 始终保留 system 消息
 //   - 从最旧的非 system 消息开始丢弃，直到总 token 数 ≤ maxTokens
 //   - 若单条消息超过 maxTokens（罕见，如超大 tool 结果），截断其内容
-func TrimHistory(msgs []Message, maxTokens int) []Message {
+func TrimHistory(msgs []types.Message, maxTokens int) []types.Message {
 	if maxTokens <= 0 {
 		maxTokens = MaxContextTokens
 	}
 
 	// 分离 system 消息和非 system 消息
-	var sys []Message
-	var rest []Message
+	var sys []types.Message
+	var rest []types.Message
 	for _, m := range msgs {
 		if m.Role == "system" {
 			sys = append(sys, m)
@@ -133,6 +137,6 @@ func TrimHistory(msgs []Message, maxTokens int) []Message {
 
 // NeedCompression 判断历史消息是否需要压缩。
 // 当总 token 数超过 CompressThreshold 时返回 true。
-func NeedCompression(msgs []Message) bool {
+func NeedCompression(msgs []types.Message) bool {
 	return EstimateHistoryTokens(msgs) > CompressThreshold
 }

@@ -21,7 +21,10 @@ import (
 	"log"
 	"time"
 
-	runtime "github.com/sukasukasuka123/Seele"
+	config "github.com/sukasukasuka123/Seele/config"
+	core "github.com/sukasukasuka123/Seele/core"
+	provider "github.com/sukasukasuka123/Seele/provider"
+	types "github.com/sukasukasuka123/Seele/types"
 	pb "github.com/sukasukasuka123/microHub/proto/gen/proto"
 	hubbase "github.com/sukasukasuka123/microHub/root_class/hub"
 	registry "github.com/sukasukasuka123/microHub/service_registry"
@@ -72,10 +75,10 @@ func (l *stdLogger) Errorf(f string, a ...interface{}) {
 // Engine 管理完整的 Seele 运行时生命周期。
 // 通过 New 创建，通过 Shutdown 关闭。Engine 并发安全。
 type Engine struct {
-	rt          *runtime.Runtime
+	rt          *core.Runtime
 	hub         *hubbase.BaseHub
-	hubProvider *runtime.HubProvider
-	mcpProvider *runtime.MCPProvider // 延迟初始化，首次 AttachMCPServer 时创建
+	hubProvider *provider.HubProvider
+	mcpProvider *provider.MCPProvider // 延迟初始化，首次 AttachMCPServer 时创建
 	opts        Options
 	shutdown    chan struct{}
 }
@@ -108,17 +111,17 @@ func New(opts Options) (*Engine, error) {
 	opts.Logger.Infof("hub listening on %s", opts.HubAddr)
 
 	// 3. 加载 LLM 配置，创建 Runtime
-	llmCfg, err := runtime.LoadConfig(opts.LLMConfigPath)
+	llmCfg, err := config.LoadConfig(opts.LLMConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("seele/api: load llm config %q: %w", opts.LLMConfigPath, err)
 	}
-	rt, err := runtime.NewRuntime(llmCfg)
+	rt, err := core.NewRuntime(llmCfg)
 	if err != nil {
 		return nil, fmt.Errorf("seele/api: new runtime: %w", err)
 	}
 
 	// 4. 创建 HubProvider，注册到 Runtime
-	hubProv, err := runtime.NewHubProvider(hub, opts.ToolCallTimeOut)
+	hubProv, err := provider.NewHubProvider(hub, opts.ToolCallTimeOut)
 	if err != nil {
 		return nil, fmt.Errorf("seele/api: new hub provider: %w", err)
 	}
@@ -155,7 +158,7 @@ func (e *Engine) Shutdown() {
 // ── Agent 管理 ────────────────────────────────────────────────────
 
 // NewAgent 创建新 Agent。
-func (e *Engine) NewAgent(systemPrompt string, loopTimes int) *runtime.Agent {
+func (e *Engine) NewAgent(systemPrompt string, loopTimes int) *core.Agent {
 	return e.rt.NewAgent(systemPrompt, loopTimes)
 }
 
@@ -172,7 +175,7 @@ func (e *Engine) QuickChatStream(ctx context.Context, systemPrompt, userInput st
 // ── Hub Skill 管理 ────────────────────────────────────────────────
 
 // Skills 返回 Hub 工具的摘要列表。
-func (e *Engine) Skills() []runtime.SkillInfo {
+func (e *Engine) Skills() []types.SkillInfo {
 	return e.hubProvider.Skills()
 }
 
@@ -196,7 +199,7 @@ func (e *Engine) Restore(name string) { e.hubProvider.Restore(name) }
 //	    Args:      []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"},
 //	    Env:       []string{"LOG_LEVEL=debug"},  // 格式 "KEY=VALUE"
 //	})
-func (e *Engine) AttachMCPServer(ctx context.Context, cfg runtime.MCPServerConfig) error {
+func (e *Engine) AttachMCPServer(ctx context.Context, cfg provider.MCPServerConfig) error {
 	e.ensureMCPProvider()
 	return e.mcpProvider.Attach(ctx, cfg)
 }
@@ -227,7 +230,7 @@ func (e *Engine) MCPServers() []string {
 // ── 底层访问 ──────────────────────────────────────────────────────
 
 // Runtime 暴露底层 Runtime，供需要精细控制的场景使用。
-func (e *Engine) Runtime() *runtime.Runtime { return e.rt }
+func (e *Engine) Runtime() *core.Runtime { return e.rt }
 
 // ── AgentPool ─────────────────────────────────────────────────────
 
@@ -239,7 +242,7 @@ type AgentPool struct {
 
 type namedAgent struct {
 	label string
-	agent *runtime.Agent
+	agent *core.Agent
 }
 
 func (e *Engine) NewAgentPool() *AgentPool {
@@ -259,7 +262,7 @@ func (p *AgentPool) Switch(idx int) error {
 	return nil
 }
 
-func (p *AgentPool) Current() *runtime.Agent {
+func (p *AgentPool) Current() *core.Agent {
 	if len(p.agents) == 0 {
 		return nil
 	}
@@ -322,7 +325,7 @@ func (e *Engine) ensureMCPProvider() {
 	if e.mcpProvider != nil {
 		return
 	}
-	e.mcpProvider = runtime.NewMCPProvider()
+	e.mcpProvider = provider.NewMCPProvider()
 	e.rt.Register(e.mcpProvider)
 	e.opts.Logger.Infof("MCP provider initialized")
 }

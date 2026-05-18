@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	runtime "github.com/sukasukasuka123/Seele"
+	types "github.com/sukasukasuka123/Seele/types"
 	"github.com/sukasukasuka123/Seele/sdk/api"
 )
 
@@ -120,7 +120,7 @@ func newProbeEngine(t *testing.T, regPath, cfgPath, hubAddr string) *api.Engine 
 }
 
 // skillNames 提取 SkillInfo 列表中的名称集合。
-func skillNames(skills []runtime.SkillInfo) map[string]bool {
+func skillNames(skills []types.SkillInfo) map[string]bool {
 	m := make(map[string]bool, len(skills))
 	for _, s := range skills {
 		m[s.Name] = true

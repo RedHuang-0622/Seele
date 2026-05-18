@@ -1,6 +1,10 @@
-package Seele
+package provider
 
-import "context"
+import (
+	"context"
+
+	types "github.com/sukasukasuka123/Seele/types"
+)
 
 // ToolProvider 是工具来源的统一抽象。
 //
@@ -17,7 +21,7 @@ type ToolProvider interface {
 
 	// Tools 返回当前可用工具列表（格式：OpenAI function calling schema）
 	// 每次 LLM 调用前都会调用此方法，实现应保证热更新
-	Tools() []Tool
+	Tools() []types.Tool
 
 	// Dispatch 执行指定工具，返回结果 JSON 字符串
 	// name 为工具名（与 Tools() 中 Function.Name 一致）

@@ -1,4 +1,4 @@
-package Seele
+package core
 
 import (
 	"context"
@@ -6,6 +6,10 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/sukasukasuka123/Seele/llm"
+	"github.com/sukasukasuka123/Seele/provider"
+	"github.com/sukasukasuka123/Seele/types"
 )
 
 // Runtime 是工具调度的中枢，负责：
@@ -17,19 +21,19 @@ import (
 // Runtime 本身不感知任何具体协议（gRPC / MCP / HTTP）。
 // 并发安全：所有对 providers 的读写都通过 mu 保护。
 type Runtime struct {
-	llm       *chatClient
+	llm       *llm.ChatClient
 	mu        sync.RWMutex
-	providers []ToolProvider // 按注册顺序排列，dispatch 时按序查找
+	providers []provider.ToolProvider // 按注册顺序排列，dispatch 时按序查找
 }
 
 // NewRuntime 创建 Runtime。
 // 至少需要一个有效的 LLMConfig，provider 可在创建后通过 Register 注册。
-func NewRuntime(llmCfg LLMConfig) (*Runtime, error) {
+func NewRuntime(llmCfg types.LLMConfig) (*Runtime, error) {
 	if llmCfg.BaseURL == "" || llmCfg.Model == "" {
 		return nil, fmt.Errorf("Runtime: LLMConfig requires BaseURL and Model")
 	}
 	return &Runtime{
-		llm: newChatClient(llmCfg),
+		llm: llm.NewChatClient(llmCfg),
 	}, nil
 }
 
@@ -38,7 +42,7 @@ func NewRuntime(llmCfg LLMConfig) (*Runtime, error) {
 // Register 注册一个 ToolProvider。
 // 同名 provider 会追加（不去重），调用方负责保证唯一性。
 // 注册顺序即 dispatch 的路由优先级：先注册的先匹配。
-func (r *Runtime) Register(p ToolProvider) {
+func (r *Runtime) Register(p provider.ToolProvider) {
 	r.mu.Lock()
 	r.providers = append(r.providers, p)
 	r.mu.Unlock()
@@ -73,7 +77,7 @@ func (r *Runtime) NewAgent(systemPrompt string, loopTimes int) *Agent {
 		maxLoops:  loopTimes,
 	}
 	if systemPrompt != "" {
-		a.history = []Message{{Role: "system", Content: &systemPrompt}}
+		a.history = []types.Message{{Role: "system", Content: &systemPrompt}}
 	}
 	return a
 }
@@ -82,12 +86,12 @@ func (r *Runtime) NewAgent(systemPrompt string, loopTimes int) *Agent {
 
 // tools 聚合所有已注册 provider 的工具列表。
 // 每次调用都实时读取，支持热更新（如 MCP Server 动态增减工具）。
-func (r *Runtime) tools() []Tool {
+func (r *Runtime) tools() []types.Tool {
 	r.mu.RLock()
 	providers := r.providers
 	r.mu.RUnlock()
 
-	var result []Tool
+	var result []types.Tool
 	for _, p := range providers {
 		result = append(result, p.Tools()...)
 	}

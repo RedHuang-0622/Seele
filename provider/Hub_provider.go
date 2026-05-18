@@ -1,4 +1,4 @@
-package Seele
+package provider
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	types "github.com/sukasukasuka123/Seele/types"
 	jsonSchema "github.com/sukasukasuka123/microHub/jsonSchema"
 	"github.com/sukasukasuka123/microHub/pb_api"
 	hubbase "github.com/sukasukasuka123/microHub/root_class/hub"
@@ -74,12 +75,12 @@ func (p *HubProvider) Restore(name string) {
 
 // ── ToolProvider 接口实现 ─────────────────────────────────────────
 
-func (p *HubProvider) Tools() []Tool {
+func (p *HubProvider) Tools() []types.Tool {
 	retired := p.retiredSnapshot()
 	all := registry.GetOnlineTools()
 
 	newIndex := make(map[string]struct{}, len(all))
-	result := make([]Tool, 0, len(all))
+	result := make([]types.Tool, 0, len(all))
 
 	for _, t := range all {
 		if registry.IsOffline(t.Addr) {
@@ -89,9 +90,9 @@ func (p *HubProvider) Tools() []Tool {
 			continue
 		}
 		newIndex[t.Name] = struct{}{}
-		result = append(result, Tool{
+		result = append(result, types.Tool{
 			Type: "function",
-			Function: ToolFunction{
+			Function: types.ToolFunction{
 				Name:        t.Name,
 				Description: t.Method,
 				Parameters:  buildParameters(t.InputSchema),
@@ -181,10 +182,10 @@ func (p *HubProvider) Dispatch(ctx context.Context, name, argsJSON string) (stri
 
 // ── Skills 摘要（供 Engine.Skills() 使用）────────────────────────
 
-func (p *HubProvider) Skills() []SkillInfo {
+func (p *HubProvider) Skills() []types.SkillInfo {
 	retired := p.retiredSnapshot()
 	all := registry.GetOnlineTools()
-	result := make([]SkillInfo, 0, len(all))
+	result := make([]types.SkillInfo, 0, len(all))
 	for _, t := range all {
 		if registry.IsOffline(t.Addr) {
 			continue
@@ -192,7 +193,7 @@ func (p *HubProvider) Skills() []SkillInfo {
 		if _, blocked := retired[t.Name]; blocked {
 			continue
 		}
-		result = append(result, SkillInfo{
+		result = append(result, types.SkillInfo{
 			Name:        t.Name,
 			Method:      t.Method,
 			Description: t.Method,

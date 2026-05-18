@@ -11,7 +11,8 @@ import (
 	"net/http/httptest"
 	"sync"
 
-	runtime "github.com/sukasukasuka123/Seele"
+	core "github.com/sukasukasuka123/Seele/core"
+	types "github.com/sukasukasuka123/Seele/types"
 	"github.com/sukasukasuka123/Seele/workplan"
 )
 
@@ -21,7 +22,7 @@ import (
 
 type mockProvider struct {
 	name    string
-	tools   []runtime.Tool
+	tools   []types.Tool
 	toolIdx map[string]struct{}
 }
 
@@ -32,17 +33,17 @@ func newMockProvider(name string) *mockProvider {
 	}
 }
 
-func (p *mockProvider) ProviderName() string              { return p.name }
-func (p *mockProvider) Tools() []runtime.Tool             { return p.tools }
-func (p *mockProvider) HasTool(name string) bool          { _, ok := p.toolIdx[name]; return ok }
+func (p *mockProvider) ProviderName() string     { return p.name }
+func (p *mockProvider) Tools() []types.Tool    { return p.tools }
+func (p *mockProvider) HasTool(name string) bool { _, ok := p.toolIdx[name]; return ok }
 func (p *mockProvider) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
 	return `{"status":"ok","tool":"` + name + `","args":` + argsJSON + `}`, nil
 }
 
 func (p *mockProvider) AddTool(name, desc string) {
-	p.tools = append(p.tools, runtime.Tool{
+	p.tools = append(p.tools, types.Tool{
 		Type: "function",
-		Function: runtime.ToolFunction{
+		Function: types.ToolFunction{
 			Name:        name,
 			Description: desc,
 			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
@@ -59,7 +60,7 @@ func (p *mockProvider) AddTool(name, desc string) {
 // content 非空表示纯文本回复，toolCalls 非空表示工具调用回复。
 type mockLLMResponse struct {
 	content   string
-	toolCalls []runtime.ToolCall
+	toolCalls []types.ToolCall
 }
 
 // mockLLMServer 提供 OpenAI 兼容的 /chat/completions 端点，
@@ -86,7 +87,7 @@ func (m *mockLLMServer) EnqueueText(content string) {
 }
 
 // EnqueueToolCalls 向回复队列追加一条工具调用回复。
-func (m *mockLLMServer) EnqueueToolCalls(toolCalls []runtime.ToolCall) {
+func (m *mockLLMServer) EnqueueToolCalls(toolCalls []types.ToolCall) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.queue = append(m.queue, mockLLMResponse{toolCalls: toolCalls})
@@ -98,8 +99,8 @@ func (m *mockLLMServer) Close() { m.server.Close() }
 
 func (m *mockLLMServer) handler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Messages []runtime.Message `json:"messages"`
-		Tools    []runtime.Tool    `json:"tools"`
+		Messages []types.Message `json:"messages"`
+		Tools    []types.Tool    `json:"tools"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", 400)
@@ -187,13 +188,13 @@ func newAutoMockLLM(toolName, toolArgs, finalText string) *autoMockLLM {
 	return m
 }
 
-func (m *autoMockLLM) URL() string    { return m.server.URL }
-func (m *autoMockLLM) Close()         { m.server.Close() }
+func (m *autoMockLLM) URL() string { return m.server.URL }
+func (m *autoMockLLM) Close()      { m.server.Close() }
 
 func (m *autoMockLLM) handler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Messages []runtime.Message `json:"messages"`
-		Tools    []runtime.Tool    `json:"tools"`
+		Messages []types.Message `json:"messages"`
+		Tools    []types.Tool    `json:"tools"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", 400)
@@ -201,7 +202,7 @@ func (m *autoMockLLM) handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var content *string
-	var toolCalls []runtime.ToolCall
+	var toolCalls []types.ToolCall
 
 	lastRole := ""
 	if len(req.Messages) > 0 {
@@ -214,11 +215,11 @@ func (m *autoMockLLM) handler(w http.ResponseWriter, r *http.Request) {
 		content = &s
 	} else if len(req.Tools) > 0 && m.toolName != "" {
 		// 有可用工具且未执行 → 发起 tool_call
-		toolCalls = []runtime.ToolCall{
+		toolCalls = []types.ToolCall{
 			{
 				ID:   "call_auto",
 				Type: "function",
-				Function: runtime.ToolCallFunction{
+				Function: types.ToolCallFunction{
 					Name:      m.toolName,
 					Arguments: m.toolArgs,
 				},
@@ -252,7 +253,7 @@ func (m *autoMockLLM) handler(w http.ResponseWriter, r *http.Request) {
 // rtAgentFactory 从 Runtime 创建 Agent，用于 WorkPlan 测试。
 // 每个 Agent 是 Runtime.NewAgent 返回的真实 Agent，会走完整的 LLM ReAct 循环。
 type rtAgentFactory struct {
-	rt *runtime.Runtime
+	rt *core.Runtime
 }
 
 func (f *rtAgentFactory) NewAgent(systemPrompt string) workplan.Agent {

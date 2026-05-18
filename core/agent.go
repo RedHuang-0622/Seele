@@ -1,4 +1,4 @@
-package Seele
+package core
 
 import (
 	"context"
@@ -7,6 +7,10 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	history "github.com/sukasukasuka123/Seele/history"
+	"github.com/sukasukasuka123/Seele/provider"
+	types "github.com/sukasukasuka123/Seele/types"
 )
 
 // Agent 是绑定到单个会话的智能体实例。
@@ -21,7 +25,7 @@ import (
 type Agent struct {
 	runtime   *Runtime
 	sessionID string
-	history   []Message
+	history   []types.Message
 	maxLoops  int
 }
 
@@ -31,15 +35,15 @@ func (a *Agent) SessionID() string {
 }
 
 // History 返回当前对话历史的只读副本。
-func (a *Agent) History() []Message {
-	cp := make([]Message, len(a.history))
+func (a *Agent) History() []types.Message {
+	cp := make([]types.Message, len(a.history))
 	copy(cp, a.history)
 	return cp
 }
 
 // ClearHistory 清空对话历史，但保留 system 消息（如有）。
 func (a *Agent) ClearHistory() {
-	var sys []Message
+	var sys []types.Message
 	for _, m := range a.history {
 		if m.Role == "system" {
 			sys = append(sys, m)
@@ -60,7 +64,7 @@ func (a *Agent) SetMaxLoops(n int) {
 }
 
 // ForceAppendHistory 直接向对话历史追加一条消息（仅用于测试）。
-func (a *Agent) ForceAppendHistory(msg Message) {
+func (a *Agent) ForceAppendHistory(msg types.Message) {
 	a.history = append(a.history, msg)
 }
 
@@ -76,28 +80,28 @@ func (a *Agent) ForceAppendHistory(msg Message) {
 // 每轮开始前都会实时读取 registry 刷新工具列表，支持热更新。
 func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 	if userInput != "" {
-		a.history = append(a.history, Message{Role: "user", Content: &userInput})
+		a.history = append(a.history, types.Message{Role: "user", Content: &userInput})
 	}
 
 	tools := a.runtime.tools()
 
 	for loop := 0; loop < a.maxLoops; loop++ {
-		if NeedCompression(a.history) {
-			compressed, err := CompressHistory(ctx, a.runtime.llm, a.history, MaxContextTokens)
+		if history.NeedCompression(a.history) {
+			compressed, err := history.CompressHistory(ctx, a.runtime.llm, a.history, history.MaxContextTokens)
 			if err != nil {
 				log.Printf("[agent.Chat] session:[%s] compression failed: %v, using hard trim", a.sessionID, err)
-				a.history = TrimHistory(a.history, MaxContextTokens)
+				a.history = history.TrimHistory(a.history, history.MaxContextTokens)
 			} else {
 				a.history = compressed
 			}
 		}
 
-		msg, err := a.runtime.llm.complete(ctx, a.history, tools)
+		msg, err := a.runtime.llm.Complete(ctx, a.history, tools)
 		if err != nil {
 			return "", fmt.Errorf("agent[%s] chat loop %d: %w", a.sessionID, loop, err)
 		}
 
-		a.history = append(a.history, Message{
+		a.history = append(a.history, types.Message{
 			Role:             "assistant",
 			Content:          msg.Content,
 			ReasoningContent: msg.ReasoningContent,
@@ -127,17 +131,17 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 // 所有 chunk 拼接即完整回复，也作为返回值返回（同时追加进 history）。
 func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(delta string)) (string, error) {
 	if userInput != "" {
-		a.history = append(a.history, Message{Role: "user", Content: &userInput})
+		a.history = append(a.history, types.Message{Role: "user", Content: &userInput})
 	}
 
 	tools := a.runtime.tools()
 
 	for loop := 0; loop < a.maxLoops; loop++ {
-		if NeedCompression(a.history) {
-			compressed, err := CompressHistory(ctx, a.runtime.llm, a.history, MaxContextTokens)
+		if history.NeedCompression(a.history) {
+			compressed, err := history.CompressHistory(ctx, a.runtime.llm, a.history, history.MaxContextTokens)
 			if err != nil {
 				log.Printf("[agent.ChatStream] session:[%s] compression failed: %v, using hard trim", a.sessionID, err)
-				a.history = TrimHistory(a.history, MaxContextTokens)
+				a.history = history.TrimHistory(a.history, history.MaxContextTokens)
 			} else {
 				a.history = compressed
 			}
@@ -145,7 +149,7 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 
 		// 先缓冲所有 delta，确认非 tool_call 轮次后才推送，防止 tool_call JSON 碎片泄露
 		var chunks []string
-		fullContent, reasoningContent, toolCalls, err := a.runtime.llm.completeStream(
+		fullContent, reasoningContent, toolCalls, err := a.runtime.llm.CompleteStream(
 			ctx, a.history, tools,
 			func(delta string) {
 				chunks = append(chunks, delta)
@@ -159,7 +163,7 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 			for _, c := range chunks {
 				onChunk(c)
 			}
-			a.history = append(a.history, Message{
+			a.history = append(a.history, types.Message{
 				Role:             "assistant",
 				Content:          &fullContent,
 				ReasoningContent: reasoningContent,
@@ -168,7 +172,7 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 		}
 
 		// tool_call 轮次：丢弃缓冲的 chunks，仅保留结构化 tool_calls
-		a.history = append(a.history, Message{
+		a.history = append(a.history, types.Message{
 			Role:             "assistant",
 			Content:          &fullContent,
 			ReasoningContent: reasoningContent,
@@ -187,9 +191,9 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 //
 // 瞬时错误（ErrToolUnavailable）不注入 history，最多重试 3 次；
 // 业务错误包装为 {"error":"..."} 注入 history 供 LLM 感知。
-func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []ToolCall) {
+func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCall) {
 	type dispatchResult struct {
-		tc        ToolCall
+		tc        types.ToolCall
 		content   string
 		transient bool
 	}
@@ -201,14 +205,14 @@ func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []ToolCall) {
 		var wg sync.WaitGroup
 		for i, tc := range toolCalls {
 			wg.Add(1)
-			go func(i int, tc ToolCall) {
+			go func(i int, tc types.ToolCall) {
 				defer wg.Done()
 				start := time.Now()
 				result, dispErr := a.runtime.dispatch(ctx, tc.Function.Name, tc.Function.Arguments)
 				elapsed := time.Since(start).Milliseconds()
 
 				if dispErr != nil {
-					if errors.Is(dispErr, ErrToolUnavailable) {
+					if errors.Is(dispErr, provider.ErrToolUnavailable) {
 						log.Printf("[agent.dispatch] session:[%s] tool_call %s UNAVAILABLE (%dms), retry %d/%d: %v",
 							a.sessionID, tc.Function.Name, elapsed, retries+1, maxDispatchRetries, dispErr)
 						results[i] = dispatchResult{tc: tc, transient: true}
@@ -245,8 +249,8 @@ func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []ToolCall) {
 		if r.transient {
 			continue
 		}
-		content := TruncateToolResult(r.content)
-		a.history = append(a.history, Message{
+		content := history.TruncateToolResult(r.content)
+		a.history = append(a.history, types.Message{
 			Role:       "tool",
 			ToolCallID: r.tc.ID,
 			Name:       r.tc.Function.Name,

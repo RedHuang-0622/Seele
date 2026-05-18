@@ -1,4 +1,4 @@
-package Seele
+package provider
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
+	types "github.com/sukasukasuka123/Seele/types"
 )
 
 // MCPServerConfig 单个 MCP Server 的连接配置。
@@ -40,7 +41,7 @@ type mcpServerConn struct {
 	// client 是 mcp-go 的统一 Client 接口（Stdio/SSE 均实现此接口）
 	client *mcpclient.Client
 	// tools 缓存从 MCP Server 拉取的工具列表（转为内部 Tool 格式）
-	tools []Tool
+	tools []types.Tool
 	// toolSet 是 toolName → struct{} 的快速查找表，随 tools 同步更新
 	toolSet map[string]struct{}
 }
@@ -174,12 +175,12 @@ func (p *MCPProvider) RefreshTools(ctx context.Context, serverName string) error
 // Tools 汇总所有 MCP Server 的工具。
 // 多 server 时加 "serverName__toolName" 前缀防冲突；
 // 单 server 时保持原始工具名，LLM 提示更简洁。
-func (p *MCPProvider) Tools() []Tool {
+func (p *MCPProvider) Tools() []types.Tool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
 	multiServer := len(p.servers) > 1
-	var result []Tool
+	var result []types.Tool
 
 	for serverName, conn := range p.servers {
 		for _, t := range conn.tools {
@@ -256,13 +257,13 @@ func (p *MCPProvider) Dispatch(ctx context.Context, name, argsJSON string) (stri
 // ── 内部工具方法 ───────────────────────────────────────────────────
 
 // fetchTools 从已连接的 MCP Server 拉取工具列表，转为内部 Tool 格式。
-func (p *MCPProvider) fetchTools(ctx context.Context, c *mcpclient.Client) ([]Tool, map[string]struct{}, error) {
+func (p *MCPProvider) fetchTools(ctx context.Context, c *mcpclient.Client) ([]types.Tool, map[string]struct{}, error) {
 	resp, err := c.ListTools(ctx, mcp.ListToolsRequest{})
 	if err != nil {
 		return nil, nil, err
 	}
 
-	tools := make([]Tool, 0, len(resp.Tools))
+	tools := make([]types.Tool, 0, len(resp.Tools))
 	toolSet := make(map[string]struct{}, len(resp.Tools))
 
 	for _, mt := range resp.Tools {
@@ -274,9 +275,9 @@ func (p *MCPProvider) fetchTools(ctx context.Context, c *mcpclient.Client) ([]To
 			params = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
 		}
 
-		tools = append(tools, Tool{
+		tools = append(tools, types.Tool{
 			Type: "function",
-			Function: ToolFunction{
+			Function: types.ToolFunction{
 				Name:        mt.Name,
 				Description: mt.Description,
 				Parameters:  params,

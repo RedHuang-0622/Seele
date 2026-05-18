@@ -15,7 +15,7 @@ import (
 	"log"
 	"time"
 
-	Seele "github.com/sukasukasuka123/Seele"
+	provider "github.com/sukasukasuka123/Seele/provider"
 	"github.com/sukasukasuka123/Seele/sdk/api"
 )
 
@@ -33,7 +33,7 @@ func main() {
 
 	// ── 挂载 MCP Server（stdio 模式）────────────────────────────
 	// 方式一：filesystem server（读写本地文件）
-	err = engine.AttachMCPServer(ctx, Seele.MCPServerConfig{
+	err = engine.AttachMCPServer(ctx, provider.MCPServerConfig{
 		Name:      "filesystem",
 		Transport: "stdio",
 		Command:   "npx",
@@ -48,7 +48,7 @@ func main() {
 	}
 
 	// 方式二：fetch server（HTTP 请求）
-	err = engine.AttachMCPServer(ctx, Seele.MCPServerConfig{
+	err = engine.AttachMCPServer(ctx, provider.MCPServerConfig{
 		Name:      "fetch",
 		Transport: "stdio",
 		Command:   "uvx",
@@ -61,7 +61,7 @@ func main() {
 	}
 
 	// 方式三：SSE 模式（远程 MCP Server）
-	err = engine.AttachMCPServer(ctx, Seele.MCPServerConfig{
+	err = engine.AttachMCPServer(ctx, provider.MCPServerConfig{
 		Name:      "remote-tools",
 		Transport: "sse",
 		URL:       "http://your-mcp-server.example.com/sse",

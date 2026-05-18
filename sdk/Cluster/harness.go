@@ -1,3 +1,5 @@
+package cluster
+
 // Package agent 提供通用 Agent 进程 Harness。
 //
 // Harness 负责 Agent 进程的完整生命周期（框架层）：
@@ -25,17 +27,15 @@
 //	TOOLS_REGISTRY    工具地址簿路径
 //	LLM_CONFIG        LLM 配置文件路径
 //	AGENT_PORT        覆盖监听端口（默认读 registry network.port）
-package agent
-
 import (
 	"fmt"
 	"log"
 	"os"
 	"time"
 
-	tool "github.com/sukasukasuka123/microHub/root_class/tool"
 	seeleapi "github.com/sukasukasuka123/Seele/sdk/api"
 	"github.com/sukasukasuka123/Seele/workplan"
+	tool "github.com/sukasukasuka123/microHub/root_class/tool"
 	"gopkg.in/yaml.v3"
 )
 

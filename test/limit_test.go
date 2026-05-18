@@ -14,7 +14,10 @@ import (
 	"testing"
 	"time"
 
-	runtime "github.com/sukasukasuka123/Seele"
+	core "github.com/sukasukasuka123/Seele/core"
+	history "github.com/sukasukasuka123/Seele/history"
+	prov "github.com/sukasukasuka123/Seele/provider"
+	types "github.com/sukasukasuka123/Seele/types"
 	"github.com/sukasukasuka123/Seele/workplan"
 )
 
@@ -30,7 +33,7 @@ import (
 // failCount 控制前 N 次调用返回错误，之后返回成功。
 type controllableProvider struct {
 	name      string
-	tools     []runtime.Tool
+	tools     []types.Tool
 	toolIdx   map[string]struct{}
 	failMode        string        // "transient" | "permanent" | ""
 	failCount       int           // 前 N 次失败，0 表示永远失败
@@ -48,7 +51,7 @@ func newControllableProvider(name string) *controllableProvider {
 }
 
 func (p *controllableProvider) ProviderName() string              { return p.name }
-func (p *controllableProvider) Tools() []runtime.Tool             { return p.tools }
+func (p *controllableProvider) Tools() []types.Tool             { return p.tools }
 func (p *controllableProvider) HasTool(name string) bool          { _, ok := p.toolIdx[name]; return ok }
 
 func (p *controllableProvider) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
@@ -74,7 +77,7 @@ func (p *controllableProvider) Dispatch(ctx context.Context, name, argsJSON stri
 	switch p.failMode {
 	case "transient":
 		return "", fmt.Errorf("%w: %s: simulated unavailability (call %d)",
-			runtime.ErrToolUnavailable, name, count)
+			prov.ErrToolUnavailable, name, count)
 	case "permanent":
 		return "", fmt.Errorf("%s: simulated business error (call %d)", name, count)
 	default:
@@ -91,9 +94,9 @@ func (p *controllableProvider) SetFailMode(mode string, failCount int) {
 }
 
 func (p *controllableProvider) AddTool(name, desc string) {
-	p.tools = append(p.tools, runtime.Tool{
+	p.tools = append(p.tools, types.Tool{
 		Type: "function",
-		Function: runtime.ToolFunction{
+		Function: types.ToolFunction{
 			Name:        name,
 			Description: desc,
 			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
@@ -106,9 +109,9 @@ func (p *controllableProvider) AddTool(name, desc string) {
 // 辅助：创建带 mock LLM + controllableProvider 的 Runtime
 // =============================================================================
 
-func newTestRuntime() (*runtime.Runtime, *mockLLMServer, *controllableProvider) {
+func newTestRuntime() (*core.Runtime, *mockLLMServer, *controllableProvider) {
 	mockLLM := newMockLLMServer()
-	rt, err := runtime.NewRuntime(runtime.LLMConfig{
+	rt, err := core.NewRuntime(types.LLMConfig{
 		BaseURL: mockLLM.URL(),
 		Model:   "test-model",
 	})
@@ -154,8 +157,8 @@ func TestTransientErrorRetrySucceeds(t *testing.T) {
 	provider.SetFailMode("transient", 2)
 
 	// LLM 返回 tool_call（触发 dispatch）
-	mockLLM.EnqueueToolCalls([]runtime.ToolCall{
-		{ID: "call_1", Type: "function", Function: runtime.ToolCallFunction{
+	mockLLM.EnqueueToolCalls([]types.ToolCall{
+		{ID: "call_1", Type: "function", Function: types.ToolCallFunction{
 			Name: "test_tool", Arguments: `{"key":"val"}`,
 		}},
 	})
@@ -174,10 +177,10 @@ func TestTransientErrorRetrySucceeds(t *testing.T) {
 	}
 
 	// 验证 history 不含瞬时错误
-	history := agent.History()
-	for _, msg := range history {
+	msgs := agent.History()
+	for _, msg := range msgs {
 		if msg.Role == "tool" && msg.Content != nil {
-			if errors.Is(runtime.ErrToolUnavailable, errors.New(*msg.Content)) {
+			if errors.Is(prov.ErrToolUnavailable, errors.New(*msg.Content)) {
 				t.Errorf("history contains transient error: %q", *msg.Content)
 			}
 			// 更直接：检查内容是否包含 "ErrToolUnavailable" 或 "unavailability"
@@ -190,7 +193,7 @@ func TestTransientErrorRetrySucceeds(t *testing.T) {
 
 	// 验证 history 中 tool 角色的消息数量 = 1（只有成功的那个）
 	toolMsgCount := 0
-	for _, msg := range history {
+	for _, msg := range msgs {
 		if msg.Role == "tool" {
 			toolMsgCount++
 		}
@@ -213,8 +216,8 @@ func TestTransientErrorExhausted(t *testing.T) {
 
 	// LLM 返回 tool_call（每轮都会返回 tool_call 直到 maxLoops）
 	for i := 0; i < 5; i++ {
-		mockLLM.EnqueueToolCalls([]runtime.ToolCall{
-			{ID: "call_1", Type: "function", Function: runtime.ToolCallFunction{
+		mockLLM.EnqueueToolCalls([]types.ToolCall{
+			{ID: "call_1", Type: "function", Function: types.ToolCallFunction{
 				Name: "test_tool", Arguments: `{}`,
 			}},
 		})
@@ -230,8 +233,8 @@ func TestTransientErrorExhausted(t *testing.T) {
 	}
 
 	// 验证 history 中不含瞬时错误消息
-	history := agent.History()
-	for _, msg := range history {
+	msgs := agent.History()
+	for _, msg := range msgs {
 		if msg.Role == "tool" && msg.Content != nil {
 			t.Errorf("history should not contain any tool messages, but got: %s", *msg.Content)
 		}
@@ -239,7 +242,7 @@ func TestTransientErrorExhausted(t *testing.T) {
 
 	// 验证没有 tool 角色的消息（瞬时错误全被跳过）
 	toolCount := 0
-	for _, msg := range history {
+	for _, msg := range msgs {
 		if msg.Role == "tool" {
 			toolCount++
 		}
@@ -262,8 +265,8 @@ func TestPermanentErrorNotRetried(t *testing.T) {
 
 	// LLM：第一轮返回 tool_call → dispatch 失败（永久错误注入 history）
 	// 第二轮 LLM 看到错误后决定不再调工具，直接返回文本
-	mockLLM.EnqueueToolCalls([]runtime.ToolCall{
-		{ID: "call_1", Type: "function", Function: runtime.ToolCallFunction{
+	mockLLM.EnqueueToolCalls([]types.ToolCall{
+		{ID: "call_1", Type: "function", Function: types.ToolCallFunction{
 			Name: "test_tool", Arguments: `{}`,
 		}},
 	})
@@ -402,20 +405,20 @@ func TestMixedTransientAndSuccessRetriesAll(t *testing.T) {
 	rt.Register(okProv)
 
 	// LLM 返回两个 tool_calls
-	mockLLM.EnqueueToolCalls([]runtime.ToolCall{
-		{ID: "call_a", Type: "function", Function: runtime.ToolCallFunction{
+	mockLLM.EnqueueToolCalls([]types.ToolCall{
+		{ID: "call_a", Type: "function", Function: types.ToolCallFunction{
 			Name: "tool_a", Arguments: `{}`,
 		}},
-		{ID: "call_b", Type: "function", Function: runtime.ToolCallFunction{
+		{ID: "call_b", Type: "function", Function: types.ToolCallFunction{
 			Name: "tool_b", Arguments: `{}`,
 		}},
 	})
 	// 重试后全部成功，LLM 返回最终文本
-	mockLLM.EnqueueToolCalls([]runtime.ToolCall{
-		{ID: "call_a2", Type: "function", Function: runtime.ToolCallFunction{
+	mockLLM.EnqueueToolCalls([]types.ToolCall{
+		{ID: "call_a2", Type: "function", Function: types.ToolCallFunction{
 			Name: "tool_a", Arguments: `{}`,
 		}},
-		{ID: "call_b2", Type: "function", Function: runtime.ToolCallFunction{
+		{ID: "call_b2", Type: "function", Function: types.ToolCallFunction{
 			Name: "tool_b", Arguments: `{}`,
 		}},
 	})
@@ -451,26 +454,26 @@ func TestMixedTransientAndSuccessRetriesAll(t *testing.T) {
 
 func TestErrToolUnavailableDetection(t *testing.T) {
 	// 直接错误
-	direct := runtime.ErrToolUnavailable
-	if !errors.Is(direct, runtime.ErrToolUnavailable) {
+	direct := prov.ErrToolUnavailable
+	if !errors.Is(direct, prov.ErrToolUnavailable) {
 		t.Error("direct ErrToolUnavailable should be detectable")
 	}
 
 	// 用 %w 包装一层
-	wrapped := fmt.Errorf("dispatch failed: %w", runtime.ErrToolUnavailable)
-	if !errors.Is(wrapped, runtime.ErrToolUnavailable) {
+	wrapped := fmt.Errorf("dispatch failed: %w", prov.ErrToolUnavailable)
+	if !errors.Is(wrapped, prov.ErrToolUnavailable) {
 		t.Error("wrapped ErrToolUnavailable should be detectable")
 	}
 
 	// 用 %w 包装两层
 	doubleWrapped := fmt.Errorf("provider error: %w", wrapped)
-	if !errors.Is(doubleWrapped, runtime.ErrToolUnavailable) {
+	if !errors.Is(doubleWrapped, prov.ErrToolUnavailable) {
 		t.Error("double-wrapped ErrToolUnavailable should be detectable")
 	}
 
 	// 普通错误不应被误判
 	normal := errors.New("some random error")
-	if errors.Is(normal, runtime.ErrToolUnavailable) {
+	if errors.Is(normal, prov.ErrToolUnavailable) {
 		t.Error("normal error should NOT be detected as ErrToolUnavailable")
 	}
 }
@@ -481,37 +484,37 @@ func TestErrToolUnavailableDetection(t *testing.T) {
 
 func TestTokenEstimation(t *testing.T) {
 	// 空字符串 = 0 token
-	if n := runtime.EstimateTokens(""); n != 0 {
+	if n := history.EstimateTokens(""); n != 0 {
 		t.Errorf("empty string: expected 0, got %d", n)
 	}
 
 	// 短英文：len=12 → (12+2)/3 = 4
 	short := "hello world!"
-	n := runtime.EstimateTokens(short)
+	n := history.EstimateTokens(short)
 	if n < 2 || n > 6 {
 		t.Errorf("short english: got %d, want ~3-4", n)
 	}
 
 	// 长文本应有更多 token
 	long := strings.Repeat("abcdefghij", 100) // 1000 chars → ~334 tokens
-	nLong := runtime.EstimateTokens(long)
+	nLong := history.EstimateTokens(long)
 	if nLong < 200 || nLong > 500 {
 		t.Errorf("long text: got %d, want ~334", nLong)
 	}
 
 	// EstimateHistoryTokens 应随消息数增长
 	content := "test message content"
-	msg := runtime.Message{Role: "user", Content: &content}
-	single := runtime.EstimateMessageTokens(msg)
+	msg := types.Message{Role: "user", Content: &content}
+	single := history.EstimateMessageTokens(msg)
 	if single < 5 {
 		t.Errorf("single message should be at least 5 tokens, got %d", single)
 	}
 
-	msgs := make([]runtime.Message, 10)
+	msgs := make([]types.Message, 10)
 	for i := range msgs {
 		msgs[i] = msg
 	}
-	total := runtime.EstimateHistoryTokens(msgs)
+	total := history.EstimateHistoryTokens(msgs)
 	if total < single*10 {
 		t.Errorf("total (%d) should be >= 10*single (%d)", total, single*10)
 	}
@@ -524,20 +527,20 @@ func TestTokenEstimation(t *testing.T) {
 func TestTruncateToolResult(t *testing.T) {
 	// 短结果原样返回
 	short := `{"status":"ok"}`
-	if result := runtime.TruncateToolResult(short); result != short {
+	if result := history.TruncateToolResult(short); result != short {
 		t.Errorf("short result changed: %q", result)
 	}
 
 	// 刚好在限制内的结果原样返回
-	exact := strings.Repeat("a", runtime.MaxToolResultChars)
-	if result := runtime.TruncateToolResult(exact); result != exact {
+	exact := strings.Repeat("a", history.MaxToolResultChars)
+	if result := history.TruncateToolResult(exact); result != exact {
 		t.Errorf("exact-limit result was truncated: len=%d", len(result))
 	}
 
 	// 长结果应被截断并包含 [truncated] 标记
 	long := strings.Repeat("abcdefghij", 300) // 3000 chars > MaxToolResultChars (2000)
-	result := runtime.TruncateToolResult(long)
-	if len(result) > runtime.MaxToolResultChars+50 {
+	result := history.TruncateToolResult(long)
+	if len(result) > history.MaxToolResultChars+50 {
 		t.Errorf("truncated result too long: %d", len(result))
 	}
 	if !strings.Contains(result, "[truncated]") {
@@ -546,7 +549,7 @@ func TestTruncateToolResult(t *testing.T) {
 
 	// 带换行符的长结果应在换行处截断
 	lines := strings.Repeat("line of text here\n", 200) // many lines
-	result2 := runtime.TruncateToolResult(lines)
+	result2 := history.TruncateToolResult(lines)
 	if !strings.Contains(result2, "[truncated]") {
 		t.Error("missing [truncated] marker")
 	}
@@ -564,16 +567,16 @@ func TestTruncateToolResult(t *testing.T) {
 
 func TestTrimHistory(t *testing.T) {
 	content := strings.Repeat("x", 300) // ~100 tokens per message
-	sysMsg := runtime.Message{Role: "system", Content: strPtr("You are helpful.")}
-	userMsg := runtime.Message{Role: "user", Content: &content}
+	sysMsg := types.Message{Role: "system", Content: strPtr("You are helpful.")}
+	userMsg := types.Message{Role: "user", Content: &content}
 
 	// 构建 20 条 user 消息 + system → 远超限制
-	msgs := []runtime.Message{sysMsg}
+	msgs := []types.Message{sysMsg}
 	for i := 0; i < 20; i++ {
 		msgs = append(msgs, userMsg)
 	}
 
-	trimmed := runtime.TrimHistory(msgs, 2048)
+	trimmed := history.TrimHistory(msgs, 2048)
 
 	// system 消息应保留
 	foundSys := false
@@ -588,7 +591,7 @@ func TestTrimHistory(t *testing.T) {
 	}
 
 	// 截断后 token 数应在限制内
-	tokens := runtime.EstimateHistoryTokens(trimmed)
+	tokens := history.EstimateHistoryTokens(trimmed)
 	if tokens > 2048 {
 		t.Errorf("trimmed tokens (%d) exceeds limit (2048)", tokens)
 	}
@@ -605,23 +608,23 @@ func TestTrimHistory(t *testing.T) {
 
 func TestNeedCompression(t *testing.T) {
 	// 空或少量消息不应触发压缩
-	var empty []runtime.Message
-	if runtime.NeedCompression(empty) {
+	var empty []types.Message
+	if history.NeedCompression(empty) {
 		t.Error("empty history should not need compression")
 	}
 
-	short := []runtime.Message{{Role: "user", Content: strPtr("hello")}}
-	if runtime.NeedCompression(short) {
+	short := []types.Message{{Role: "user", Content: strPtr("hello")}}
+	if history.NeedCompression(short) {
 		t.Error("short history should not need compression")
 	}
 
 	// 大量消息应触发压缩
 	content := strings.Repeat("x", 300) // ~100 tokens each
-	var long []runtime.Message
+	var long []types.Message
 	for i := 0; i < 20; i++ {
-		long = append(long, runtime.Message{Role: "user", Content: &content})
+		long = append(long, types.Message{Role: "user", Content: &content})
 	}
-	if !runtime.NeedCompression(long) {
+	if !history.NeedCompression(long) {
 		t.Error("long history should trigger compression")
 	}
 }
@@ -639,8 +642,8 @@ func TestToolResultTruncationIntegration(t *testing.T) {
 	provider.successOverride = longResult
 
 	// LLM 返回 tool_call → dispatch 返回长结果 → 截断后注入 history
-	mockLLM.EnqueueToolCalls([]runtime.ToolCall{
-		{ID: "call_trunc", Type: "function", Function: runtime.ToolCallFunction{
+	mockLLM.EnqueueToolCalls([]types.ToolCall{
+		{ID: "call_trunc", Type: "function", Function: types.ToolCallFunction{
 			Name: "test_tool", Arguments: `{}`,
 		}},
 	})
@@ -689,14 +692,14 @@ func TestContextCompression(t *testing.T) {
 	content := strings.Repeat("abcdefghij", 30) // 300 chars
 	for i := 0; i < 18; i++ {
 		msgContent := fmt.Sprintf("loop %d: %s", i, content)
-		agent.ForceAppendHistory(runtime.Message{
+		agent.ForceAppendHistory(types.Message{
 			Role:    "user",
 			Content: &msgContent,
 		})
 	}
 
 	// 验证预填充后确实需要压缩
-	if !runtime.NeedCompression(agent.History()) {
+	if !history.NeedCompression(agent.History()) {
 		t.Error("pre-filled history should trigger compression")
 	}
 
@@ -713,9 +716,9 @@ func TestContextCompression(t *testing.T) {
 	}
 
 	// 压缩后 history 应包含压缩摘要（system 角色消息包含压缩内容）
-	history := agent.History()
+	msgs := agent.History()
 	foundSummary := false
-	for _, msg := range history {
+	for _, msg := range msgs {
 		if msg.Role == "system" && msg.Content != nil && strings.Contains(*msg.Content, "[Context summary") {
 			foundSummary = true
 			break
@@ -726,7 +729,7 @@ func TestContextCompression(t *testing.T) {
 	}
 
 	// 压缩后 token 数应远小于压缩前的原始消息总和
-	afterTokens := runtime.EstimateHistoryTokens(history)
+	afterTokens := history.EstimateHistoryTokens(msgs)
 	t.Logf("tokens after compression: %d", afterTokens)
 	if afterTokens > 3000 {
 		t.Errorf("compressed history too large: %d tokens", afterTokens)

@@ -16,7 +16,8 @@ import (
 	"sync"
 	"testing"
 
-	runtime "github.com/sukasukasuka123/Seele"
+	core "github.com/sukasukasuka123/Seele/core"
+	types "github.com/sukasukasuka123/Seele/types"
 	"github.com/sukasukasuka123/Seele/workplan"
 )
 
@@ -30,10 +31,10 @@ func TestWorkPlan_Fork_DifferentRegistries(t *testing.T) {
 	llmSrv.EnqueueText(`"前端 完成了任务: 实现 tool_a 功能"`)
 	llmSrv.EnqueueText(`"后端 完成了任务: 实现 tool_b 功能"`)
 
-	rtA, _ := runtime.NewRuntime(runtime.LLMConfig{
+	rtA, _ := core.NewRuntime(types.LLMConfig{
 		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
 	})
-	rtB, _ := runtime.NewRuntime(runtime.LLMConfig{
+	rtB, _ := core.NewRuntime(types.LLMConfig{
 		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
 	})
 
@@ -53,7 +54,7 @@ func TestWorkPlan_Fork_DifferentRegistries(t *testing.T) {
 	}
 
 	factory := &forkRegFactory{
-		runtimes: map[string]*runtime.Runtime{
+		runtimes: map[string]*core.Runtime{
 			"前端": rtA,
 			"后端": rtB,
 		},
@@ -92,7 +93,7 @@ func TestWorkPlan_Fork_DifferentRegistries(t *testing.T) {
 // 路由到不同的 Runtime。NewAgent 返回真实 Agent（走完整 ReAct 循环）。
 type forkRegFactory struct {
 	mu       sync.Mutex
-	runtimes map[string]*runtime.Runtime
+	runtimes map[string]*core.Runtime
 	calledA  bool
 	calledB  bool
 }
@@ -151,7 +152,7 @@ func TestWorkPlan_LoopSignalEmit(t *testing.T) {
 	llmSrv.EnqueueText(`"系统已完全恢复正常"`)
 	llmSrv.EnqueueText(`"收尾完成"`)
 
-	rt, _ := runtime.NewRuntime(runtime.LLMConfig{
+	rt, _ := core.NewRuntime(types.LLMConfig{
 		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
 	})
 
@@ -254,7 +255,7 @@ func TestWorkPlan_LoopExhausted(t *testing.T) {
 		llmSrv.EnqueueText(`"故障仍未恢复，还需继续修复"`)
 	}
 
-	rt, _ := runtime.NewRuntime(runtime.LLMConfig{
+	rt, _ := core.NewRuntime(types.LLMConfig{
 		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
 	})
 
@@ -310,7 +311,7 @@ func TestWorkPlan_EmitInFork(t *testing.T) {
 	llmSrv.EnqueueText(`"前端处理完成: 实现登录页面"`)
 	llmSrv.EnqueueText(`"后端处理完成: 实现登录接口"`)
 
-	rt, _ := runtime.NewRuntime(runtime.LLMConfig{
+	rt, _ := core.NewRuntime(types.LLMConfig{
 		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
 	})
 

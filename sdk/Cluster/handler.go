@@ -1,13 +1,13 @@
-package agent
+package cluster
 
 import (
 	"encoding/json"
 	"fmt"
 	"log"
 
+	"github.com/sukasukasuka123/Seele/workplan"
 	"github.com/sukasukasuka123/microHub/pb_api"
 	pb "github.com/sukasukasuka123/microHub/proto/gen/proto"
-	"github.com/sukasukasuka123/Seele/workplan"
 )
 
 // WorkflowFunc 是单个工作流的函数签名。
