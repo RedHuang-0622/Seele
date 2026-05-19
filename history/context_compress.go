@@ -50,6 +50,15 @@ func CompressHistory(ctx context.Context, client *llm.ChatClient, history []type
 	keep := rest[len(rest)-keepRecent:]         // 最近 N 条完整保留
 	compressible := rest[:len(rest)-keepRecent] // 剩余为可压缩部分
 
+	// 防止拆散 assistant(tool_calls) 和 tool_result 配对：
+	// 若 keep 头部是 tool 消息，其 assistant(tool_calls) 还在 compressible 末尾。
+	// 向回扩展 keep 直到头部不是 tool（即遇到 assistant 消息）。
+	for len(keep) > 0 && keep[0].Role == "tool" && len(compressible) > 0 {
+		last := compressible[len(compressible)-1]
+		compressible = compressible[:len(compressible)-1]
+		keep = append([]types.Message{last}, keep...)
+	}
+
 	if len(compressible) == 0 {
 		return TrimHistory(history, maxTokens), nil
 	}
@@ -139,25 +148,18 @@ func callCompressLLM(ctx context.Context, client *llm.ChatClient, input string) 
 		return "no previous context to summarize", nil
 	}
 
-	// 保存原始配置
-	origMaxTokens := client.Cfg.MaxTokens
-	origTemperature := client.Cfg.Temperature
-
-	// 临时覆盖：低 max_tokens + 低温 = 简洁摘要
-	client.Cfg.MaxTokens = compressMaxTokens
-	client.Cfg.Temperature = 0.3
-	defer func() {
-		client.Cfg.MaxTokens = origMaxTokens
-		client.Cfg.Temperature = origTemperature
-	}()
+	// 创建副本（值拷贝 Cfg），避免修改共享 client 的配置引发竞态。
+	// http.Client 是并发安全的，共享同一个实例没问题。
+	compressClient := *client
+	compressClient.Cfg.MaxTokens = compressMaxTokens
+	compressClient.Cfg.Temperature = 0.3
 
 	messages := []types.Message{
 		{Role: "system", Content: strPtr(compressSystemPrompt)},
 		{Role: "user", Content: &input},
 	}
 
-	// 不传 tools → LLM 无法发起 tool_call，直接返回文本
-	msg, err := client.Complete(ctx, messages, nil)
+	msg, err := compressClient.Complete(ctx, messages, nil)
 	if err != nil {
 		return "", err
 	}

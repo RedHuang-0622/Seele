@@ -353,12 +353,8 @@ func (wp *WorkPlan) primitiveFork(ctx context.Context, n *node, prevJSON string)
 				prompt = wp.defaultPrompt
 			}
 			agent := wp.factory.NewAgent(prompt)
-			if f, ok := agent.(interface{ SetToolFilter([]string) }); ok {
-				filter := n.toolFilter
-				if filter == nil {
-					filter = []string{}
-				}
-				f.SetToolFilter(filter)
+			if f, ok := agent.(interface{ SetToolFilter([]string) }); ok && n.toolFilter != nil {
+				f.SetToolFilter(n.toolFilter)
 			}
 			out, err := agent.Chat(ctx, input)
 			if err != nil {
@@ -454,12 +450,8 @@ func (wp *WorkPlan) primitiveNewAgent(n *node) Agent {
 		prompt = wp.defaultPrompt
 	}
 	agent := wp.factory.NewAgent(prompt)
-	if f, ok := agent.(interface{ SetToolFilter([]string) }); ok {
-		filter := n.toolFilter
-		if filter == nil {
-			filter = []string{}
-		}
-		f.SetToolFilter(filter)
+	if f, ok := agent.(interface{ SetToolFilter([]string) }); ok && n.toolFilter != nil {
+		f.SetToolFilter(n.toolFilter)
 	}
 	return agent
 }

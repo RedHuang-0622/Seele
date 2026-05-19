@@ -154,6 +154,8 @@ func TrimHistory(msgs []types.Message, maxTokens int) []types.Message {
 		// 丢弃最旧的非 system 消息
 		rest = rest[1:]
 	}
+	// 丢弃头部孤 tool 消息（其 assistant(tool_calls) 已被丢弃）
+	rest = stripLeadingOrphanTools(rest)
 
 	// 保底：若仅 system 消息就超限，截断 system 消息内容
 	result := append(sys, rest...)
@@ -169,6 +171,17 @@ func TrimHistory(msgs []types.Message, maxTokens int) []types.Message {
 	}
 
 	return result
+}
+
+// stripLeadingOrphanTools removes orphan tool messages from the front of a message list.
+// In a ReAct loop, tool messages always follow assistant(tool_calls). When history is
+// truncated from the head, the assistant(tool_calls) may be dropped first, leaving orphan
+// tool messages that cause LLM API errors.
+func stripLeadingOrphanTools(msgs []types.Message) []types.Message {
+	for len(msgs) > 0 && msgs[0].Role == "tool" {
+		msgs = msgs[1:]
+	}
+	return msgs
 }
 
 // NeedCompression 判断历史消息是否需要压缩。
