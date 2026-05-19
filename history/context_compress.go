@@ -37,7 +37,7 @@ const compressMaxTokens = 300
 // 返回压缩后的 history；永远不会返回 nil。
 func CompressHistory(ctx context.Context, client *llm.ChatClient, history []types.Message, maxTokens int) ([]types.Message, error) {
 	if maxTokens <= 0 {
-		maxTokens = MaxContextTokens
+		maxTokens = DefaultContextConfig().MaxTokens
 	}
 
 	// 1. 拆分：system + 近期保留 + 可压缩部分

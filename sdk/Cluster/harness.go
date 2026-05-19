@@ -47,6 +47,9 @@ type HarnessConfig struct {
 	// MaxLoops 单次 Agent.Chat 最大 ReAct 循环次数，默认 8。
 	MaxLoops int
 
+	// MaxConcurrentWorkPlans 全局最大并发 WorkPlan 数，0 表示不限。
+	MaxConcurrentWorkPlans int
+
 	// RegistryPath 个性注册表路径，空时从环境变量 REGISTRY_PATH 读取。
 	RegistryPath string
 
@@ -92,6 +95,7 @@ func Run(wfMap WorkflowMap, cfg *HarnessConfig) {
 		cfg = &HarnessConfig{}
 	}
 	cfg.withDefaults()
+	workplan.SetMaxConcurrentWorkPlans(cfg.MaxConcurrentWorkPlans)
 
 	// 1. 读环境变量（框架读取，应用层可在 cfg 中覆盖默认路径）
 	role := os.Getenv("AGENT_ROLE")

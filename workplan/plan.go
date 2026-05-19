@@ -22,6 +22,20 @@ type AgentFactory interface {
 	NewAgent(systemPrompt string) Agent
 }
 
+// ── 全局 WorkPlan 并发控制 ────────────────────────────────────────
+
+var globalWorkPlanSem chan struct{}
+
+// SetMaxConcurrentWorkPlans 限制全局同时执行的 WorkPlan 数量。
+// 设为 0 或负数移除限制。默认不限。
+func SetMaxConcurrentWorkPlans(n int) {
+	if n <= 0 {
+		globalWorkPlanSem = nil
+		return
+	}
+	globalWorkPlanSem = make(chan struct{}, n)
+}
+
 // =============================================================================
 // WorkPlan
 // =============================================================================
@@ -75,6 +89,16 @@ func New(factory AgentFactory, gate ApprovalGate, defaultPrompt string) *WorkPla
 func (wp *WorkPlan) Run(ctx context.Context) (*WorkPlanResult, error) {
 	if wp.entryID == "" {
 		return nil, fmt.Errorf("WorkPlan.Run: no nodes defined")
+	}
+
+	// 全局并发限制：获取执行槽位
+	if globalWorkPlanSem != nil {
+		select {
+		case globalWorkPlanSem <- struct{}{}:
+			defer func() { <-globalWorkPlanSem }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
 	wp.vars = make(map[string]string)
@@ -329,6 +353,13 @@ func (wp *WorkPlan) primitiveFork(ctx context.Context, n *node, prevJSON string)
 				prompt = wp.defaultPrompt
 			}
 			agent := wp.factory.NewAgent(prompt)
+			if f, ok := agent.(interface{ SetToolFilter([]string) }); ok {
+				filter := n.toolFilter
+				if filter == nil {
+					filter = []string{}
+				}
+				f.SetToolFilter(filter)
+			}
 			out, err := agent.Chat(ctx, input)
 			if err != nil {
 				results[i] = branchResult{label: b.Label, err: err}
@@ -422,7 +453,15 @@ func (wp *WorkPlan) primitiveNewAgent(n *node) Agent {
 	if prompt == "" {
 		prompt = wp.defaultPrompt
 	}
-	return wp.factory.NewAgent(prompt)
+	agent := wp.factory.NewAgent(prompt)
+	if f, ok := agent.(interface{ SetToolFilter([]string) }); ok {
+		filter := n.toolFilter
+		if filter == nil {
+			filter = []string{}
+		}
+		f.SetToolFilter(filter)
+	}
+	return agent
 }
 
 // primitiveRenderInput 渲染输入模板。

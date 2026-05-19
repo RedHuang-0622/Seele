@@ -95,6 +95,20 @@ func (g *CLIApprovalGate) Request(ctx context.Context, req ApprovalRequest) (str
 	}
 }
 
+// =============================================================================
+// AutoApproveGate —— 非交互式自动确认（演示/测试用）
+// =============================================================================
+
+type AutoApproveGate struct{}
+
+func (g *AutoApproveGate) Request(ctx context.Context, req ApprovalRequest) (string, error) {
+	if len(req.Options) == 0 {
+		return "", nil
+	}
+	fmt.Printf("[自动确认] 节点 %s → 选择: %s\n", req.NodeID, req.Options[0])
+	return req.Options[0], nil
+}
+
 // resolveChoice 将用户输入（数字或文本）解析为 options 中的选项。
 // 无法识别时返回最后一个选项（通常是"终止"）。
 func resolveChoice(raw string, options []string) string {

@@ -6,19 +6,55 @@ import (
 	types "github.com/sukasukasuka123/Seele/types"
 )
 
-// ── 上下文预算常量 ─────────────────────────────────────────────────
+// ── 上下文预算配置 ─────────────────────────────────────────────────
 
-const (
-	// MaxContextTokens 硬上限：单次 LLM 请求的最大上下文 token 数。
-	MaxContextTokens = 2048
+// ContextConfig 控制上下文管理的各项阈值。
+// 零值字段使用 DefaultContextConfig() 中的默认值。
+type ContextConfig struct {
+	// MaxTokens 硬上限：单次 LLM 请求的最大上下文 token 数。
+	MaxTokens int
 
 	// CompressThreshold 压缩触发阈值：history token 数超过此值时触发压缩。
-	CompressThreshold = 1536 // 75% of MaxContextTokens
+	// 通常设为 MaxTokens 的 75%。
+	CompressThreshold int
 
 	// MaxToolResultChars 单个 tool 结果追加到 history 前的最大字符数。
 	// 超过此长度则截断，末尾追加 "[truncated]" 标记让 LLM 感知到裁剪。
-	MaxToolResultChars = 2000
+	MaxToolResultChars int
+}
 
+// DefaultContextConfig 返回推荐的上下文配置。
+// 默认值针对主流 LLM（8K 上下文窗口）设计：
+//
+//	MaxTokens:           8192
+//	CompressThreshold:   6144 (75%)
+//	MaxToolResultChars:  4000
+func DefaultContextConfig() ContextConfig {
+	return ContextConfig{
+		MaxTokens:           8192,
+		CompressThreshold:   6144,
+		MaxToolResultChars:  4000,
+	}
+}
+
+// Effective 返回实际生效的配置，零值字段用默认值填充。
+func (c ContextConfig) Effective() ContextConfig {
+	d := DefaultContextConfig()
+	if c.MaxTokens <= 0 {
+		c.MaxTokens = d.MaxTokens
+	}
+	if c.CompressThreshold <= 0 {
+		c.CompressThreshold = d.CompressThreshold
+	}
+	if c.MaxToolResultChars <= 0 {
+		c.MaxToolResultChars = d.MaxToolResultChars
+	}
+	return c
+}
+
+// ── 内部常量（不可配置）─────────────────────────────────────────────
+
+const (
 	// truncatedMarker 追加到被截断结果的末尾标记。
 	truncatedMarker = "\n...[truncated]"
 )
@@ -72,15 +108,15 @@ func EstimateHistoryTokens(msgs []types.Message) int {
 // ── Tool 结果截断 ──────────────────────────────────────────────────
 
 // TruncateToolResult 将 tool 返回内容截断到安全长度。
-// 若 content 较短则原样返回；否则截断并追加 "[truncated]" 标记。
-// 截断点在 MaxToolResultChars 处，尽量在换行符处断开以保持可读性。
-func TruncateToolResult(content string) string {
-	if len(content) <= MaxToolResultChars {
+// maxChars 为最大字符数，若 content 较短则原样返回；否则截断并追加 "[truncated]" 标记。
+// 截断点在 maxChars 处，尽量在换行符处断开以保持可读性。
+func TruncateToolResult(content string, maxChars int) string {
+	if len(content) <= maxChars {
 		return content
 	}
-	cut := content[:MaxToolResultChars]
+	cut := content[:maxChars]
 	// 尽量在最后一个换行符处截断
-	if idx := strings.LastIndex(cut, "\n"); idx > MaxToolResultChars/2 {
+	if idx := strings.LastIndex(cut, "\n"); idx > maxChars/2 {
 		cut = cut[:idx]
 	}
 	return cut + truncatedMarker
@@ -95,7 +131,7 @@ func TruncateToolResult(content string) string {
 //   - 若单条消息超过 maxTokens（罕见，如超大 tool 结果），截断其内容
 func TrimHistory(msgs []types.Message, maxTokens int) []types.Message {
 	if maxTokens <= 0 {
-		maxTokens = MaxContextTokens
+		maxTokens = DefaultContextConfig().MaxTokens
 	}
 
 	// 分离 system 消息和非 system 消息
@@ -125,7 +161,7 @@ func TrimHistory(msgs []types.Message, maxTokens int) []types.Message {
 		// 截断最长的一条消息的内容
 		for i := range result {
 			if result[i].Content != nil && len(*result[i].Content) > 500 {
-				s := TruncateToolResult(*result[i].Content)
+				s := TruncateToolResult(*result[i].Content, DefaultContextConfig().MaxToolResultChars)
 				result[i].Content = &s
 				break
 			}
@@ -136,7 +172,7 @@ func TrimHistory(msgs []types.Message, maxTokens int) []types.Message {
 }
 
 // NeedCompression 判断历史消息是否需要压缩。
-// 当总 token 数超过 CompressThreshold 时返回 true。
-func NeedCompression(msgs []types.Message) bool {
-	return EstimateHistoryTokens(msgs) > CompressThreshold
+// threshold 是触发压缩的 token 数阈值，超过此值时返回 true。
+func NeedCompression(msgs []types.Message, threshold int) bool {
+	return EstimateHistoryTokens(msgs) > threshold
 }

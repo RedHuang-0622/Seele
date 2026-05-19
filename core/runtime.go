@@ -7,9 +7,10 @@ import (
 	"sync"
 	"time"
 
+	history "github.com/sukasukasuka123/Seele/history"
 	"github.com/sukasukasuka123/Seele/llm"
 	"github.com/sukasukasuka123/Seele/provider"
-	"github.com/sukasukasuka123/Seele/types"
+	types "github.com/sukasukasuka123/Seele/types"
 )
 
 // Runtime 是工具调度的中枢，负责：
@@ -72,9 +73,11 @@ func (r *Runtime) NewAgent(systemPrompt string, loopTimes int) *Agent {
 		loopTimes = 4 // 默认值
 	}
 	a := &Agent{
-		runtime:   r,
-		sessionID: fmt.Sprintf("sess_%d", time.Now().UnixNano()),
-		maxLoops:  loopTimes,
+		runtime:          r,
+		sessionID:        fmt.Sprintf("sess_%d", time.Now().UnixNano()),
+		maxLoops:         loopTimes,
+		contextCfg:       history.DefaultContextConfig(),
+		lastCompressLoop: -1,
 	}
 	if systemPrompt != "" {
 		a.history = []types.Message{{Role: "system", Content: &systemPrompt}}

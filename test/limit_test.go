@@ -525,22 +525,25 @@ func TestTokenEstimation(t *testing.T) {
 // =============================================================================
 
 func TestTruncateToolResult(t *testing.T) {
+	// 用固定的小值测试，不依赖默认值
+	const maxChars = 2000
+
 	// 短结果原样返回
 	short := `{"status":"ok"}`
-	if result := history.TruncateToolResult(short); result != short {
+	if result := history.TruncateToolResult(short, maxChars); result != short {
 		t.Errorf("short result changed: %q", result)
 	}
 
 	// 刚好在限制内的结果原样返回
-	exact := strings.Repeat("a", history.MaxToolResultChars)
-	if result := history.TruncateToolResult(exact); result != exact {
+	exact := strings.Repeat("a", maxChars)
+	if result := history.TruncateToolResult(exact, maxChars); result != exact {
 		t.Errorf("exact-limit result was truncated: len=%d", len(result))
 	}
 
 	// 长结果应被截断并包含 [truncated] 标记
-	long := strings.Repeat("abcdefghij", 300) // 3000 chars > MaxToolResultChars (2000)
-	result := history.TruncateToolResult(long)
-	if len(result) > history.MaxToolResultChars+50 {
+	long := strings.Repeat("abcdefghij", 300) // 3000 chars > 2000
+	result := history.TruncateToolResult(long, maxChars)
+	if len(result) > maxChars+50 {
 		t.Errorf("truncated result too long: %d", len(result))
 	}
 	if !strings.Contains(result, "[truncated]") {
@@ -549,7 +552,7 @@ func TestTruncateToolResult(t *testing.T) {
 
 	// 带换行符的长结果应在换行处截断
 	lines := strings.Repeat("line of text here\n", 200) // many lines
-	result2 := history.TruncateToolResult(lines)
+	result2 := history.TruncateToolResult(lines, maxChars)
 	if !strings.Contains(result2, "[truncated]") {
 		t.Error("missing [truncated] marker")
 	}
@@ -607,14 +610,17 @@ func TestTrimHistory(t *testing.T) {
 // =============================================================================
 
 func TestNeedCompression(t *testing.T) {
+	// 用固定的小阈值测试，不依赖默认值
+	const threshold = 500
+
 	// 空或少量消息不应触发压缩
 	var empty []types.Message
-	if history.NeedCompression(empty) {
+	if history.NeedCompression(empty, threshold) {
 		t.Error("empty history should not need compression")
 	}
 
 	short := []types.Message{{Role: "user", Content: strPtr("hello")}}
-	if history.NeedCompression(short) {
+	if history.NeedCompression(short, threshold) {
 		t.Error("short history should not need compression")
 	}
 
@@ -624,7 +630,7 @@ func TestNeedCompression(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		long = append(long, types.Message{Role: "user", Content: &content})
 	}
-	if !history.NeedCompression(long) {
+	if !history.NeedCompression(long, threshold) {
 		t.Error("long history should trigger compression")
 	}
 }
@@ -651,6 +657,8 @@ func TestToolResultTruncationIntegration(t *testing.T) {
 
 	ctx := context.Background()
 	agent := rt.NewAgent("You are a test agent.", 4)
+	// 设置更小的 MaxToolResultChars 确保触发截断
+	agent.SetContextConfig(history.ContextConfig{MaxToolResultChars: 2000})
 	result, err := agent.Chat(ctx, "test truncation")
 	if err != nil {
 		t.Fatalf("Chat failed: %v", err)
@@ -686,9 +694,11 @@ func TestContextCompression(t *testing.T) {
 	mockLLM.compressResponse = "summarized: user asked about data, tool returned results, task complete."
 
 	agent := rt.NewAgent("You are helpful.", 4)
+	// 设置更小的压缩阈值确保触发压缩
+	agent.SetContextConfig(history.ContextConfig{CompressThreshold: 500, MaxTokens: 4096})
 
 	// 用 ForceAppendHistory 预填充超过压缩阈值的历史
-	// 每条 ~300 chars → ~100 tokens, 18 条 + sys overhead → ~1800+ tokens > 1536
+	// 每条 ~300 chars → ~100 tokens, 18 条 + sys overhead → ~1800+ tokens > 500
 	content := strings.Repeat("abcdefghij", 30) // 300 chars
 	for i := 0; i < 18; i++ {
 		msgContent := fmt.Sprintf("loop %d: %s", i, content)
@@ -699,7 +709,7 @@ func TestContextCompression(t *testing.T) {
 	}
 
 	// 验证预填充后确实需要压缩
-	if !history.NeedCompression(agent.History()) {
+	if !history.NeedCompression(agent.History(), 500) {
 		t.Error("pre-filled history should trigger compression")
 	}
 

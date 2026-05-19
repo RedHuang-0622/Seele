@@ -43,7 +43,7 @@ type Options struct {
 
 func (o *Options) withDefaults() {
 	if o.HubAddr == "" {
-		o.HubAddr = ":50051"
+		o.HubAddr = ":0"
 	}
 	if o.HubStartupDelay == 0 {
 		o.HubStartupDelay = 100 * time.Millisecond

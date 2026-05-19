@@ -5,11 +5,15 @@ test/report/*
 test/log/*
 
 # ops tools (multi-agent automated运维 system)
-ops_tools/*
-ops_tools/config.yaml
-ops_tools/log/*
-ops_tools/report/*
-ops_tools/bin/*
+data/*
+*.db
+# ops tools (multi-agent automated运维 system)
+model_agent/*
+model_agent/config.yaml
+model_agent/log/*
+model_agent/report/*
+model_agent/bin/*
 
+makefile
 # 后缀带exe的文件
 *.exe

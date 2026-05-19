@@ -18,15 +18,20 @@ import (
 // 每个 Agent 拥有：
 //   - 独立的对话历史（history）
 //   - 唯一的会话 ID（sessionID）
-//   - tool_call 循环上限（maxLoops，默认 8）
+//   - tool_call 循环上限（maxLoops，默认 4）
+//   - 上下文管理配置（contextCfg）
 //
 // 并发安全性：Agent 本身不加锁，同一个 Agent 不应跨 goroutine 并发调用。
 // 如需并发，请通过 Runtime.New() 各自创建独立 Agent。
 type Agent struct {
-	runtime   *Runtime
-	sessionID string
-	history   []types.Message
-	maxLoops  int
+	runtime    *Runtime
+	sessionID  string
+	history    []types.Message
+	maxLoops   int
+	contextCfg history.ContextConfig
+
+	toolFilter       []string // 工具白名单，空表示不限制
+	lastCompressLoop int      // 上次压缩所在的 loop 轮次，-1 表示尚未压缩
 }
 
 // SessionID 返回本 Agent 的唯一会话标识符。
@@ -63,6 +68,42 @@ func (a *Agent) SetMaxLoops(n int) {
 	}
 }
 
+// ContextConfig 返回当前上下文管理配置。
+func (a *Agent) ContextConfig() history.ContextConfig { return a.contextCfg }
+
+// SetContextConfig 设置上下文管理配置。零值字段使用默认值。
+// 可在 Chat 调用前随时调整，对后续所有 Chat/ChatStream 调用生效。
+func (a *Agent) SetContextConfig(cfg history.ContextConfig) {
+	a.contextCfg = cfg.Effective()
+}
+
+// SetToolFilter 设置工具白名单。nil 表示不限制，空切片表示无可用工具。
+func (a *Agent) SetToolFilter(filter []string) {
+	a.toolFilter = filter
+}
+
+// filteredTools 返回经过 toolFilter 白名单过滤后的工具列表。
+// nil → 不限，返回全部；非 nil（含空切片）→ 仅返回白名单内的工具。
+func (a *Agent) filteredTools(all []types.Tool) []types.Tool {
+	if a.toolFilter == nil {
+		return all
+	}
+	if len(a.toolFilter) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(a.toolFilter))
+	for _, name := range a.toolFilter {
+		set[name] = struct{}{}
+	}
+	result := make([]types.Tool, 0, len(a.toolFilter))
+	for _, t := range all {
+		if _, ok := set[t.Function.Name]; ok {
+			result = append(result, t)
+		}
+	}
+	return result
+}
+
 // ForceAppendHistory 直接向对话历史追加一条消息（仅用于测试）。
 func (a *Agent) ForceAppendHistory(msg types.Message) {
 	a.history = append(a.history, msg)
@@ -83,16 +124,22 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 		a.history = append(a.history, types.Message{Role: "user", Content: &userInput})
 	}
 
-	tools := a.runtime.tools()
+	tools := a.filteredTools(a.runtime.tools())
 
 	for loop := 0; loop < a.maxLoops; loop++ {
-		if history.NeedCompression(a.history) {
-			compressed, err := history.CompressHistory(ctx, a.runtime.llm, a.history, history.MaxContextTokens)
-			if err != nil {
-				log.Printf("[agent.Chat] session:[%s] compression failed: %v, using hard trim", a.sessionID, err)
-				a.history = history.TrimHistory(a.history, history.MaxContextTokens)
-			} else {
-				a.history = compressed
+		cfg := a.contextCfg
+		// 跳过相邻轮次的冗余压缩：压缩后 history 已大幅缩减，
+		// 单轮 tool 结果通常不足以再次超过阈值
+		if a.lastCompressLoop < 0 || loop-a.lastCompressLoop > 1 {
+			if history.NeedCompression(a.history, cfg.CompressThreshold) {
+				compressed, err := history.CompressHistory(ctx, a.runtime.llm, a.history, cfg.MaxTokens)
+				if err != nil {
+					log.Printf("[agent.Chat] session:[%s] compression failed: %v, using hard trim", a.sessionID, err)
+					a.history = history.TrimHistory(a.history, cfg.MaxTokens)
+				} else {
+					a.history = compressed
+				}
+				a.lastCompressLoop = loop
 			}
 		}
 
@@ -113,7 +160,7 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 		}
 
 		a.dispatchToolCalls(ctx, msg.ToolCalls)
-		tools = a.runtime.tools()
+		tools = a.filteredTools(a.runtime.tools())
 	}
 
 	return "", fmt.Errorf("[agent.Chat] session:[%s] reached maxLoops (%d) without a final text reply",
@@ -134,16 +181,20 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 		a.history = append(a.history, types.Message{Role: "user", Content: &userInput})
 	}
 
-	tools := a.runtime.tools()
+	tools := a.filteredTools(a.runtime.tools())
 
 	for loop := 0; loop < a.maxLoops; loop++ {
-		if history.NeedCompression(a.history) {
-			compressed, err := history.CompressHistory(ctx, a.runtime.llm, a.history, history.MaxContextTokens)
-			if err != nil {
-				log.Printf("[agent.ChatStream] session:[%s] compression failed: %v, using hard trim", a.sessionID, err)
-				a.history = history.TrimHistory(a.history, history.MaxContextTokens)
-			} else {
-				a.history = compressed
+		cfg := a.contextCfg
+		if a.lastCompressLoop < 0 || loop-a.lastCompressLoop > 1 {
+			if history.NeedCompression(a.history, cfg.CompressThreshold) {
+				compressed, err := history.CompressHistory(ctx, a.runtime.llm, a.history, cfg.MaxTokens)
+				if err != nil {
+					log.Printf("[agent.ChatStream] session:[%s] compression failed: %v, using hard trim", a.sessionID, err)
+					a.history = history.TrimHistory(a.history, cfg.MaxTokens)
+				} else {
+					a.history = compressed
+				}
+				a.lastCompressLoop = loop
 			}
 		}
 
@@ -180,7 +231,7 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 		})
 
 		a.dispatchToolCalls(ctx, toolCalls)
-		tools = a.runtime.tools()
+		tools = a.filteredTools(a.runtime.tools())
 	}
 
 	return "", fmt.Errorf("[agent.ChatStream] session:[%s] reached maxLoops (%d) without a final text reply",
@@ -199,13 +250,17 @@ func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCal
 	}
 
 	const maxDispatchRetries = 3
+	const maxConcurrentDispatch = 5
 	var results []dispatchResult
 	for retries := 0; retries < maxDispatchRetries; retries++ {
 		results = make([]dispatchResult, len(toolCalls))
+		sem := make(chan struct{}, maxConcurrentDispatch)
 		var wg sync.WaitGroup
 		for i, tc := range toolCalls {
 			wg.Add(1)
 			go func(i int, tc types.ToolCall) {
+				sem <- struct{}{}
+				defer func() { <-sem }()
 				defer wg.Done()
 				start := time.Now()
 				result, dispErr := a.runtime.dispatch(ctx, tc.Function.Name, tc.Function.Arguments)
@@ -249,7 +304,7 @@ func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCal
 		if r.transient {
 			continue
 		}
-		content := history.TruncateToolResult(r.content)
+		content := history.TruncateToolResult(r.content, a.contextCfg.MaxToolResultChars)
 		a.history = append(a.history, types.Message{
 			Role:       "tool",
 			ToolCallID: r.tc.ID,

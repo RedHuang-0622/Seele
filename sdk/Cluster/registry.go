@@ -109,15 +109,17 @@ func BuildAgentRegistry(reg *AgentRegistry, hubRegistryPath, toolsRegistryPath s
 		merged.Pool = toolsDoc.Pool
 	}
 
-	// 2. Peer capability：从 registry.yaml 筛选
-	if hubRegistryPath != "" && len(peerCapSet) > 0 {
+	// 2. Hub registry：筛选 peer capability + fallback pool/hubs
+	if hubRegistryPath != "" {
 		hubDoc, err := loadRegistryDoc(hubRegistryPath)
 		if err != nil {
 			return "", fmt.Errorf("read hub registry %q: %w", hubRegistryPath, err)
 		}
-		for _, t := range hubDoc.Services.Tools {
-			if peerCapSet[t.Name] {
-				merged.Services.Tools = append(merged.Services.Tools, t)
+		if len(peerCapSet) > 0 {
+			for _, t := range hubDoc.Services.Tools {
+				if peerCapSet[t.Name] {
+					merged.Services.Tools = append(merged.Services.Tools, t)
+				}
 			}
 		}
 		if len(merged.Services.Hubs) == 0 {

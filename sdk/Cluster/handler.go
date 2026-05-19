@@ -11,7 +11,8 @@ import (
 )
 
 // WorkflowFunc 是单个工作流的函数签名。
-type WorkflowFunc func(workplan.AgentFactory) (*workplan.WorkPlanResult, error)
+// userInput 是调用方传入的自然语言查询（从 gRPC ToolRequest.Params 中提取）。
+type WorkflowFunc func(workplan.AgentFactory, string) (*workplan.WorkPlanResult, error)
 
 // WorkflowMap method 名 → 工作流函数，由应用层注入，框架层不感知业务。
 type WorkflowMap map[string]WorkflowFunc
@@ -50,8 +51,9 @@ func (h *AgentHandler) Execute(req *pb.ToolRequest) (<-chan *pb.ToolResponse, er
 			return
 		}
 
+		userInput := extractUserInput(req.Params)
 		log.Printf("[%s] Dispatch method=%s", h.role, req.Method)
-		result, err := wf(h.factory)
+		result, err := wf(h.factory, userInput)
 		if err != nil {
 			ch <- errorResp(h.role, req.TaskId, "WORKFLOW_ERROR", err.Error())
 			return
@@ -78,4 +80,25 @@ func (h *AgentHandler) Execute(req *pb.ToolRequest) (<-chan *pb.ToolResponse, er
 
 func errorResp(toolName, taskID, code, msg string) *pb.ToolResponse {
 	return pb_api.ErrorResp(toolName, taskID, code, msg, "")
+}
+
+// extractUserInput 从 ToolRequest.Params 中提取用户自然语言查询。
+// Params 预期是 JSON 对象，优先取 query / prompt / input 字段；
+// 若都为空，返回整个 Params 字符串。
+func extractUserInput(params []byte) string {
+	if len(params) == 0 {
+		return ""
+	}
+	var m map[string]interface{}
+	if json.Unmarshal(params, &m) != nil {
+		return string(params)
+	}
+	for _, key := range []string{"query", "prompt", "input"} {
+		if v, ok := m[key]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return string(params)
 }
