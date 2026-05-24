@@ -232,6 +232,12 @@ func (e *Engine) MCPServers() []string {
 // Runtime 暴露底层 Runtime，供需要精细控制的场景使用。
 func (e *Engine) Runtime() *core.Runtime { return e.rt }
 
+// [workplangate] DirectDispatch 直接调度工具调用，绕过 Agent 的 LLM 循环。
+// 用于 REPL 拦截审批响应后直接发送 _decide，不经过 LLM 推理。
+func (e *Engine) DirectDispatch(ctx context.Context, name, argsJSON string) (string, error) {
+	return e.rt.Dispatch(ctx, name, argsJSON)
+}
+
 // ── AgentPool ─────────────────────────────────────────────────────
 
 type AgentPool struct {

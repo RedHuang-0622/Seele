@@ -50,6 +50,10 @@ func SetMaxConcurrentWorkPlans(n int) {
 //
 //	按节点顺序执行，私有原语方法（primitiveXxx）负责具体逻辑，
 //	公有语法糖只是原语的声明式包装，不含执行逻辑。
+//
+// [workplangate] 两段式审批：
+//   Run() 遇到 Approve 节点时生成计划后暂停，返回 StateAwaitingApproval。
+//   调用方拿到 PendingQuestion 发送给用户，用户决策后调用 SetDecision + Resume 继续。
 type WorkPlan struct {
 	// ── 构建期 ────────────────────────────────────────────────────
 	nodes     []*node
@@ -63,6 +67,12 @@ type WorkPlan struct {
 	// ── 执行期（Run 时初始化）────────────────────────────────────
 	vars map[string]string // Emit 写入的命名变量，key → JSON 字符串
 	mu   sync.RWMutex      // 保护 vars（Parallel/Fork 并发写入时使用）
+
+	// [workplangate] 执行状态机
+	execID         string         // 唯一执行 ID，Run 时自动生成
+	execState      ExecState      // 当前执行状态
+	pauseSnapshot  *pauseSnapshot // approve 节点暂停时的上下文
+	pauseDecision  any            // Resume 前由调用方设置的审批结果 V
 }
 
 // New 创建 WorkPlan。
@@ -79,6 +89,8 @@ func New(factory AgentFactory, gate ApprovalGate, defaultPrompt string) *WorkPla
 		factory:       factory,
 		gate:          gate,
 		defaultPrompt: defaultPrompt,
+		// [workplangate] 初始状态
+		execState: StateNotStarted,
 	}
 }
 
@@ -101,7 +113,12 @@ func (wp *WorkPlan) Run(ctx context.Context) (*WorkPlanResult, error) {
 		}
 	}
 
+	// [workplangate] 初始化执行状态
 	wp.vars = make(map[string]string)
+	wp.execID = fmt.Sprintf("exec_%d", time.Now().UnixNano())
+	wp.execState = StateExecuting
+	wp.pauseSnapshot = nil
+	wp.pauseDecision = nil
 
 	result := &WorkPlanResult{
 		Vars:        wp.vars,
@@ -124,19 +141,43 @@ func (wp *WorkPlan) Run(ctx context.Context) (*WorkPlanResult, error) {
 
 		n, ok := wp.nodeIndex[currentID]
 		if !ok {
+			result.TotalElapsed = time.Since(start)
 			return result, fmt.Errorf("WorkPlan.Run: node %q not found", currentID)
+		}
+
+		// [workplangate] Approve 节点：生成计划后暂停，不在此处阻塞等用户
+		if n.kind == kindApprove {
+			planText, q, err := wp.prepareApprove(ctx, n, prevJSON)
+			if err != nil {
+				wp.execState = StateFailed
+				result.TotalElapsed = time.Since(start)
+				return result, fmt.Errorf("node %q: prepare approve: %w", n.id, err)
+			}
+			wp.pauseSnapshot = &pauseSnapshot{
+				currentID: currentID,
+				prevJSON:  prevJSON,
+				result:    result,
+				planText:  planText,
+				question:  q,
+				startedAt: start,
+			}
+			wp.execState = StateAwaitingApproval
+			result.PausedWorkPlan = wp
+			return result, nil
 		}
 
 		nr, err := wp.primitiveRunNode(ctx, n, prevJSON, result)
 		result.NodeResults = append(result.NodeResults, nr)
 
 		if err != nil {
+			wp.execState = StateFailed
 			result.TotalElapsed = time.Since(start)
 			return result, fmt.Errorf("node %q: %w", n.id, err)
 		}
 		if nr.Aborted {
 			result.Aborted = true
 			result.AbortReason = fmt.Sprintf("aborted at node %q", n.id)
+			wp.execState = StateAborted
 			break
 		}
 		if !nr.Skipped && nr.Output != "" {
@@ -146,6 +187,7 @@ func (wp *WorkPlan) Run(ctx context.Context) (*WorkPlanResult, error) {
 		currentID = wp.primitiveNext(n, prevJSON)
 	}
 
+	wp.execState = StateCompleted
 	result.TotalElapsed = time.Since(start)
 	return result, nil
 }
@@ -176,7 +218,8 @@ func (wp *WorkPlan) primitiveRunNode(
 		nr.Output, err = wp.primitiveAuto(ctx, n, input)
 
 	case kindApprove:
-		nr.Output, nr.Skipped, nr.Aborted, err = wp.primitiveApprove(ctx, n, input)
+		// [workplangate] Approve 不在此处执行；Run 遇 approve 暂停，Resume 调 executeApprove
+		nr.Output = prevJSON
 
 	case kindIf, kindSwitch:
 		// 条件节点不执行 Agent，只做路由，透传 prevJSON
@@ -219,51 +262,188 @@ func (wp *WorkPlan) primitiveAuto(ctx context.Context, n *node, input string) (s
 	return toJSON(out), nil
 }
 
-// primitiveApprove 两阶段人工确认：
-//  1. Agent 生成计划文本（不调用工具）
-//  2. ApprovalGate 展示给人，等待确认
-//  3. 人选"执行" → Agent 真正执行
-//  4. 人选"跳过" → 返回 skipped=true
-//  5. 人选"终止" → 返回 aborted=true
-func (wp *WorkPlan) primitiveApprove(
-	ctx context.Context,
-	n *node,
-	input string,
-) (output string, skipped bool, aborted bool, err error) {
-	// Step 1：生成计划
+// [workplangate] prepareApprove 生成审批计划（Run 时调用，不阻塞）。
+// 返回结构化计划文本和 Question，调用方负责发送 Question 并收集决策。
+func (wp *WorkPlan) prepareApprove(ctx context.Context, n *node, prevJSON string) (planText string, q Question, err error) {
 	planAgent := wp.primitiveNewAgent(n)
-	planOut, err := planAgent.Chat(ctx,
-		"请分析以下任务，列出执行步骤和将调用的工具，【不要实际执行】，只输出计划（可以用 JSON 格式）：\n\n"+input,
+	input := wp.primitiveRenderInput(n.input, prevJSON)
+	planPrompt := fmt.Sprintf(
+		`{"action":"plan","task":%q,"instruction":"Analyze the task and output a step-by-step execution plan. Do NOT call any tools. Output ONLY valid JSON, no markdown wrapping.","output_schema":{"summary":"string: one-line plan summary","steps":[{"order":"int","description":"string","tool":"string","actions":"string"}],"expected_output":"string: what this plan will produce"}}`,
+		input,
 	)
+	planOut, err := planAgent.Chat(ctx, planPrompt)
 	if err != nil {
-		return "", false, false, fmt.Errorf("primitiveApprove: plan: %w", err)
+		return "", Question{}, fmt.Errorf("prepareApprove: plan: %w", err)
 	}
 
-	// Step 2：等人确认
-	choice, err := wp.gate.Request(ctx, ApprovalRequest{
-		NodeID:  n.id,
-		Plan:    planOut,
+	q = Question{
+		ID:      wp.execID + "_" + n.id,
+		Content: planOut,
 		Options: n.approveOptions,
-	})
-	if err != nil {
-		return "", false, false, fmt.Errorf("primitiveApprove: gate: %w", err)
+		KVS:     n.buildKVS(),
+		Timeout: n.approveTimeout,
 	}
-
-	switch choice {
-	case "跳过", "skip":
-		return "", true, false, nil
-	case "终止", "abort", "":
-		return "", false, true, nil
-	}
-
-	// Step 3：真正执行
-	execAgent := wp.primitiveNewAgent(n)
-	out, err := execAgent.Chat(ctx, input)
-	if err != nil {
-		return "", false, false, err
-	}
-	return toJSON(out), false, false, nil
+	return planOut, q, nil
 }
+
+// [workplangate] executeApprove 根据审批结果 V 执行 approve 节点（Resume 时调用）。
+func (wp *WorkPlan) executeApprove(ctx context.Context, n *node, snap *pauseSnapshot) (*NodeResult, error) {
+	nr := &NodeResult{
+		NodeID:    n.id,
+		Kind:      n.kind.String(),
+		StartedAt: time.Now(),
+	}
+	defer func() { nr.EndedAt = time.Now() }()
+
+	action, _ := wp.pauseDecision.(string)
+
+	switch ApproveChoice(action) {
+	case ChoiceSkip:
+		nr.Skipped = true
+		nr.Output = snap.prevJSON
+		return nr, nil
+
+	case ChoiceAbort:
+		nr.Aborted = true
+		nr.Output = snap.prevJSON
+		return nr, nil
+
+	default: // ChoiceExecute 或自定义 V
+		execAgent := wp.primitiveNewAgent(n)
+		input := wp.primitiveRenderInput(n.input, snap.prevJSON)
+		out, err := execAgent.Chat(ctx, input)
+		if err != nil {
+			return nr, fmt.Errorf("executeApprove: %w", err)
+		}
+		nr.Output = toJSON(out)
+		return nr, nil
+	}
+}
+
+// [workplangate] Resume 从暂停的 approve 节点继续执行 WorkPlan。
+// 调用前需先通过 SetDecision 设置审批结果 V。
+func (wp *WorkPlan) Resume(ctx context.Context) (*WorkPlanResult, error) {
+	snap := wp.pauseSnapshot
+	if snap == nil {
+		return nil, fmt.Errorf("WorkPlan.Resume: no pause snapshot, Run must be called first")
+	}
+	wp.pauseSnapshot = nil
+	wp.execState = StateExecuting
+
+	// 执行暂停的 approve 节点
+	n, ok := wp.nodeIndex[snap.currentID]
+	if !ok {
+		return snap.result, fmt.Errorf("WorkPlan.Resume: paused node %q not found", snap.currentID)
+	}
+	if n.kind != kindApprove {
+		return snap.result, fmt.Errorf("WorkPlan.Resume: paused node %q is not an approve node (kind=%s)", snap.currentID, n.kind.String())
+	}
+
+	nr, err := wp.executeApprove(ctx, n, snap)
+	snap.result.NodeResults = append(snap.result.NodeResults, nr)
+	if err != nil {
+		wp.execState = StateFailed
+		return snap.result, fmt.Errorf("node %q: execute approve: %w", n.id, err)
+	}
+
+	prevJSON := snap.prevJSON
+	if !nr.Skipped && nr.Output != "" {
+		prevJSON = nr.Output
+	}
+	if nr.Aborted {
+		snap.result.Aborted = true
+		snap.result.AbortReason = fmt.Sprintf("aborted at node %q", n.id)
+		wp.execState = StateAborted
+		snap.result.TotalElapsed = time.Since(snap.startedAt)
+		return snap.result, nil
+	}
+
+	currentID := wp.primitiveNext(n, prevJSON)
+
+	// 继续执行后续节点
+	for currentID != "" {
+		select {
+		case <-ctx.Done():
+			snap.result.Aborted = true
+			snap.result.AbortReason = "context cancelled"
+			snap.result.TotalElapsed = time.Since(snap.startedAt)
+			return snap.result, nil
+		default:
+		}
+
+		n2, ok := wp.nodeIndex[currentID]
+		if !ok {
+			snap.result.TotalElapsed = time.Since(snap.startedAt)
+			return snap.result, fmt.Errorf("WorkPlan.Resume: node %q not found", currentID)
+		}
+
+		// 嵌套 Approve 节点：再次暂停
+		if n2.kind == kindApprove {
+			planText, q, err := wp.prepareApprove(ctx, n2, prevJSON)
+			if err != nil {
+				wp.execState = StateFailed
+				snap.result.TotalElapsed = time.Since(snap.startedAt)
+				return snap.result, fmt.Errorf("node %q: prepare approve: %w", n2.id, err)
+			}
+			wp.pauseSnapshot = &pauseSnapshot{
+				currentID: currentID,
+				prevJSON:  prevJSON,
+				result:    snap.result,
+				planText:  planText,
+				question:  q,
+				startedAt: snap.startedAt,
+			}
+			wp.execState = StateAwaitingApproval
+			snap.result.PausedWorkPlan = wp
+			return snap.result, nil
+		}
+
+		nr2, err := wp.primitiveRunNode(ctx, n2, prevJSON, snap.result)
+		snap.result.NodeResults = append(snap.result.NodeResults, nr2)
+		if err != nil {
+			wp.execState = StateFailed
+			snap.result.TotalElapsed = time.Since(snap.startedAt)
+			return snap.result, fmt.Errorf("node %q: %w", n2.id, err)
+		}
+		if nr2.Aborted {
+			snap.result.Aborted = true
+			snap.result.AbortReason = fmt.Sprintf("aborted at node %q", n2.id)
+			wp.execState = StateAborted
+			break
+		}
+		if !nr2.Skipped && nr2.Output != "" {
+			prevJSON = nr2.Output
+		}
+		currentID = wp.primitiveNext(n2, prevJSON)
+	}
+
+	wp.execState = StateCompleted
+	snap.result.TotalElapsed = time.Since(snap.startedAt)
+	return snap.result, nil
+}
+
+// ── [workplangate] 公共方法 ──────────────────────────────────────
+
+// ExecState 返回当前执行状态。
+func (wp *WorkPlan) ExecState() ExecState { return wp.execState }
+
+// ExecID 返回唯一执行 ID。
+func (wp *WorkPlan) ExecID() string { return wp.execID }
+
+// SetExecID 覆盖自动生成的执行 ID（用于跨服务关联）。
+func (wp *WorkPlan) SetExecID(id string) { wp.execID = id }
+
+// PendingQuestion 返回暂停时等待审批的 Question。
+// 仅在 ExecState == StateAwaitingApproval 时有值。
+func (wp *WorkPlan) PendingQuestion() Question {
+	if wp.pauseSnapshot == nil {
+		return Question{}
+	}
+	return wp.pauseSnapshot.question
+}
+
+// SetDecision 设置审批结果 V，必须在 Resume 前调用。
+func (wp *WorkPlan) SetDecision(v any) { wp.pauseDecision = v }
 
 // primitiveLoop 带 Signal 的循环原语。
 //

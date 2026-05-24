@@ -101,9 +101,9 @@ func (r *Runtime) tools() []types.Tool {
 	return result
 }
 
-// dispatch 根据工具名路由到对应 provider 并执行。
+// Dispatch 根据工具名路由到对应 provider 并执行。
 // 路由规则：按注册顺序，找到第一个 HasTool 返回 true 的 provider。
-func (r *Runtime) dispatch(ctx context.Context, name, argsJSON string) (string, error) {
+func (r *Runtime) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
 	r.mu.RLock()
 	providers := r.providers
 	r.mu.RUnlock()

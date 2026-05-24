@@ -263,7 +263,7 @@ func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCal
 				defer func() { <-sem }()
 				defer wg.Done()
 				start := time.Now()
-				result, dispErr := a.runtime.dispatch(ctx, tc.Function.Name, tc.Function.Arguments)
+				result, dispErr := a.runtime.Dispatch(ctx, tc.Function.Name, tc.Function.Arguments)
 				elapsed := time.Since(start).Milliseconds()
 
 				if dispErr != nil {

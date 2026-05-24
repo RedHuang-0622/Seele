@@ -1,6 +1,9 @@
 package workplan
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // =============================================================================
 // sugar.go —— 公有语法糖层
@@ -64,13 +67,13 @@ func (wp *WorkPlan) Auto(id, input string, opts ...NodeOpt) *WorkPlan {
 	return wp.primitiveAddNode(n)
 }
 
-// Approve 添加人工确认节点。
-// Agent 先生成执行计划展示给人，人确认后才真正执行。
+// [workplangate] Approve 添加人工确认节点（Q-K-V 模型）。
+// Agent 先生成执行计划，构建 Question 发送给用户，用户选择 K 后匹配 V 并执行。
 //
-//	options 展示给人的选项列表，留空默认 ["执行", "跳过", "终止"]
-func (wp *WorkPlan) Approve(id, input string, options []string, opts ...NodeOpt) *WorkPlan {
+//	options 展示给用户的选项列表（[]ChoiceOption），留空默认使用 DefaultApproveOptions()
+func (wp *WorkPlan) Approve(id, input string, options []ChoiceOption, opts ...NodeOpt) *WorkPlan {
 	if len(options) == 0 {
-		options = []string{"执行", "跳过", "终止"}
+		options = DefaultApproveOptions()
 	}
 	n := &node{
 		id:             wp.resolveID(id, "approve"),
@@ -82,10 +85,64 @@ func (wp *WorkPlan) Approve(id, input string, options []string, opts ...NodeOpt)
 	return wp.primitiveAddNode(n)
 }
 
-// Gate 极简版 Approve，只展示 yes/no 两个选项。
-// 适合"这个操作危险，你确定要执行吗？"这类场景。
+// [workplangate] Gate 极简版 Approve，只展示 执行/终止 两个选项。
 func (wp *WorkPlan) Gate(id, input string, opts ...NodeOpt) *WorkPlan {
-	return wp.Approve(id, input, []string{"执行", "终止"}, opts...)
+	return wp.Approve(id, input, Choices("execute", "abort"), opts...)
+}
+
+// ── [workplangate] 选项构造工具 ──────────────────────────────────
+
+// DefaultApproveOptions 返回默认三选项：执行 / 跳过 / 终止。
+func DefaultApproveOptions() []ChoiceOption {
+	return Choices("execute", "skip", "abort")
+}
+
+// DefaultGateOptions 返回极简二选项：执行 / 终止。
+func DefaultGateOptions() []ChoiceOption {
+	return Choices("execute", "abort")
+}
+
+// Choices 快捷构造 ChoiceOption 列表，按 key 自动匹配内置 label/description/style。
+// 支持的内置 key: "execute" | "skip" | "abort" | "retry" | "confirm"
+// 未识别的 key 使用 key 本身作为 label，style 为 "default"。
+func Choices(keys ...string) []ChoiceOption {
+	builtin := map[string]ChoiceOption{
+		"execute": {Key: "execute", Label: "执行", Description: "按计划执行全部步骤", Style: "primary"},
+		"skip":    {Key: "skip", Label: "跳过", Description: "跳过当前节点，继续后续流程", Style: "secondary"},
+		"abort":   {Key: "abort", Label: "终止", Description: "终止整个工作流", Style: "danger"},
+		"retry":   {Key: "retry", Label: "重试", Description: "重新执行当前节点", Style: "warning"},
+		"confirm": {Key: "confirm", Label: "确认", Description: "确认并继续执行", Style: "primary"},
+	}
+	result := make([]ChoiceOption, len(keys))
+	for i, k := range keys {
+		if opt, ok := builtin[k]; ok {
+			result[i] = opt
+		} else {
+			result[i] = ChoiceOption{Key: k, Label: k, Description: "", Style: "default"}
+		}
+	}
+	return result
+}
+
+// WithApproveKV 为 Approve 节点设置自定义 K→V 映射表。
+// 不调用时默认每个 K 的值等于其 key。
+//
+// 用法：
+//
+//	wp.Approve("部署", "确认部署方式", Choices("deploy", "canary", "abort"),
+//	    WithApproveKV(map[string]any{
+//	        "deploy":  "execute",
+//	        "canary":  "partial",
+//	        "abort":   "abort",
+//	    }),
+//	)
+func WithApproveKV(kvs map[string]any) NodeOpt {
+	return func(n *node) { n.approveKVS = kvs }
+}
+
+// WithApproveTimeout 为 Approve 节点设置审批超时时间。
+func WithApproveTimeout(d time.Duration) NodeOpt {
+	return func(n *node) { n.approveTimeout = d }
 }
 
 // Checkpoint 添加快照节点。

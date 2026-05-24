@@ -148,8 +148,12 @@ func Run(wfMap WorkflowMap, cfg *HarnessConfig) {
 	defer engine.Shutdown()
 
 	// 5. 构建 Handler 并启动 gRPC Server
+	// [workplangate] 创建 NetworkApprovalGate 支持两段式审批
+	gate := workplan.NewNetworkApprovalGate()
+
 	factory := &EngineFactory{Engine: engine, MaxLoops: cfg.MaxLoops}
 	handler := NewAgentHandler(role, reg, factory, wfMap)
+	handler.SetApprovalGate(gate)
 
 	port := fmt.Sprintf(":%d", reg.Network.Port)
 	if p := os.Getenv("AGENT_PORT"); p != "" {

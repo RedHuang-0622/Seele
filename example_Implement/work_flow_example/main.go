@@ -287,7 +287,11 @@ func ExampleFork(factory workplan.AgentFactory) {
 		// 然后展示给人，人确认后才真正执行
 		Approve("代码审查",
 			"审查以下并行开发产出，评估是否可以进入集成阶段：\n{{.PrevResult}}",
-			[]string{"通过，进入集成", "需要修改", "终止"},
+			[]workplan.ChoiceOption{
+				{Key: "approve", Label: "通过，进入集成", Style: "primary"},
+				{Key: "revise", Label: "需要修改", Style: "warning"},
+				{Key: "abort", Label: "终止", Style: "danger"},
+			},
 		).
 
 		// Step 5：根据审查结果分支

@@ -2,6 +2,7 @@ package workplan
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -22,6 +23,113 @@ const (
 	kindJoin                       // 汇合 Fork 的结果
 	kindCheckpoint                 // 快照节点，支持回滚
 	kindEmit                       // 把当前结果写入命名变量
+)
+
+// =============================================================================
+// [workplangate] ExecState — WorkPlan 执行状态机
+// =============================================================================
+
+// ExecState 表示 WorkPlan 执行的当前阶段。
+// 状态转换：NotStarted → Executing → AwaitingApproval → Executing → Completed/Aborted/Failed
+type ExecState int
+
+const (
+	StateNotStarted       ExecState = iota // 未执行
+	StateExecuting                         // 执行中
+	StateAwaitingApproval                  // 暂停，等待人工审批
+	StateCompleted                         // 所有节点正常结束
+	StateAborted                           // 用户终止
+	StateFailed                            // 执行出错
+)
+
+func (s ExecState) String() string {
+	switch s {
+	case StateNotStarted:
+		return "not_started"
+	case StateExecuting:
+		return "executing"
+	case StateAwaitingApproval:
+		return "awaiting_approval"
+	case StateCompleted:
+		return "completed"
+	case StateAborted:
+		return "aborted"
+	case StateFailed:
+		return "failed"
+	default:
+		return fmt.Sprintf("unknown(%d)", s)
+	}
+}
+
+// =============================================================================
+// [workplangate] ChoiceOption / Question — Q-K-V 审批模型
+// =============================================================================
+
+// ChoiceOption 表示用户可见的选项（K 部分）。
+// Key 是程序匹配用的唯一键，Label/Description 是展示文本。
+type ChoiceOption struct {
+	Key         string `json:"key"`         // 唯一键，用户回传时用
+	Label       string `json:"label"`       // 展示文字
+	Description string `json:"description"` // 选项说明
+	Style       string `json:"style"`       // 前端样式提示："primary"|"secondary"|"danger"|"warning"|"default"
+}
+
+// Question 表示一次完整的人工审批请求（Q + K，V 隐藏）。
+// ID 关联两段式调用的前后请求。
+// KVS 是服务端持有的键值映射表，不序列化发给客户端。
+type Question struct {
+	ID      string         `json:"id"`      // 唯一问题 ID（对应 executionID_nodeID）
+	Content string         `json:"content"` // 问题/计划内容（Q）
+	Options []ChoiceOption `json:"options"` // 可选 K 列表（发给用户）
+	KVS     map[string]any `json:"-"`       // K→V 映射表，不序列化，不暴露给 CLI
+	Timeout time.Duration  `json:"-"`       // 超时时间，0 表示不限
+}
+
+// DefaultChoice 返回第一个选项的 Key 作为默认/超时选择。
+func (q Question) DefaultChoice() string {
+	if len(q.Options) > 0 {
+		return q.Options[0].Key
+	}
+	return ""
+}
+
+// Resolve 根据 choice key 查找对应的 V。找不到时返回默认值。
+func (q Question) Resolve(choice string) (any, bool) {
+	if v, ok := q.KVS[choice]; ok {
+		return v, true
+	}
+	if key := q.DefaultChoice(); key != "" {
+		return q.KVS[key], false
+	}
+	return nil, false
+}
+
+// =============================================================================
+// [workplangate] pauseSnapshot — approve 节点暂停点
+// =============================================================================
+
+// pauseSnapshot 保存 WorkPlan 在 approve 节点暂停时的执行上下文，
+// 供 Resume 时从断点继续。
+type pauseSnapshot struct {
+	currentID  string            // 暂停时所在的节点 ID
+	prevJSON   string            // 上一节点的 JSON 输出
+	result     *WorkPlanResult   // 已执行的节点结果（含 Vars 等）
+	planText   string            // Plan Agent 生成的结构化计划文本
+	question   Question          // 发送给用户的审批问题
+	startedAt  time.Time         // WorkPlan 整体开始时间
+}
+
+// =============================================================================
+// [workplangate] ApproveChoice — 审批结果动作常量
+// =============================================================================
+
+// ApproveChoice 是 V 的核心动作类型，switch 匹配用。
+type ApproveChoice string
+
+const (
+	ChoiceExecute ApproveChoice = "execute" // 执行
+	ChoiceSkip    ApproveChoice = "skip"    // 跳过
+	ChoiceAbort   ApproveChoice = "abort"   // 终止
 )
 
 func (k NodeKind) String() string {
@@ -176,7 +284,10 @@ type node struct {
 	next         string   // 默认下一节点 ID
 
 	// ── kindApprove ───────────────────────────────────────────────
-	approveOptions []string // 展示给人的选项
+	// [workplangate] 从 []string 改为 []ChoiceOption，支持 K-V 模型
+	approveOptions []ChoiceOption // 展示给用户的选项（K 列表）
+	approveKVS     map[string]any // K→V 映射表，nil 时自动以 key 为 value
+	approveTimeout time.Duration  // 审批超时，0 表示不限
 
 	// ── kindIf ────────────────────────────────────────────────────
 	ifCond    func(string) bool // 条件函数
@@ -238,6 +349,9 @@ type WorkPlanResult struct {
 	Aborted      bool
 	AbortReason  string
 	TotalElapsed time.Duration
+
+	// [workplangate] 两段式协议：暂停时携带 WorkPlan 引用供 Resume
+	PausedWorkPlan *WorkPlan `json:"-"` // 内部引用，不序列化
 }
 
 // FinalOutput 返回最后一个成功节点的输出（JSON 字符串）。
@@ -259,6 +373,31 @@ func (r *WorkPlanResult) FinalOutputString() string {
 		return s
 	}
 	return raw
+}
+
+// =============================================================================
+// [workplangate] node 辅助方法
+// =============================================================================
+
+// buildKVS 构建 K→V 映射表。若 node.approveKVS 已设置则直接返回，
+// 否则自动生成：每个 option key 映射到自身（V == K）。
+func (n *node) buildKVS() map[string]any {
+	if n.approveKVS != nil {
+		return n.approveKVS
+	}
+	kvs := make(map[string]any, len(n.approveOptions))
+	for _, opt := range n.approveOptions {
+		kvs[opt.Key] = opt.Key
+	}
+	return kvs
+}
+
+// approvePlanPrompt 生成结构化计划 prompt，引导 Plan Agent 输出 JSON。
+func (n *node) approvePlanPrompt(input string) string {
+	return fmt.Sprintf(
+		`{"action":"plan","task":%q,"instruction":"Analyze the task and output a step-by-step execution plan. Do NOT call any tools. Output ONLY valid JSON, no markdown wrapping.","output_schema":{"summary":"string: one-line plan summary","steps":[{"order":"int","description":"string","tool":"string","actions":"string"}],"expected_output":"string: what this plan will produce"}}`,
+		input,
+	)
 }
 
 // =============================================================================
