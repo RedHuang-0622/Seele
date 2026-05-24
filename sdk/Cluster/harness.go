@@ -1,74 +1,65 @@
 package cluster
 
-// Package agent 提供通用 Agent 进程 Harness。
+// Package cluster 提供 Agent 进程的通用 Harness（启动框架）。
 //
-// Harness 负责 Agent 进程的完整生命周期（框架层）：
-//  1. 读取环境变量
-//  2. 解析个性注册表
-//  3. 裁剪合并注册表（uses.tools + peers）→ 写入临时文件
-//  4. 初始化 Seele Engine（LLM + 裁剪后工具集）
-//  5. 启动 microHub gRPC Server，等待 Dispatch 调用
-//  6. Dispatch → WorkflowMap 路由 → 执行工作流 → 返回结果
+// Harness 负责最小化的启动流程：
+//  1. 读取自包含注册表（工具地址直接内联，无需合并）
+//  2. 初始化 Seele Engine
+//  3. 创建 Handler 并启动 gRPC Server
 //
-// 应用层只需提供 WorkflowMap + HarnessConfig，其余全部由框架处理：
+// 应用层只需提供 WorkflowMap + HarnessConfig：
 //
 //	func main() {
 //	    agent.Run(agent.WorkflowMap{
-//	        "respond_to_alert": workflows.AlertResponseWorkflow,
-//	        "diagnose":         workflows.IncidentDiagnosisWorkflow,
-//	    }, &agent.HarnessConfig{MaxLoops: 50})
+//	        "model_report": workflows.ModelReportWorkflow,
+//	    }, agent.HarnessConfig{
+//	        Name:         "model_workflow",
+//	        Port:         51111,
+//	        RegistryPath: "model_agent/registries/registry_workflow.yaml",
+//	        LLMConfigPath: "model_agent/config.yaml",
+//	    })
 //	}
 //
-// 环境变量（框架读取，应用层覆盖默认路径）：
+// 注册表是自包含的：services.tools + pool 直接内联，文件本身即权限边界。
+// 物理隔离：每个 Agent 独立持有自己的注册表文件。
 //
-//	AGENT_ROLE        角色名（必填）
-//	REGISTRY_PATH     个性注册表路径（默认由应用层设置）
-//	HUB_REGISTRY      主注册表路径
-//	TOOLS_REGISTRY    工具地址簿路径
-//	LLM_CONFIG        LLM 配置文件路径
-//	AGENT_PORT        覆盖监听端口（默认读 registry network.port）
+// 日后多 Agent 调度时，通过注册表的 subagents 字段声明可调度的子 Agent。
 import (
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	seeleapi "github.com/sukasukasuka123/Seele/sdk/api"
 	"github.com/sukasukasuka123/Seele/workplan"
 	tool "github.com/sukasukasuka123/microHub/root_class/tool"
-	"gopkg.in/yaml.v3"
 )
 
 // ── HarnessConfig ────────────────────────────────────────────────
 
-// HarnessConfig 应用层注入的配置，覆盖框架默认行为。
-// 零值字段使用框架默认值。
+// HarnessConfig 应用层显式注入的配置，框架不读环境变量。
 type HarnessConfig struct {
+	// Name 是本 Agent 的唯一标识，同时作为 gRPC 服务名。
+	Name string
+
+	// Port 是 gRPC 监听端口。
+	Port int
+
+	// RegistryPath 自包含注册表路径（services.tools + pool，直接给 Engine 用）。
+	RegistryPath string
+
+	// LLMConfigPath LLM 配置文件路径。
+	LLMConfigPath string
+
 	// MaxLoops 单次 Agent.Chat 最大 ReAct 循环次数，默认 8。
 	MaxLoops int
 
 	// MaxConcurrentWorkPlans 全局最大并发 WorkPlan 数，0 表示不限。
 	MaxConcurrentWorkPlans int
-
-	// RegistryPath 个性注册表路径，空时从环境变量 REGISTRY_PATH 读取。
-	RegistryPath string
-
-	// HubRegistry 主注册表路径，空时从环境变量 HUB_REGISTRY 读取。
-	HubRegistry string
-
-	// ToolsRegistry 工具地址簿路径，空时从环境变量 TOOLS_REGISTRY 读取。
-	ToolsRegistry string
-
-	// LLMConfigPath LLM 配置文件路径，空时从环境变量 LLM_CONFIG 读取。
-	LLMConfigPath string
 }
 
 func (c *HarnessConfig) withDefaults() {
-	if c == nil {
-		return
-	}
 	if c.MaxLoops <= 0 {
-		c.MaxLoops = 4
+		c.MaxLoops = 8
 	}
 }
 
@@ -87,107 +78,46 @@ func (f *EngineFactory) NewAgent(systemPrompt string) workplan.Agent {
 // ── Run ──────────────────────────────────────────────────────────
 
 // Run 是 Harness 的唯一入口。阻塞直到进程退出。
-// wfMap 由应用层注入（method → workflow function）。
-// cfg 为 nil 时使用框架默认值。
-func Run(wfMap WorkflowMap, cfg *HarnessConfig) {
-	// 0. 初始化配置默认值
-	if cfg == nil {
-		cfg = &HarnessConfig{}
-	}
+func Run(wfMap WorkflowMap, cfg HarnessConfig) {
 	cfg.withDefaults()
 	workplan.SetMaxConcurrentWorkPlans(cfg.MaxConcurrentWorkPlans)
 
-	// 1. 读环境变量（框架读取，应用层可在 cfg 中覆盖默认路径）
-	role := os.Getenv("AGENT_ROLE")
-	if role == "" {
-		log.Fatal("[agent] AGENT_ROLE 未设置")
+	if cfg.Name == "" {
+		log.Fatal("[agent] Name is required")
+	}
+	if cfg.Port <= 0 {
+		log.Fatal("[agent] Port is required")
+	}
+	if cfg.RegistryPath == "" {
+		log.Fatal("[agent] RegistryPath is required")
 	}
 
-	registryPath := firstNonEmpty(cfg.RegistryPath,
-		os.Getenv("REGISTRY_PATH"),
-		"ops_tools/registries/registry_"+role+".yaml")
-	hubRegistry := firstNonEmpty(cfg.HubRegistry,
-		os.Getenv("HUB_REGISTRY"),
-		"ops_tools/registry.yaml")
-	toolsRegistry := firstNonEmpty(cfg.ToolsRegistry,
-		os.Getenv("TOOLS_REGISTRY"),
-		"ops_tools/registry.tools.yaml")
-	llmConfig := firstNonEmpty(cfg.LLMConfigPath,
-		os.Getenv("LLM_CONFIG"),
-		"ops_tools/config.yaml")
+	log.Printf("[%s] 启动，端口 :%d，注册表 %s", cfg.Name, cfg.Port, cfg.RegistryPath)
 
-	// 2. 解析个性注册表
-	reg := &AgentRegistry{}
-	data, err := os.ReadFile(registryPath)
-	if err != nil {
-		log.Fatalf("[%s] 读取注册表 %q 失败: %v", role, registryPath, err)
-	}
-	if err := yaml.Unmarshal(data, reg); err != nil {
-		log.Fatalf("[%s] 解析 YAML %q 失败: %v", role, registryPath, err)
-	}
-
-	logRegistrySummary(role, reg)
-
-	// 3. 裁剪合并注册表
-	mergedPath, err := BuildAgentRegistry(reg, hubRegistry, toolsRegistry)
-	if err != nil {
-		log.Fatalf("[%s] 构建合并注册表失败: %v", role, err)
-	}
-	log.Printf("[%s] 合并注册表 → %s", role, mergedPath)
-	defer os.Remove(mergedPath)
-
-	// 4. 初始化 Engine
+	// 1. 初始化 Engine（注册表自包含，直接传入）
 	engine, err := seeleapi.New(seeleapi.Options{
-		RegistryPath:    mergedPath,
-		LLMConfigPath:   llmConfig,
+		RegistryPath:    cfg.RegistryPath,
+		LLMConfigPath:   cfg.LLMConfigPath,
 		ToolCallTimeOut: 120 * time.Second,
 	})
 	if err != nil {
-		log.Fatalf("[%s] Engine 初始化失败: %v", role, err)
+		log.Fatalf("[%s] Engine 初始化失败: %v", cfg.Name, err)
 	}
 	defer engine.Shutdown()
 
-	// 5. 构建 Handler 并启动 gRPC Server
+	// 2. 构建 Handler 并启动 gRPC Server
 	// [workplangate] 创建 NetworkApprovalGate 支持两段式审批
 	gate := workplan.NewNetworkApprovalGate()
 
 	factory := &EngineFactory{Engine: engine, MaxLoops: cfg.MaxLoops}
-	handler := NewAgentHandler(role, reg, factory, wfMap)
+	handler := NewAgentHandler(cfg.Name, factory, wfMap)
 	handler.SetApprovalGate(gate)
+	defer handler.Shutdown()
 
-	port := fmt.Sprintf(":%d", reg.Network.Port)
-	if p := os.Getenv("AGENT_PORT"); p != "" {
-		port = p
-	}
-
-	log.Printf("[%s] microHub 监听 %s (tools=%d)", role, port, len(engine.Skills()))
-	log.Printf("[%s] === Agent 就绪 ===", role)
+	port := fmt.Sprintf(":%d", cfg.Port)
+	log.Printf("[%s] 就绪，工具数=%d", cfg.Name, len(engine.Skills()))
 
 	if err := tool.New(handler).Serve(port); err != nil {
-		log.Fatalf("[%s] Serve: %v", role, err)
-	}
-}
-
-// ── 内部工具 ────────────────────────────────────────────────────
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-func logRegistrySummary(role string, reg *AgentRegistry) {
-	log.Printf("[%s] 注册表: %s (tier=%s)", role, reg.Role.Display, reg.Role.Tier)
-	log.Printf("[%s] 能力: %d 个", role, len(reg.Provides.Capabilities))
-	for _, c := range reg.Provides.Capabilities {
-		log.Printf("[%s]   - %s: %s", role, c.Name, c.Description)
-	}
-	log.Printf("[%s] 原子工具: %v", role, reg.Uses.Tools)
-	log.Printf("[%s] Peers: %d 个", role, len(reg.Peers))
-	for _, p := range reg.Peers {
-		log.Printf("[%s]   - %s: %v", role, p.Name, p.Capabilities)
+		log.Fatalf("[%s] Serve: %v", cfg.Name, err)
 	}
 }

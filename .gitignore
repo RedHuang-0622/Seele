@@ -18,3 +18,5 @@ makefile
 # 后缀带exe的文件
 *.exe
 *.log
+*.png
+*.csv

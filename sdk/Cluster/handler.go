@@ -23,6 +23,12 @@ type WorkflowMap map[string]WorkflowFunc
 
 // ── [workplangate] 暂停执行 ──────────────────────────────────────
 
+const (
+	pausedTTL       = 5 * time.Minute  // 暂停执行过期时间
+	cleanupInterval = 1 * time.Minute  // 过期扫描间隔
+	resumeTimeout   = 10 * time.Minute // Resume 后的最大执行时间
+)
+
 // pausedExecution 存储暂停等待审批的 WorkPlan 实例。
 type pausedExecution struct {
 	wp       *workplan.WorkPlan
@@ -36,37 +42,74 @@ type pausedExecution struct {
 // [workplangate] 支持两段式审批：
 //   - 工作流遇到 Approve 节点时暂停，返回 Question 给 CLI
 //   - CLI 通过 _decide 方法回传用户选择，恢复执行
+//   - 暂停超 5 分钟自动过期清理
 type AgentHandler struct {
-	role     string
-	registry *AgentRegistry
-	factory  workplan.AgentFactory
-	wfMap    WorkflowMap
+	name    string
+	factory workplan.AgentFactory
+	wfMap   WorkflowMap
 
 	// [workplangate] 审批支持
-	gate *workplan.NetworkApprovalGate // nil 时不启用两段式审批
+	gate *workplan.NetworkApprovalGate
 
 	mu         sync.Mutex
-	executions map[string]*pausedExecution // questionID → paused execution
+	executions map[string]*pausedExecution
+	shutdown   chan struct{} // 关闭清理 goroutine
 }
 
-// NewAgentHandler 创建 AgentHandler。
-func NewAgentHandler(role string, reg *AgentRegistry, factory workplan.AgentFactory, wfMap WorkflowMap) *AgentHandler {
-	return &AgentHandler{
-		role:       role,
-		registry:   reg,
+// NewAgentHandler 创建 AgentHandler，同时启动过期清理 goroutine。
+func NewAgentHandler(name string, factory workplan.AgentFactory, wfMap WorkflowMap) *AgentHandler {
+	h := &AgentHandler{
+		name:       name,
 		factory:    factory,
 		wfMap:      wfMap,
 		executions: make(map[string]*pausedExecution),
+		shutdown:   make(chan struct{}),
 	}
+	go h.cleanupLoop()
+	return h
 }
 
 // [workplangate] SetApprovalGate 注入 NetworkApprovalGate 以启用两段式审批。
-// 不调用此方法则 Approve 节点使用 WorkPlan 内部 gate（如 CLIApprovalGate）阻塞执行。
 func (h *AgentHandler) SetApprovalGate(gate *workplan.NetworkApprovalGate) {
 	h.gate = gate
 }
 
-func (h *AgentHandler) ServiceName() string { return h.role }
+// Shutdown 停止过期清理 goroutine，释放资源。
+func (h *AgentHandler) Shutdown() {
+	select {
+	case <-h.shutdown:
+	default:
+		close(h.shutdown)
+	}
+}
+
+// cleanupLoop 定期扫描并删除过期的暂停执行。
+func (h *AgentHandler) cleanupLoop() {
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			h.expireExecutions()
+		case <-h.shutdown:
+			return
+		}
+	}
+}
+
+func (h *AgentHandler) expireExecutions() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	cutoff := time.Now().Add(-pausedTTL)
+	for id, exec := range h.executions {
+		if exec.storedAt.Before(cutoff) {
+			log.Printf("[%s] expired paused execution %s (age=%v)", h.name, id, time.Since(exec.storedAt))
+			delete(h.executions, id)
+		}
+	}
+}
+
+func (h *AgentHandler) ServiceName() string { return h.name }
 
 func (h *AgentHandler) Execute(req *pb.ToolRequest) (<-chan *pb.ToolResponse, error) {
 	ch := make(chan *pb.ToolResponse, 1)
@@ -82,16 +125,16 @@ func (h *AgentHandler) Execute(req *pb.ToolRequest) (<-chan *pb.ToolResponse, er
 
 		wf, ok := h.wfMap[req.Method]
 		if !ok {
-			ch <- errorResp(h.role, req.TaskId, "UNKNOWN_METHOD",
-				fmt.Sprintf("method=%q not found for agent=%q", req.Method, h.role))
+			ch <- errorResp(h.name, req.TaskId, "UNKNOWN_METHOD",
+				fmt.Sprintf("method=%q not found for agent=%q", req.Method, h.name))
 			return
 		}
 
 		userInput := extractUserInput(req.Params)
-		log.Printf("[%s] Dispatch method=%s", h.role, req.Method)
+		log.Printf("[%s] Dispatch method=%s", h.name, req.Method)
 		result, err := wf(h.factory, userInput)
 		if err != nil {
-			ch <- errorResp(h.role, req.TaskId, "WORKFLOW_ERROR", err.Error())
+			ch <- errorResp(h.name, req.TaskId, "WORKFLOW_ERROR", err.Error())
 			return
 		}
 
@@ -120,7 +163,7 @@ func (h *AgentHandler) sendQuestion(wp *workplan.WorkPlan, ch chan<- *pb.ToolRes
 	// 通过 gate 推送到 CLI（设置 OnQuestion 回调）
 	if h.gate != nil && h.gate.OnQuestion != nil {
 		if err := h.gate.OnQuestion(q); err != nil {
-			ch <- errorResp(h.role, "", "APPROVAL_PUSH_ERROR", err.Error())
+			ch <- errorResp(h.name, "", "APPROVAL_PUSH_ERROR", err.Error())
 			return
 		}
 	}
@@ -134,7 +177,7 @@ func (h *AgentHandler) sendQuestion(wp *workplan.WorkPlan, ch chan<- *pb.ToolRes
 	}
 	h.mu.Unlock()
 
-	log.Printf("[%s] workflow paused, question=%s options=%d", h.role, q.ID, len(q.Options))
+	log.Printf("[%s] workflow paused, question=%s options=%d", h.name, q.ID, len(q.Options))
 
 	// 构建审批响应发送给 CLI
 	resp := h.buildQuestionResp(q)
@@ -150,12 +193,12 @@ func (h *AgentHandler) handleDecide(req *pb.ToolRequest, ch chan<- *pb.ToolRespo
 		Choice     string `json:"choice"`
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		ch <- errorResp(h.role, req.TaskId, "BAD_PARAMS",
+		ch <- errorResp(h.name, req.TaskId, "BAD_PARAMS",
 			fmt.Sprintf("_decide params parse error: %v", err))
 		return
 	}
 	if params.QuestionID == "" || params.Choice == "" {
-		ch <- errorResp(h.role, req.TaskId, "BAD_PARAMS",
+		ch <- errorResp(h.name, req.TaskId, "BAD_PARAMS",
 			"question_id and choice are required")
 		return
 	}
@@ -168,7 +211,7 @@ func (h *AgentHandler) handleDecide(req *pb.ToolRequest, ch chan<- *pb.ToolRespo
 	h.mu.Unlock()
 
 	if !ok {
-		ch <- errorResp(h.role, req.TaskId, "NOT_FOUND",
+		ch <- errorResp(h.name, req.TaskId, "NOT_FOUND",
 			fmt.Sprintf("execution %q not found or expired", params.QuestionID))
 		return
 	}
@@ -177,17 +220,18 @@ func (h *AgentHandler) handleDecide(req *pb.ToolRequest, ch chan<- *pb.ToolRespo
 	v, exact := exec.question.Resolve(params.Choice)
 	if !exact {
 		log.Printf("[%s] _decide: choice=%q not found for question=%s, using default",
-			h.role, params.Choice, params.QuestionID)
+			h.name, params.Choice, params.QuestionID)
 	}
 	exec.wp.SetDecision(v)
 
-	log.Printf("[%s] _decide: question=%s choice=%s v=%v, resuming", h.role, params.QuestionID, params.Choice, v)
+	log.Printf("[%s] _decide: question=%s choice=%s v=%v, resuming", h.name, params.QuestionID, params.Choice, v)
 
-	// 恢复执行
-	ctx := context.Background() // TODO: 从 req 中提取或维持原始 context
+	// 恢复执行：创建带超时的 context，防止 Resume 永久阻塞
+	ctx, cancel := context.WithTimeout(context.Background(), resumeTimeout)
+	defer cancel()
 	result, err := exec.wp.Resume(ctx)
 	if err != nil {
-		ch <- errorResp(h.role, req.TaskId, "RESUME_ERROR", err.Error())
+		ch <- errorResp(h.name, req.TaskId, "RESUME_ERROR", err.Error())
 		return
 	}
 
@@ -198,7 +242,7 @@ func (h *AgentHandler) handleDecide(req *pb.ToolRequest, ch chan<- *pb.ToolRespo
 	}
 
 	ch <- h.buildResultResp(result)
-	log.Printf("[%s] _decide: workflow completed", h.role)
+	log.Printf("[%s] _decide: workflow completed", h.name)
 }
 
 // ── [workplangate] 响应构造 ───────────────────────────────────────
@@ -213,9 +257,9 @@ func (h *AgentHandler) buildQuestionResp(q workplan.Question) *pb.ToolResponse {
 		"node_elapsed": "0s",
 	}
 	raw, _ := json.Marshal(resp)
-	r, err := pb_api.OKResp(h.role, "", json.RawMessage(raw))
+	r, err := pb_api.OKResp(h.name, "", json.RawMessage(raw))
 	if err != nil {
-		return errorResp(h.role, "", "BUILD_RESP", err.Error())
+		return errorResp(h.name, "", "BUILD_RESP", err.Error())
 	}
 	return r
 }
@@ -229,9 +273,9 @@ func (h *AgentHandler) buildResultResp(result *workplan.WorkPlanResult) *pb.Tool
 		"aborted":        result.Aborted,
 	}
 	respBytes, _ := json.Marshal(resp)
-	r, err := pb_api.OKResp(h.role, "", json.RawMessage(respBytes))
+	r, err := pb_api.OKResp(h.name, "", json.RawMessage(respBytes))
 	if err != nil {
-		return errorResp(h.role, "", "BUILD_RESP", err.Error())
+		return errorResp(h.name, "", "BUILD_RESP", err.Error())
 	}
 	return r
 }
