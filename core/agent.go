@@ -57,6 +57,18 @@ func (a *Agent) ClearHistory() {
 	a.history = sys
 }
 
+// UpdateSystemPrompt 替换	对话历史中的首条 system 消息内容。
+// 若历史中没有 system 消息，则在最前面插入一条。
+// 配合热加载机制使用：修改 prompt 文件后调用此方法即可实时生效。
+func (a *Agent) UpdateSystemPrompt(newPrompt string) {
+	if len(a.history) > 0 && a.history[0].Role == "system" {
+		a.history[0].Content = &newPrompt
+		return
+	}
+	// 没有 system 消息 → 在开头插入
+	a.history = append([]types.Message{{Role: "system", Content: &newPrompt}}, a.history...)
+}
+
 // MaxLoops 返回当前的最大 tool_call 循环次数。
 func (a *Agent) MaxLoops() int { return a.maxLoops }
 
