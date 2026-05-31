@@ -11,6 +11,7 @@
 // 走完整 ReAct 循环（LLM → tool_calls → dispatch → text）。
 //
 // 运行：
+//
 //	单元测试：go test -v -run TestPool -timeout 60s ./test/
 //	集成测试：TEST_INTEGRATION=1 go test -v -run TestPool_Integration -timeout 120s ./test/
 package test
@@ -27,8 +28,7 @@ import (
 	"testing"
 	"time"
 
-	core "github.com/sukasukasuka123/Seele/core"
-	types "github.com/sukasukasuka123/Seele/types"
+	"github.com/sukasukasuka123/Seele/core/session"
 )
 
 // =============================================================================
@@ -43,14 +43,12 @@ func TestPool_AgentPipeline(t *testing.T) {
 		llmSrv := newAutoMockLLM("tool_0", `{}`, `"all done"`)
 		defer llmSrv.Close()
 
-		rt, _ := core.NewRuntime(types.LLMConfig{
-			BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
-		})
+		llmClient, tools := newTestTools(llmSrv.URL())
 		prov := newMockProvider("pressure")
 		for i := 0; i < 10; i++ {
 			prov.AddTool(fmt.Sprintf("tool_%d", i), fmt.Sprintf("tool %d for pressure test", i))
 		}
-		rt.Register(prov)
+		tools.Register(prov)
 
 		ctx := context.Background()
 		var wg sync.WaitGroup
@@ -62,7 +60,7 @@ func TestPool_AgentPipeline(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				agent := rt.NewAgent("", 2)
+				agent := session.New(llmClient, tools, "", 2)
 				callStart := time.Now()
 				_, err := agent.Chat(ctx, fmt.Sprintf("call tool_%d", idx))
 				latencies[idx] = time.Since(callStart)
@@ -89,14 +87,12 @@ func TestPool_AgentPipeline(t *testing.T) {
 		llmSrv := newAutoMockLLM("tool_0", `{}`, `"all done"`)
 		defer llmSrv.Close()
 
-		rt, _ := core.NewRuntime(types.LLMConfig{
-			BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
-		})
+		llmClient, tools := newTestTools(llmSrv.URL())
 		prov := newMockProvider("fork_sim")
 		for i := 0; i < 10; i++ {
 			prov.AddTool(fmt.Sprintf("tool_%d", i), "")
 		}
-		rt.Register(prov)
+		tools.Register(prov)
 
 		ctx := context.Background()
 		agents := 3
@@ -118,7 +114,7 @@ func TestPool_AgentPipeline(t *testing.T) {
 					innerWg.Add(1)
 					go func(call int) {
 						defer innerWg.Done()
-						agent := rt.NewAgent("", 2)
+						agent := session.New(llmClient, tools, "", 2)
 						idx := atomic.AddInt32(&callIdx, 1)
 						callStart := time.Now()
 						_, err := agent.Chat(ctx, fmt.Sprintf("call tool_%d", call))
@@ -209,15 +205,12 @@ func TestPool_AgentConnectionRelease(t *testing.T) {
 	llmSrv := newAutoMockLLM("tool_0", `{}`, `"done"`)
 	defer llmSrv.Close()
 
-	rt, _ := core.NewRuntime(types.LLMConfig{
-		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
-	})
-
+	llmClient, tools := newTestTools(llmSrv.URL())
 	prov := newCountingProvider("leak_check")
 	for i := 0; i < 6; i++ {
 		prov.AddTool(fmt.Sprintf("tool_%d", i), "")
 	}
-	rt.Register(prov)
+	tools.Register(prov)
 
 	ctx := context.Background()
 	concurrency := 6
@@ -227,7 +220,7 @@ func TestPool_AgentConnectionRelease(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			agent := rt.NewAgent("", 2)
+			agent := session.New(llmClient, tools, "", 2)
 			_, _ = agent.Chat(ctx, fmt.Sprintf("call tool_%d", idx))
 		}(i)
 	}
@@ -267,15 +260,12 @@ func TestPool_AgentQueueBuildup(t *testing.T) {
 	llmSrv := newAutoMockLLM("tool_0", `{}`, `"done"`)
 	defer llmSrv.Close()
 
-	rt, _ := core.NewRuntime(types.LLMConfig{
-		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 10,
-	})
-
+	llmClient, tools := newTestTools(llmSrv.URL())
 	prov := newCountingProvider("queue_test")
 	for i := 0; i < 4; i++ {
 		prov.AddTool(fmt.Sprintf("tool_%d", i), "")
 	}
-	rt.Register(prov)
+	tools.Register(prov)
 
 	waves := []int{8, 8, 8}
 
@@ -290,7 +280,7 @@ func TestPool_AgentQueueBuildup(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				agent := rt.NewAgent("", 2)
+				agent := session.New(llmClient, tools, "", 2)
 				start := time.Now()
 				_, err := agent.Chat(ctx, fmt.Sprintf("call tool_%d", idx%4))
 				lat := time.Since(start)
@@ -373,7 +363,7 @@ func TestPool_Integration_WorkflowStress(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				agent := eng.NewAgent("", 2)
+				agent := eng.NewSession("", 2)
 
 				var innerWg sync.WaitGroup
 				tools := []string{"echo", "ping"}
@@ -420,7 +410,7 @@ func TestPool_Integration_WorkflowStress(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					agent := eng.NewAgent("", 1)
+					agent := eng.NewSession("", 1)
 					cs := time.Now()
 					_, err := agent.Chat(ctx, "调用 echo 工具，content=pressure_test")
 					lat := time.Since(cs)
@@ -466,13 +456,10 @@ func TestPool_RegisterUnregisterRace(t *testing.T) {
 	llmSrv := newAutoMockLLM("stable_tool", `{}`, `"done"`)
 	defer llmSrv.Close()
 
-	rt, _ := core.NewRuntime(types.LLMConfig{
-		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
-	})
-
+	llmClient, tools := newTestTools(llmSrv.URL())
 	prov1 := newMockProvider("stable")
 	prov1.AddTool("stable_tool", "")
-	rt.Register(prov1)
+	tools.Register(prov1)
 
 	ctx := context.Background()
 	var wg sync.WaitGroup
@@ -482,7 +469,7 @@ func TestPool_RegisterUnregisterRace(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			agent := rt.NewAgent("", 2)
+			agent := session.New(llmClient, tools, "", 2)
 			_, _ = agent.Chat(ctx, "call stable_tool")
 		}()
 	}
@@ -491,9 +478,9 @@ func TestPool_RegisterUnregisterRace(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		prov := newMockProvider(fmt.Sprintf("dynamic_%d", i))
 		prov.AddTool(fmt.Sprintf("dyn_tool_%d", i), "")
-		rt.Register(prov)
+		tools.Register(prov)
 		time.Sleep(1 * time.Millisecond)
-		rt.Unregister(prov.ProviderName())
+		tools.Unregister(prov.ProviderName())
 	}
 
 	wg.Wait()

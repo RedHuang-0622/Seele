@@ -298,12 +298,13 @@ func (c *ChatClient) processFrame(payload string, state *sseState, onChunk func(
 }
 
 // buildToolCalls 将 tcMap（index → *ToolCall）整理成有序的 []ToolCall。
-// LLM 保证 index 从 0 连续递增，直接用 index 作为 slice 下标写入。
+// 按索引 0,1,2... 顺序迭代，跳过缺失的索引，append 构建结果，
+// 防止非连续索引导致的零值 ToolCall 注入 history。
 func buildToolCalls(tcMap map[int]*types.ToolCall) []types.ToolCall {
-	result := make([]types.ToolCall, len(tcMap))
-	for idx, tc := range tcMap {
-		if idx < len(result) {
-			result[idx] = *tc
+	result := make([]types.ToolCall, 0, len(tcMap))
+	for i := 0; i < len(tcMap); i++ {
+		if tc, ok := tcMap[i]; ok {
+			result = append(result, *tc)
 		}
 	}
 	return result
@@ -363,7 +364,7 @@ func (c *ChatClient) CompleteStream(
 
 	// 3. 根据模式返回结果
 	if state.isToolMode {
-		return "", state.reasoningSB.String(), buildToolCalls(state.tcMap), nil
+		return state.sb.String(), state.reasoningSB.String(), buildToolCalls(state.tcMap), nil
 	}
 	return state.sb.String(), state.reasoningSB.String(), nil, nil
 }

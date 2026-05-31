@@ -14,8 +14,10 @@ import (
 	"testing"
 	"time"
 
-	core "github.com/sukasukasuka123/Seele/core"
+	"github.com/sukasukasuka123/Seele/core/session"
+	"github.com/sukasukasuka123/Seele/core/tool_holder"
 	history "github.com/sukasukasuka123/Seele/history"
+	"github.com/sukasukasuka123/Seele/llm"
 	prov "github.com/sukasukasuka123/Seele/provider"
 	types "github.com/sukasukasuka123/Seele/types"
 	"github.com/sukasukasuka123/Seele/workplan"
@@ -106,22 +108,25 @@ func (p *controllableProvider) AddTool(name, desc string) {
 }
 
 // =============================================================================
-// 辅助：创建带 mock LLM + controllableProvider 的 Runtime
+// 辅助：创建测试用的 LLM 客户端 + tool_holder + provider
 // =============================================================================
 
-func newTestRuntime() (*core.Runtime, *mockLLMServer, *controllableProvider) {
+func newTestFixture() (*llm.ChatClient, *tool_holder.Holder, *mockLLMServer, *controllableProvider) {
 	mockLLM := newMockLLMServer()
-	rt, err := core.NewRuntime(types.LLMConfig{
+	llmClient := llm.NewChatClient(types.LLMConfig{
 		BaseURL: mockLLM.URL(),
 		Model:   "test-model",
 	})
-	if err != nil {
-		panic("newTestRuntime: " + err.Error())
-	}
+	tools := tool_holder.New()
 	provider := newControllableProvider("test-provider")
 	provider.AddTool("test_tool", "test tool for unit tests")
-	rt.Register(provider)
-	return rt, mockLLM, provider
+	tools.Register(provider)
+	return llmClient, tools, mockLLM, provider
+}
+
+// newTestSession 快速创建一个测试会话。
+func newTestSession(llmClient *llm.ChatClient, tools *tool_holder.Holder, prompt string, loops int) *session.Holder {
+	return session.New(llmClient, tools, prompt, loops)
 }
 
 // =============================================================================
@@ -129,17 +134,17 @@ func newTestRuntime() (*core.Runtime, *mockLLMServer, *controllableProvider) {
 // =============================================================================
 
 func TestMaxLoopsDefault(t *testing.T) {
-	rt, mockLLM, _ := newTestRuntime()
+	llm, tools, mockLLM, _ := newTestFixture()
 	defer mockLLM.Close()
 
 	// loopTimes=0 应使用默认值 4
-	agent := rt.NewAgent("", 0)
+	agent := newTestSession(llm, tools, "", 0)
 	if agent.MaxLoops() != 4 {
 		t.Errorf("expected default maxLoops=4, got %d", agent.MaxLoops())
 	}
 
 	// 显式设置应覆盖默认值
-	agent2 := rt.NewAgent("", 10)
+	agent2 := newTestSession(llm, tools, "", 10)
 	if agent2.MaxLoops() != 10 {
 		t.Errorf("expected explicit maxLoops=10, got %d", agent2.MaxLoops())
 	}
@@ -150,7 +155,7 @@ func TestMaxLoopsDefault(t *testing.T) {
 // =============================================================================
 
 func TestTransientErrorRetrySucceeds(t *testing.T) {
-	rt, mockLLM, provider := newTestRuntime()
+	llm, tools, mockLLM, provider := newTestFixture()
 	defer mockLLM.Close()
 
 	// provider 前 2 次返回瞬时错误，第 3 次返回成功
@@ -166,7 +171,7 @@ func TestTransientErrorRetrySucceeds(t *testing.T) {
 	mockLLM.EnqueueText(`"task complete"`)
 
 	ctx := context.Background()
-	agent := rt.NewAgent("You are a test agent.", 4)
+	agent := newTestSession(llm, tools,"You are a test agent.", 4)
 	result, err := agent.Chat(ctx, "do something")
 
 	if err != nil {
@@ -204,11 +209,13 @@ func TestTransientErrorRetrySucceeds(t *testing.T) {
 }
 
 // =============================================================================
-// Test 3: 瞬时错误耗尽重试次数 —— 不给 history 注入错误
+// Test 3: 瞬时错误耗尽重试次数 —— 错误注入 history 供 LLM 感知
 // =============================================================================
+// 重构后重试逻辑下沉到 Runtime.Dispatch，耗尽后返回错误，
+// Agent 将错误包装为 {"error":"..."} 注入 history，LLM 可据此自适应。
 
 func TestTransientErrorExhausted(t *testing.T) {
-	rt, mockLLM, provider := newTestRuntime()
+	llm, tools, mockLLM, provider := newTestFixture()
 	defer mockLLM.Close()
 
 	// provider 永远返回瞬时错误
@@ -224,7 +231,7 @@ func TestTransientErrorExhausted(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	agent := rt.NewAgent("You are a test agent.", 4)
+	agent := newTestSession(llm, tools,"You are a test agent.", 4)
 	_, err := agent.Chat(ctx, "do something")
 
 	// 应该因为 maxLoops 耗尽而返回错误
@@ -232,24 +239,21 @@ func TestTransientErrorExhausted(t *testing.T) {
 		t.Fatal("expected error due to maxLoops exhausted")
 	}
 
-	// 验证 history 中不含瞬时错误消息
+	// 验证 history 中注入了错误消息（新行为：LLM 可感知工具失败）
 	msgs := agent.History()
-	for _, msg := range msgs {
-		if msg.Role == "tool" && msg.Content != nil {
-			t.Errorf("history should not contain any tool messages, but got: %s", *msg.Content)
-		}
-	}
-
-	// 验证没有 tool 角色的消息（瞬时错误全被跳过）
 	toolCount := 0
 	for _, msg := range msgs {
 		if msg.Role == "tool" {
 			toolCount++
+			if msg.Content == nil {
+				t.Error("tool message should have content")
+			}
 		}
 	}
-	if toolCount > 0 {
-		t.Errorf("expected 0 tool messages (all transient), got %d", toolCount)
+	if toolCount == 0 {
+		t.Error("expected tool error messages in history (LLM should see failures)")
 	}
+	t.Logf("tool error messages in history: %d", toolCount)
 }
 
 // =============================================================================
@@ -257,7 +261,7 @@ func TestTransientErrorExhausted(t *testing.T) {
 // =============================================================================
 
 func TestPermanentErrorNotRetried(t *testing.T) {
-	rt, mockLLM, provider := newTestRuntime()
+	llm, tools, mockLLM, provider := newTestFixture()
 	defer mockLLM.Close()
 
 	// provider 返回永久（业务）错误
@@ -273,7 +277,7 @@ func TestPermanentErrorNotRetried(t *testing.T) {
 	mockLLM.EnqueueText(`"cannot proceed, tool failed"`)
 
 	ctx := context.Background()
-	agent := rt.NewAgent("You are a test agent.", 4)
+	agent := newTestSession(llm, tools,"You are a test agent.", 4)
 	result, err := agent.Chat(ctx, "do something")
 
 	if err != nil {
@@ -389,7 +393,7 @@ func TestMixedTransientAndSuccessRetriesAll(t *testing.T) {
 	// 场景：Fork 中有 2 个工具，一个瞬时失败，一个成功。
 	// 由于有瞬时错误，整轮应重试（不向 history 追加任何结果）。
 
-	rt, mockLLM, _ := newTestRuntime()
+	llm, tools, mockLLM, _ := newTestFixture()
 	defer mockLLM.Close()
 
 	// 创建两个 provider：一个瞬时失败，一个成功
@@ -401,8 +405,8 @@ func TestMixedTransientAndSuccessRetriesAll(t *testing.T) {
 	okProv.AddTool("tool_b", "always ok tool")
 	okProv.SetFailMode("", 0) // 永远成功
 
-	rt.Register(transientProv)
-	rt.Register(okProv)
+	tools.Register(transientProv)
+	tools.Register(okProv)
 
 	// LLM 返回两个 tool_calls
 	mockLLM.EnqueueToolCalls([]types.ToolCall{
@@ -426,7 +430,7 @@ func TestMixedTransientAndSuccessRetriesAll(t *testing.T) {
 	mockLLM.EnqueueText(`"all done"`)
 
 	ctx := context.Background()
-	agent := rt.NewAgent("You are a test agent.", 4)
+	agent := newTestSession(llm, tools,"You are a test agent.", 4)
 	result, err := agent.Chat(ctx, "do something")
 
 	if err != nil {
@@ -640,7 +644,7 @@ func TestNeedCompression(t *testing.T) {
 // =============================================================================
 
 func TestToolResultTruncationIntegration(t *testing.T) {
-	rt, mockLLM, provider := newTestRuntime()
+	llm, tools, mockLLM, provider := newTestFixture()
 	defer mockLLM.Close()
 
 	// 设置 provider 返回超长结果（超过 MaxToolResultChars）
@@ -656,7 +660,7 @@ func TestToolResultTruncationIntegration(t *testing.T) {
 	mockLLM.EnqueueText(`"done"`)
 
 	ctx := context.Background()
-	agent := rt.NewAgent("You are a test agent.", 4)
+	agent := newTestSession(llm, tools,"You are a test agent.", 4)
 	// 设置更小的 MaxToolResultChars 确保触发截断
 	agent.SetContextConfig(history.ContextConfig{MaxToolResultChars: 2000})
 	result, err := agent.Chat(ctx, "test truncation")
@@ -687,13 +691,13 @@ func TestToolResultTruncationIntegration(t *testing.T) {
 // =============================================================================
 
 func TestContextCompression(t *testing.T) {
-	rt, mockLLM, _ := newTestRuntime()
+	llm, tools, mockLLM, _ := newTestFixture()
 	defer mockLLM.Close()
 
 	// 设置压缩响应：mock 在检测到无 tools 请求时返回此摘要
 	mockLLM.compressResponse = "summarized: user asked about data, tool returned results, task complete."
 
-	agent := rt.NewAgent("You are helpful.", 4)
+	agent := newTestSession(llm, tools,"You are helpful.", 4)
 	// 设置更小的压缩阈值确保触发压缩
 	agent.SetContextConfig(history.ContextConfig{CompressThreshold: 500, MaxTokens: 4096})
 

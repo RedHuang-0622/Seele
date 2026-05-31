@@ -306,10 +306,9 @@ func toolInputSchemaToMap(schema mcp.ToolInputSchema) (map[string]interface{}, e
 // resolveRoute 根据工具名解析出 serverName 和原始 toolName。
 func (p *MCPProvider) resolveRoute(name string) (serverName, toolName string, err error) {
 	p.mu.RLock()
-	multiServer := len(p.servers) > 1
-	p.mu.RUnlock()
+	defer p.mu.RUnlock()
 
-	if multiServer {
+	if len(p.servers) > 1 {
 		sn, tn, ok := splitToolName(name)
 		if !ok {
 			return "", "", fmt.Errorf("tool %q has no server prefix (expected 'serverName__toolName')", name)
@@ -318,8 +317,6 @@ func (p *MCPProvider) resolveRoute(name string) (serverName, toolName string, er
 	}
 
 	// 单 server：直接用唯一的那个
-	p.mu.RLock()
-	defer p.mu.RUnlock()
 	for k := range p.servers {
 		return k, name, nil
 	}

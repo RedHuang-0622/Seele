@@ -41,7 +41,7 @@ type EngineFactory struct {
 
 func (f *EngineFactory) NewAgent(systemPrompt string) workplan.Agent {
 	// Seele.Agent 实现了 Chat(ctx, input) (string, error)，满足 workplan.Agent
-	return f.engine.NewAgent(systemPrompt, 10)
+	return f.engine.NewSession(systemPrompt, 10)
 }
 
 // =============================================================================

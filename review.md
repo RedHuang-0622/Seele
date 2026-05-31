@@ -1,708 +1,248 @@
-# Seele 框架架构分析
+# Seele 框架架构 Review
 
-## 一、完整数据流图
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         表达层 (Presentation)                         │
-│                                                                       │
-│  ┌─────────────────┐     ┌─────────────────┐                         │
-│  │  REPL (CLI)     │     │  Web / API      │                         │
-│  │  sdk/cli/repl   │     │  (未来扩展)      │                         │
-│  └───────┬─────────┘     └────────┬────────┘                         │
-│          │                        │                                   │
-│          │ ① 用户输入              │                                   │
-│          │    OnApproval 回调      │                                   │
-│          ▼                        ▼                                   │
-├─────────────────────────────────────────────────────────────────────┤
-│                       SDK / API 层                                    │
-│                                                                       │
-│  ┌──────────────────────────────────────────────┐                    │
-│  │  Engine  (sdk/api/seele_api)                  │                    │
-│  │  ┌──────────────────────────────────────┐    │                    │
-│  │  │  QuickChat / QuickChatStream         │    │                    │
-│  │  │  DirectDispatch (绕过 LLM 调工具)     │    │                    │
-│  │  │  Skills() 摘要                       │    │                    │
-│  │  └──────────────┬───────────────────────┘    │                    │
-│  └─────────────────┼────────────────────────────┘                    │
-│                    │                                                 │
-│                    │ ② NewAgent(systemPrompt, maxLoops)              │
-│                    ▼                                                 │
-├─────────────────────────────────────────────────────────────────────┤
-│                        核心层 (Core)                                  │
-│                                                                       │
-│  ┌──────────────────────────────────────────────────────┐           │
-│  │  Runtime  (core/runtime)                              │           │
-│  │  ┌──────────────────────────────────────────┐        │           │
-│  │  │  providers: []ToolProvider               │        │           │
-│  │  │  llm: *ChatClient                        │        │           │
-│  │  │  tools() → 聚合所有 provider 工具列表     │        │           │
-│  │  │  Dispatch(name, argsJSON) → 路由到 tool  │        │           │
-│  │  └──────────────────┬───────────────────────┘        │           │
-│  └─────────────────────┼────────────────────────────────┘           │
-│                        │                                             │
-│  ┌─────────────────────┼──────────────────────────────────────┐     │
-│  │  Agent  (core/agent)  │                                      │     │
-│  │  ┌────────────────────┴───────────────────────────────────┐ │     │
-│  │  │  Chat(userInput) → for loop < maxLoops:                 │ │     │
-│  │  │    ③ LLM.Complete(history, tools) → msg                 │ │     │
-│  │  │    ④ if no ToolCalls → return text                       │ │     │
-│  │  │    ⑤ dispatchToolCalls(msg.ToolCalls)                    │ │     │
-│  │  │       ├─ 普通 tool: 结果注入 history                      │ │     │
-│  │  │       └─ awaiting_approval: 走 OnApproval 回调            │ │     │
-│  │  │    ⑥ loop 继续 → LLM 看到 tool 结果 → 继续推理            │ │     │
-│  │  └────────────────────────────────────────────────────────┘ │     │
-│  │                                                              │     │
-│  │  resolveApproval() — 审批循环（LLM 无感知）:                   │     │
-│  │    ⑦ OnApproval(ctx, approvalJSON) → choice key              │     │
-│  │    ⑧ Dispatch("_decide", {question_id, choice})              │     │
-│  │    ⑨ 若仍 awaiting_approval → goto ⑦ (嵌套审批)              │     │
-│  │    ⑩ 最终结果注入 history                                     │     │
-│  └──────────────────────────────────────────────────────────┘     │
-│                                                                    │
-│  ┌──────────────────────────────────────────┐                     │
-│  │  Context Management  (history/)           │                     │
-│  │  CompressHistory() — LLM 压缩早期记录      │                     │
-│  │  TrimHistory()    — 硬截断保底             │                     │
-│  │  TruncateToolResult() — 工具结果截断       │                     │
-│  └──────────────────────────────────────────┘                     │
-└─────────────────────────────────────────────────────────────────────┘
-                              │
-                              │ Dispatch → gRPC
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                       Provider 层                                     │
-│                                                                       │
-│  ┌─────────────────────────────────────────────────────┐            │
-│  │  ToolProvider 接口  (provider/)                       │            │
-│  │  ├─ Tools() → []Tool                                 │            │
-│  │  ├─ Dispatch(ctx, name, argsJSON) → string           │            │
-│  │  └─ HasTool(name) → bool                             │            │
-│  └──────────────────────┬──────────────────────────────┘            │
-│                         │                                            │
-│  ┌──────────────────────┴──────────────────────────────┐            │
-│  │  HubProvider  (provider/Hub_provider)                │            │
-│  │  封装 microHub service_registry                       │            │
-│  │  - Tools(): 读 registry → 过滤 _ 前缀工具 → 转换 schema │        │
-│  │  - Dispatch(): 查 registry → 构建 gRPC 请求 → 派发    │          │
-│  └──────────────────────┬──────────────────────────────┘            │
-└─────────────────────────┼──────────────────────────────────────────┘
-                          │ gRPC / microHub
-                          ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                     工具层 (Tools + Workflows)                        │
-│                                                                       │
-│  ┌───────────┐ ┌──────────────┐ ┌───────────┐ ┌───────────┐        │
-│  │ host_shell │ │file_writer   │ │chart_sbox │ │web_search │        │
-│  │  (:50230)  │ │  (:50250)    │ │ (:50260)  │ │ (:50240)  │        │
-│  │ 宿主机原生  │ │ 宿主机原生     │ │宿主机原生  │ │ Docker    │        │
-│  └───────────┘ └──────────────┘ └───────────┘ └───────────┘        │
-│                                                                       │
-│  ┌───────────┐ ┌──────────────┐                                      │
-│  │ mysql_ops │ │script_sbox   │     Docker 容器                      │
-│  │ (:50210)  │ │  (:50220)    │                                      │
-│  │ Docker    │ │ Docker       │                                      │
-│  └───────────┘ └──────────────┘                                      │
-│                                                                       │
-│  ┌─────────────────────────────────────────────────────┐            │
-│  │  Model Workflow Agent  (:51111)   sdk/cluster        │            │
-│  │  ┌───────────────────────────────────────┐          │            │
-│  │  │  AgentHandler (handler.go)             │          │            │
-│  │  │  ├─ wfMap: {"model_report"→fn, ...}   │          │            │
-│  │  │  ├─ Execute(): 路由到 workflow 或 _decide  │       │            │
-│  │  │  ├─ sendQuestion(): 构建 approval 响应     │       │            │
-│  │  │  └─ handleDecide(): 恢复暂停的 workflow     │       │            │
-│  │  └───────────────────────────────────────┘          │            │
-│  │                                                      │            │
-│  │  Harness (harness.go): Run() 启动 gRPC 服务          │            │
-│  │  注入 NetworkApprovalGate, 管理 pausedExecutions     │            │
-│  └──────────────────────┬──────────────────────────────┘            │
-│                         │                                            │
-│                         ▼                                            │
-│  ┌─────────────────────────────────────────────────────┐            │
-│  │  WorkPlan 执行引擎  (workplan/)                       │            │
-│  │  ┌───────────────────────────────────────┐          │            │
-│  │  │  WorkPlan (plan.go)                    │          │            │
-│  │  │  ├─ Run() → 遍历 nodes → 执行           │          │            │
-│  │  │  ├─ Approve 节点: prepareApprove()     │          │            │
-│  │  │  │   → Plan Agent 生成计划              │          │            │
-│  │  │  │   → pauseSnapshot 保存状态           │          │            │
-│  │  │  │   → 返回 PausedWorkPlan              │          │            │
-│  │  │  └─ Resume() → executeApprove() → 继续  │          │            │
-│  │  └───────────────────────────────────────┘          │            │
-│  │                                                      │            │
-│  │  Gate 接口 (gate.go)                                  │            │
-│  │  ├─ NetworkApprovalGate: gRPC 模式，两阶段协议         │            │
-│  │  ├─ CLIApprovalGate: fmt.Scanln 本地输入               │            │
-│  │  └─ AutoApproveGate: 自动通过，无需用户交互             │            │
-│  └─────────────────────────────────────────────────────┘            │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### 关键数据流路径
-
-| 编号 | 路径 | 说明 |
-|:---:|------|------|
-| ① | 用户输入 → REPL → Agent.Chat | 普通对话入口 |
-| ③④ | Agent → LLM → 文本回复 | 正常推理循环 |
-| ③⑤⑥ | Agent → LLM → tool_call → Dispatch → 结果 → LLM | ReAct 循环 |
-| ⑤→⑦⑧⑨ | Dispatch 返回 awaiting_approval → OnApproval → _decide → 恢复 → 循环 | **审批旁路（LLM 无感知）** |
-| ⑧ | dispatchToolCalls → Runtime.Dispatch → HubProvider → gRPC → AgentHandler | _decide 恢复工作流 |
-| WP | AgentHandler.Execute → WorkPlan.Run → Approve 暂停 → sendQuestion → 返回 | **工作流暂停** |
+> 最后更新：2026-06-01
 
 ---
 
-## 二、依赖分析
-
-### 2.1 包级依赖图
+## 一、包结构总览
 
 ```
-model_agent/cmd/cli/
-    └── sdk/cli/          (REPL, PromptLoader, handleApproval)
-    └── sdk/api/          (Engine)
-
-model_agent/cmd/workflow/
-    └── sdk/cluster/      (Harness, AgentHandler)
-    └── model_agent/workflows/  (ModelReportWorkflow 等)
-
-model_agent/tools/*/
-    └── microHub          (pb_api, root_class/tool)
-
-sdk/api/
-    └── core/             (Runtime, Agent)
-    └── provider/         (HubProvider)
-    └── microHub          (registry, hub)
-
-sdk/cluster/
-    └── workplan/         (WorkPlan, Gate, Node)
-    └── microHub          (pb_api, root_class/tool)
-
 core/
-    └── llm/              (ChatClient, HTTP API 调用)
-    └── provider/         (ToolProvider 接口)
-    └── history/          (上下文压缩、截断)
-    └── types/            (Message, Tool, LLMConfig)
+├── agent/                    ← 编排层（Agent = 真正的 AI Agent）
+│   ├── agent.go              ← Agent struct, New(), Shutdown(), Hub()/MCP() getter
+│   ├── session.go            ← NewSession(), QuickChat(), DirectDispatch(), Tools()
+│   └── pool.go               ← Pool（多会话管理）
+│
+├── session/                  ← 单次对话会话（Holder = 会话持有者）
+│   ├── interface.go          ← ToolDispatcher, ApprovalCallback
+│   ├── session.go            ← Holder struct, 历史/配置管理
+│   ├── chat.go               ← Chat() / ChatStream() ReAct 循环
+│   └── dispatch.go           ← dispatchToolCalls() + resolveApproval()
+│
+└── tool_holder/              ← 工具注册与调度（Holder = 工具持有者）
+    ├── holder.go             ← Holder struct, New()
+    ├── provider.go           ← Register() / Unregister()
+    └── tools.go              ← Tools() / Dispatch()（含瞬时重试）
 
-provider/
-    └── types/            (Tool, SkillInfo)
-    └── microHub          (registry, jsonSchema)
+provider/                     ← ToolProvider 接口 + 两个具体实现
+├── tool_provider.go          ← ToolProvider 接口定义 + ErrToolUnavailable
+├── Hub_provider.go           ← HubProvider: 封装 microHub gRPC 工具
+├── mcp_provider.go           ← MCPProvider: 封装 MCP 协议工具（stdio/sse）
+└── hub_router.go             ← hubRouter: microHub 的路由器实现
 
-workplan/
-    └── core/             (通过 AgentFactory 创建 Agent)
-    └── types/            (Message)
+types/model.go                ← 纯数据结构（零内部依赖）
+llm/chat_client.go            ← OpenAI 兼容 HTTP 客户端（纯 stdlib）
+history/                      ← 上下文管理
+├── context_compress.go       ← LLM 压缩 + 硬截断
+└── context_limit.go          ← Token 估算 + 结果截断 + 配置
+config/loader.go              ← YAML 配置加载
 
-history/
-    └── types/            (Message)
-    └── llm/              (压缩时调用 LLM)
-```
+workplan/                     ← 声明式工作流引擎（零内部依赖）
+├── plan.go                   ← WorkPlan 定义 + Run/Resume
+├── node.go                   ← Node, Question, ChoiceOption
+├── primitive.go              ← 9 种执行原语
+├── sugar.go                  ← 声明式 DSL（Auto/If/Loop/Fork...）
+├── gate.go                   ← ApprovalGate 接口 + 3 种实现
+└── validate.go               ← 拓扑校验（DFS 三色环检测）
 
-### 2.2 依赖方向
-
-```
-                    ┌──────────────┐
-                    │    types     │  ← 纯数据结构，零依赖
-                    └──────┬───────┘
-                           │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-        ┌──────────┐ ┌──────────┐ ┌──────────┐
-        │  llm     │ │ history  │ │ provider │  ← 工具层契约
-        └────┬─────┘ └────┬─────┘ └────┬─────┘
-             │            │            │
-             └────────────┼────────────┘
-                          ▼
-                    ┌──────────┐
-                    │   core   │  ← 运行时：Agent + Runtime
-                    └────┬─────┘
-                         │
-              ┌──────────┼──────────┐
-              ▼          ▼          ▼
-        ┌──────────┐ ┌──────────┐ ┌──────────┐
-        │ sdk/api  │ │sdk/cluster│ │workplan  │  ← SDK + 工作流
-        └────┬─────┘ └────┬─────┘ └──────────┘
-             │            │
-             ▼            ▼
-        ┌──────────────────────────┐
-        │  model_agent/cmd/*       │  ← 应用入口（样例）
-        └──────────────────────────┘
-```
-
-**核心原则**：
-- `types` 最底层，只有数据结构，不依赖任何内部包
-- `core` 依赖 `llm` + `history` + `provider`，是运行时中枢
-- `sdk/*` 依赖 `core`，向外提供 API 和工作流引擎
-- `model_agent/*` 是使用者 / 样例，依赖 `sdk/*`
-- **无循环依赖**
-
----
-
-## 三、类图
-
-### 3.1 Agent + Runtime
-
-```
-┌──────────────────────────────────────────────────────┐
-│                     Runtime                           │
-│                   (core/runtime)                      │
-├──────────────────────────────────────────────────────┤
-│  - llm: *ChatClient                                  │
-│  - providers: []ToolProvider                         │
-│  - mu: sync.RWMutex                                  │
-├──────────────────────────────────────────────────────┤
-│  + NewRuntime(cfg LLMConfig) → (*Runtime, error)     │
-│  + Register(p ToolProvider)                          │
-│  + Unregister(name string)                           │
-│  + NewAgent(systemPrompt, loopTimes) → *Agent        │
-│  - tools() → []Tool                                  │
-│  + Dispatch(ctx, name, argsJSON) → (string, error)   │
-└──────────────────────┬───────────────────────────────┘
-                       │ creates
-                       ▼
-┌──────────────────────────────────────────────────────┐
-│                      Agent                            │
-│                    (core/agent)                        │
-├──────────────────────────────────────────────────────┤
-│  - runtime: *Runtime                                  │
-│  - sessionID: string                                  │
-│  - history: []Message                                 │
-│  - maxLoops: int          (default: 4)                │
-│  - contextCfg: ContextConfig                           │
-│  - toolFilter: []string    (nil = 不限制)              │
-│  - lastCompressLoop: int                              │
-│  + OnApproval: ApprovalCallback  (审批回调)            │
-├──────────────────────────────────────────────────────┤
-│  + SessionID() → string                               │
-│  + History() → []Message                              │
-│  + ClearHistory()                                     │
-│  + UpdateSystemPrompt(newPrompt string)               │
-│  + MaxLoops() → int                                   │
-│  + SetMaxLoops(n int)                                 │
-│  + ContextConfig() → ContextConfig                    │
-│  + SetContextConfig(cfg ContextConfig)                │
-│  + SetToolFilter(filter []string)                     │
-│  + ForceAppendHistory(msg Message)   // 仅测试用       │
-│  + Chat(ctx, userInput) → (string, error)             │
-│  + ChatStream(ctx, userInput, onChunk) → (string, err)│
-│  - dispatchToolCalls(ctx, toolCalls)                  │
-│  - resolveApproval(ctx, json, qID) → (string, error)  │
-│  - filteredTools(all) → []Tool                        │
-└──────────────────────────────────────────────────────┘
-                       │
-                       │ uses
-                       ▼
-┌──────────────────────────────────────────────────────┐
-│              ApprovalCallback                          │
-│              (core/agent)                              │
-├──────────────────────────────────────────────────────┤
-│  type ApprovalCallback = func(                        │
-│      ctx context.Context,                             │
-│      approvalJSON string,                             │
-│  ) (choice string, err error)                         │
-└──────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────┐
-│            ToolProvider (interface)                    │
-│              (provider/)                               │
-├──────────────────────────────────────────────────────┤
-│  + ProviderName() → string                            │
-│  + Tools() → []Tool                                   │
-│  + Dispatch(ctx, name, argsJSON) → (string, error)    │
-│  + HasTool(name) → bool                               │
-└──────────────────────────────────────────────────────┘
-                       △
-                       │ implements
-                       │
-┌──────────────────────────────────────────────────────┐
-│                   HubProvider                          │
-│              (provider/Hub_provider)                   │
-├──────────────────────────────────────────────────────┤
-│  - hub: *BaseHub                                      │
-│  - retired: map[string]struct{}                       │
-│  - toolIndex: map[string]struct{}  // HasTool 快速查找  │
-│  - toolCallTimeout: time.Duration                     │
-├──────────────────────────────────────────────────────┤
-│  + NewHubProvider(hub, timeout) → (*HubProvider, err) │
-│  + ProviderName() → "microhub"                        │
-│  + Tools() → []Tool    // 过滤 _ 前缀 + offline       │
-│  + Dispatch(ctx, name, argsJSON) → (string, error)    │
-│  + HasTool(name) → bool                               │
-│  + Skills() → []SkillInfo                             │
-│  + Retire(name) / Restore(name)                       │
-└──────────────────────────────────────────────────────┘
-```
-
-### 3.2 WorkPlan 工作流引擎
-
-```
-┌──────────────────────────────────────────────────────┐
-│                  AgentFactory                          │
-│               (workplan/primitive)                     │
-├──────────────────────────────────────────────────────┤
-│  type AgentFactory = func(                            │
-│      systemPrompt string,                             │
-│      loopTimes int,                                   │
-│  ) Agent                                              │
-│                                                       │
-│  Agent (interface):                                   │
-│    Chat(ctx, input) → (string, error)                 │
-│    SetToolFilter([]string)                            │
-│    MaxLoops() / SetMaxLoops(n)                        │
-│    ContextConfig() / SetContextConfig(cfg)             │
-│    ForceAppendHistory(Message)                        │
-└──────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────┐
-│                    WorkPlan                            │
-│                  (workplan/plan)                       │
-├──────────────────────────────────────────────────────┤
-│  - factory: AgentFactory                              │
-│  - gate: ApprovalGate                                 │
-│  - systemPrompt: string                               │
-│  - nodes: []Node                                      │
-│  - vars: map[string]string                            │
-│  - checkpoints: map[string]WorkPlanResult             │
-│  - execState: ExecState                               │
-│  - pauseSnapshot: *pauseSnapshot                      │
-│  - pauseDecision: V (any)                             │
-│  + PausedWorkPlan: *WorkPlan   // 运行中的暂停实例     │
-├──────────────────────────────────────────────────────┤
-│  + New(factory, gate, sysPrompt) → *WorkPlan          │
-│  + auto/sugar methods:                                │
-│    - Auto(id, input, opts...)                         │
-│    - Approve(id, input, options, opts...)             │
-│    - Gate(id, input, opts...)                         │
-│    - Emit(id, key)                                    │
-│    - Checkpoint(id)                                   │
-│  + Run(ctx) → (*WorkPlanResult, error)                │
-│  + Resume(ctx) → (*WorkPlanResult, error)             │
-│  + PendingQuestion() → (Question, bool)               │
-│  + SetDecision(v any)                                 │
-└──────────────────────┬───────────────────────────────┘
-                       │
-                       │ builds
-                       ▼
-┌──────────────────────────────────────────────────────┐
-│                     Node                               │
-│                  (workplan/node)                       │
-├──────────────────────────────────────────────────────┤
-│  - id: string                                         │
-│  - input: string                                      │
-│  - kind: NodeKind  (auto / approve)                   │
-│  - tools: []string   // 工具白名单                     │
-│  - options: []NodeOption                              │
-│  - approveOptions: []ChoiceOption                     │
-│  - approveKVS: map[string]any                         │
-│  - approveTimeout: time.Duration                      │
-├──────────────────────────────────────────────────────┤
-│  + buildKVS() → map[string]any                        │
-│  + approvePlanPrompt() → string                       │
-└──────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────┐
-│                   Question                             │
-│                  (workplan/node)                       │
-├──────────────────────────────────────────────────────┤
-│  + ID: string         // "exec_xxx_approve_节点id"    │
-│  + Content: string    // Plan Agent 生成的计划 JSON    │
-│  + Options: []ChoiceOption                            │
-│  + KVS: map[string]any  // Key → Value 映射（不序列化） │
-│  + Timeout: time.Duration                             │
-├──────────────────────────────────────────────────────┤
-│  + DefaultChoice() → string                           │
-│  + Resolve(choice) → (any, bool)                      │
-└──────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────┐
-│                  ChoiceOption                          │
-│                  (workplan/node)                       │
-├──────────────────────────────────────────────────────┤
-│  + Key: string          // "execute" / "skip" / "abort"│
-│  + Label: string        // "执行" / "跳过" / "终止"     │
-│  + Description: string                                │
-│  + Style: string        // primary/secondary/danger    │
-└──────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────┐
-│                ApprovalGate (interface)                │
-│                  (workplan/gate)                       │
-├──────────────────────────────────────────────────────┤
-│  + Ask(ctx, Question) → (any, error)                  │
-└──────────────────────────────────────────────────────┘
-         △                      △                      △
-         │ implements            │                      │
-         │                       │                      │
-┌────────┴──────────┐ ┌─────────┴───────────┐ ┌───────┴──────────┐
-│NetworkApprovalGate │ │  CLIApprovalGate    │ │ AutoApproveGate  │
-│   (gate.go:42)     │ │   (gate.go:162)     │ │  (gate.go:252)   │
-├───────────────────┤ ├─────────────────────┤ ├──────────────────┤
-│ gRPC 两阶段协议    │ │ fmt.Scanln 本地输入  │ │ 直接返回首选项 V  │
-│ OnQuestion 回调    │ │ 格式化打印选项       │ │ 无人机交互        │
-│ Decide(ch) 恢复    │ │                     │ │                  │
-└───────────────────┘ └─────────────────────┘ └──────────────────┘
-```
-
-### 3.3 SDK / API 层
-
-```
-┌──────────────────────────────────────────────────────┐
-│                     Engine                             │
-│                 (sdk/api/seele_api)                    │
-├──────────────────────────────────────────────────────┤
-│  - hub: *BaseHub                                      │
-│  - hubProvider: *HubProvider                          │
-│  - llmCfg: LLMConfig                                  │
-│  - toolCallTimeout: Duration                          │
-├──────────────────────────────────────────────────────┤
-│  + New(opts Options) → (*Engine, error)               │
-│  + NewAgent(sysPrompt, loops) → *Agent                │
-│  + QuickChat(ctx, sysPrompt, userInput) → (string,err)│
-│  + QuickChatStream(ctx, sP, uI, onChunk) → (string,err)│
-│  + DirectDispatch(ctx, name, argsJSON) → (string,err) │
-│  + Skills() → []SkillInfo                             │
-│  + Shutdown()                                         │
-└──────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────┐
-│                   REPLOptions                          │
-│                  (sdk/cli/repl)                        │
-├──────────────────────────────────────────────────────┤
-│  + Prompt: string                                     │
-│  + SystemPrompt: string        // 兜底 prompt         │
-│  + SystemPromptPath: string    // 热加载 prompt 文件     │
-│  + Engine: *Engine                                   │
-│  + Output: io.Writer                                  │
-│  + Input: io.Reader                                   │
-│  + Stream: bool                                       │
-└──────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────┐
-│                  PromptLoader                          │
-│               (sdk/cli/prompt_loader)                  │
-├──────────────────────────────────────────────────────┤
-│  - path: string                                       │
-│  - content: string    // 缓存最新内容                   │
-│  - watcher: *fsnotify.Watcher                         │
-│  - done: chan struct{}                                │
-├──────────────────────────────────────────────────────┤
-│  + NewPromptLoader(path) → (*PromptLoader, error)     │
-│  + Get() → string      // 最新内容                     │
-│  + Reload() → (string, error) // 立即重读              │
-│  + Stop()                                             │
-└──────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────┐
-│                  AgentHandler                          │
-│              (sdk/cluster/handler)                     │
-├──────────────────────────────────────────────────────┤
-│  - wfMap: WorkflowMap  // {"name" → fnFactory}        │
-│  - gate: *NetworkApprovalGate                         │
-│  - registryPath: string                               │
-│  - llmConfigPath: string                              │
-│  - executions: map[qID]pausedExecution                │
-│  - mu: sync.Mutex                                     │
-├──────────────────────────────────────────────────────┤
-│  + NewHandler(wfMap, gate, opts) → *AgentHandler      │
-│  + Execute(req) → (<-chan *ToolResponse, error)       │
-│  - isDecideMethod(method) → bool                      │
-│  - sendQuestion(q, wp) → builds approval JSON         │
-│  - handleDecide(params) → dispatch _decide + Resume    │
-│  - cleanExpired()   // TTL = 5 minutes                │
-└──────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────┐
-│                 HarnessConfig                          │
-│              (sdk/cluster/harness)                     │
-├──────────────────────────────────────────────────────┤
-│  + Name: string                                       │
-│  + Port: int              (default: 51111)            │
-│  + RegistryPath: string                               │
-│  + LLMConfigPath: string                              │
-│  + MaxLoops: int          (default: 8)                │
-├──────────────────────────────────────────────────────┤
-│  + Run(wfMap WorkflowMap, cfg HarnessConfig)          │
-│    → 创建 AgentHandler + NetworkApprovalGate          │
-│    → 启动 microHub gRPC 服务                          │
-│    → 注册 registry 并监听健康检查                       │
-└──────────────────────────────────────────────────────┘
-```
-
-### 3.4 类型定义
-
-```
-types/model.go:
-
-┌───────────────────┐    ┌───────────────────┐
-│     Message        │    │     ToolCall       │
-├───────────────────┤    ├───────────────────┤
-│ Role: string       │    │ ID: string         │
-│ ReasoningContent   │    │ Type: "function"   │
-│ Content: *string   │    │ Function           │
-│ ToolCalls: []      │    └────────┬──────────┘
-│ ToolCallID: string │             │
-│ Name: string       │             ▼
-└───────────────────┘    ┌───────────────────┐
-                          │ ToolCallFunction   │
-┌───────────────────┐    ├───────────────────┤
-│      Tool          │    │ Name: string       │
-├───────────────────┤    │ Arguments: string   │
-│ Type: "function"   │    └───────────────────┘
-│ Function           │
-└────────┬──────────┘
-         │              ┌───────────────────┐
-         ▼              │    SkillInfo       │
-┌───────────────────┐   ├───────────────────┤
-│   ToolFunction     │   │ Name: string       │
-├───────────────────┤   │ Description        │
-│ Name: string       │   │ Method: string     │
-│ Description: string│   │ Addr: string       │
-│ Parameters: map    │   └───────────────────┘
-└───────────────────┘
-
-┌───────────────────┐    ┌───────────────────┐
-│    LLMConfig       │    │  ContextConfig     │
-├───────────────────┤    ├───────────────────┤
-│ BaseURL: string    │    │ MaxTokens: int     │
-│ APIKey: string     │    │ CompressThreshold  │
-│ Model: string      │    │ MaxToolResultChars │
-│ MaxTokens: int     │    └───────────────────┘
-│ Timeout: int       │
-│ Temperature: float │
-└───────────────────┘
+sdk/
+├── api/seele_api.go          ← 类型别名层（Engine = agent.Agent）
+├── cli/repl.go               ← 交互式 REPL + 审批 UI
+├── cli/prompt_loader.go      ← 系统提示词热加载（fsnotify）
+└── cluster/                  ← 多 Agent 部署框架
+    ├── harness.go            ← 启动框架（Run() = 一站式部署）
+    └── handler.go            ← gRPC Handle + 审批暂停/恢复
 ```
 
 ---
 
-## 四、审批决策完整流程
-
-### 4.1 暂停：WorkPlan.Approve → awaiting_approval
+## 二、分层架构
 
 ```
-WorkPlan.Run()
-  → 碰到 Node{kind: approve}
-  → prepareApprove(node):
-      创建 Plan Agent → 生成执行计划 JSON → 构建 Question{Q,K,V}
-  → wp.pauseSnapshot = {question, prevJSON, result, startedAt}
-  → wp.execState = StateAwaitingApproval
-  → wp.result.PausedWorkPlan = wp
-  → 返回 paused WorkPlan
-
-AgentHandler.Execute() 检测到 result.PausedWorkPlan != nil
-  → sendQuestion():
-      wp.PendingQuestion() → Question
-      构建 JSON:
-        {"status":"awaiting_approval",
-         "question_id":"exec_xxx_approve_节点id",
-         "content":"{plan JSON}",
-         "options":[{"key":"execute","label":"执行"},...]}
-      存入 h.executions[questionID]
-      返回给 caller (→ hub → provider → agent)
+┌─────────────────────────────────────────┐
+│           应用层 (model_agent/cmd)        │
+│      quick_start / work_flow / cli       │
+└──────────────────┬──────────────────────┘
+                   │
+┌──────────────────┴──────────────────────┐
+│           SDK 层 (sdk/)                  │
+│  sdk/api   — 类型别名                    │
+│  sdk/cli   — REPL + 审批交互             │
+│  sdk/cluster — 多 Agent 部署框架          │
+└──────────────────┬──────────────────────┘
+                   │
+┌──────────────────┴──────────────────────┐
+│         编排层 (core/agent/)             │
+│  Agent — 持有 LLM + tool_holder + Hub   │
+│  Pool  — 多会话管理                      │
+└──────┬──────────────┬───────────────────┘
+       │              │
+       ▼              ▼
+┌─────────────┐ ┌──────────────┐
+│  会话层      │ │  工具层       │
+│core/session/ │ │core/tool_    │
+│             │ │  holder/     │
+│ Holder —    │ │ Holder —     │
+│ ReAct 循环  │ │ 路由+重试     │
+└──────┬──────┘ └──────┬───────┘
+       │               │
+       ▼               ▼
+┌─────────────┐ ┌──────────────┐
+│   LLM 层     │ │  Provider 层 │
+│  llm/       │ │  provider/   │
+│ ChatClient  │ │ HubProvider  │
+│             │ │ MCPProvider  │
+└──────┬──────┘ └──────┬───────┘
+       │               │
+       ▼               ▼
+┌─────────────────────────────────────────┐
+│        基础设施层                         │
+│  types/ — 纯数据结构（零内部依赖）         │
+│  history/ — 上下文压缩                    │
+│  config/ — YAML 配置                     │
+└─────────────────────────────────────────┘
 ```
 
-### 4.2 拦截：Agent.dispatchToolCalls
+**依赖方向：单向向下。零循环依赖。**
 
-```
-dispatchToolCalls(toolCalls)
-  → Runtime.Dispatch() 返回 {"status":"awaiting_approval",...}
-  → parseApprovalQuestionID(result) → ("exec_xxx_...", true)
-  → a.OnApproval != nil? → YES → 调用 resolveApproval()
-  → awaiting_approval 内容不注入 LLM history
-```
+---
 
-### 4.3 用户交互：REPL.handleApproval
+## 三、核心类型
 
-```
-handleApproval(out, in, approvalJSON)
-  → JSON 解析 → 提取 content + options
-  → 格式化输出:
+### 3.1 编排层 Agent
 
-     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     [审批] 工作流需要你的决定：
-     {plan content}
-     选项：
-       [1] 执行 (execute)
-       [2] 跳过 (skip)
-       [3] 终止 (abort)
-     请输入选项 key（execute / skip / abort）>
+```go
+// core/agent/agent.go
+type Agent struct {
+    llm         *llm.ChatClient          // LLM 客户端（Agent 直接持有，所有 session 共享）
+    tools       *tool_holder.Holder      // 工具注册中心
+    hub         *hubbase.BaseHub         // microHub gRPC 服务
+    hubProvider *provider.HubProvider    // Hub 工具适配器
+    mcpProvider *provider.MCPProvider    // MCP 工具适配器（延迟初始化）
+}
 
-  → 读取用户输入
-  → 匹配逻辑:
-     空输入 → 返回 options[0].Key
-     "1" → 索引解析 → options[0].Key
-     "execute" → key 直接匹配
-     "执行" → label 匹配（大小写不敏感）
-  → 返回 choice key
+// 构造
+agent.New(Options) (*Agent, error)
+
+// 会话
+a.NewSession(prompt, loops) *session.Holder
+a.QuickChat(ctx, prompt, input) (string, error)
+a.QuickChatStream(ctx, prompt, input, onChunk) (string, error)
+
+// Provider 访问
+a.Hub()  *provider.HubProvider   // Skills / Retire / Restore
+a.MCP()  *provider.MCPProvider   // Attach / Detach / Refresh（延迟创建）
+a.Tools() *tool_holder.Holder    // 工具注册中心
 ```
 
-### 4.4 恢复：resolveApproval → _decide → Resume
+### 3.2 会话层 Holder
 
-```
-resolveApproval(ctx, approvalJSON, questionID)
-  loop (防止嵌套审批):
-    ① choice := a.OnApproval(ctx, current)   // REPL 返回 "execute"
-    ② decideArgs := {"question_id": qID, "choice": choice}
-    ③ result := a.runtime.Dispatch(ctx, "_decide", decideArgs)
-         → HubProvider → gRPC → AgentHandler.isDecideMethod("_decide") = true
-         → handleDecide({question_id, choice})
-             question.Resolve("execute") → "execute" (V)
-             exec.wp.SetDecision("execute")
-             exec.wp.Resume(ctx)
-                 executeApprove():
-                   wp.pauseDecision = "execute" = ChoiceExecute
-                   → 创建 execution Agent → 运行原始 node input
-                   → 返回 output
-                   → 继续执行后续 nodes
-                 → 若再遇 Approve → 再次暂停 → sendQuestion()
-                   → 返回新的 awaiting_approval
-             → 删除 h.executions[questionID]
-         → 返回恢复结果
-    ④ if result is awaiting_approval → continue loop (嵌套审批)
-    ⑤ else → return result  // 最终业务结果
-  end loop
+```go
+// core/session/session.go
+type Holder struct {
+    llm        types.ChatCompleter    // LLM 推理接口
+    tools      ToolDispatcher         // 工具调度接口
+    sessionID  string
+    history    []types.Message
+    maxLoops   int                    // ReAct 循环上限
+    contextCfg history.ContextConfig
+    OnApproval ApprovalCallback       // 审批回调（nil = 旧行为）
+}
 
-  最终结果注入 agent.history (只有最终结果，无审批中间状态)
-  → Agent 主循环继续
-  → LLM 看到最终结果，进行后续推理
+// 构造
+session.New(llm, tools, prompt, loops) *Holder
+
+// 核心方法
+h.Chat(ctx, input) (string, error)
+h.ChatStream(ctx, input, onChunk) (string, error)
+
+// 接口
+type ToolDispatcher interface {
+    Tools() []types.Tool
+    Dispatch(ctx, name, argsJSON string) (string, error)
+}
 ```
 
-### 4.5 时序图
+### 3.3 工具层 Holder
+
+```go
+// core/tool_holder/holder.go
+type Holder struct {
+    providers         []provider.ToolProvider
+    DispatchRetries   int           // 默认 3
+    DispatchRetryDelay time.Duration // 默认 2s
+}
+
+// 实现 session.ToolDispatcher
+h.Tools() []types.Tool          // 聚合所有 provider
+h.Dispatch(ctx, name, argsJSON) // 路由 + 瞬时重试
+```
+
+### 3.4 Provider 层
+
+```go
+// provider/tool_provider.go
+type ToolProvider interface {
+    ProviderName() string
+    Tools() []types.Tool
+    Dispatch(ctx, name, argsJSON string) (string, error)
+    HasTool(name string) bool
+}
+
+// HubProvider  — 封装 microHub service_registry
+// MCPProvider  — 封装 MCP 协议（stdio/sse）
+// hubRouter    — 实现 hubbase.HubHandler（gRPC 路由）
+```
+
+---
+
+## 四、数据流
+
+### 4.1 普通 ReAct 循环
 
 ```
-REPL          Agent          Runtime      HubProvider    AgentHandler    WorkPlan
- │              │               │              │              │              │
- │─Chat(text)──→│               │              │              │              │
- │              │─LLM Complete─→│              │              │              │
- │              │←tool_call────│              │              │              │
- │              │─dispatch────→│              │              │              │
- │              │               │─gRPC────────→│─────────────→│              │
- │              │               │              │              │─Run()───────→│
- │              │               │              │              │              │
- │              │               │              │              │←Approve node │
- │              │               │              │              │  (pause)     │
- │              │               │              │              │              │
- │              │               │              │←sendQuestion │              │
- │              │               │←{"status":"awaiting_approval",...}         │
- │              │←result────────│              │              │              │
- │              │               │              │              │              │
- │              │ parseApproval │              │              │              │
- │              │ → OnApproval()│              │              │              │
- │←─────────────│              │              │              │              │
- │ handleApproval:              │              │              │              │
- │ 展示选项,读用户输入            │              │              │              │
- │ return "execute"             │              │              │              │
- │─────────────→│              │              │              │              │
- │              │─Dispatch─────→│─────────────→│─────────────→│              │
- │              │  _decide     │              │ _decide      │              │
- │              │               │              │              │─Resume()────→│
- │              │               │              │              │  execute     │
- │              │               │              │              │←─result──────│
- │              │               │←───────────────────────────│              │
- │              │←final result─│              │              │              │
- │              │               │              │              │              │
- │              │ 注入 history  │              │              │              │
- │              │ (仅最终结果)    │              │              │              │
- │              │─LLM Complete─→│              │              │              │
- │              │←text reply───│              │              │              │
- │←展示给用户────│              │              │              │              │
+用户输入 → Agent.NewSession() → session.Holder
+  → Chat(input)
+    → llm.Complete(history, tools)          // ③ LLM 推理
+    → if tool_calls:
+        → dispatchToolCalls()
+          → tools.Dispatch(name, args)       // ④ 工具路由（含重试）
+          → tool result → 注入 history
+        → loop continue
+    → if text reply:
+        → return to user                     // ⑤ 最终回复
+```
+
+### 4.2 审批流程（LLM 完全无感知）
+
+```
+dispatchToolCalls()
+  → tools.Dispatch() 返回 {"status":"awaiting_approval",...}
+  → parseApprovalQuestionID() 检测到审批
+  → if OnApproval != nil:
+      → resolveApproval():
+          ① OnApproval(ctx, json) → choice key    // ⑥ 用户决策
+          ② tools.Dispatch("_decide", {qID, choice})  // ⑦ 恢复工作流
+          ③ if 嵌套审批 → goto ①
+          ④ return 最终业务结果
+      → 最终结果注入 history
+  → LLM 继续推理（不知道审批发生过）
+```
+
+### 4.3 WorkPlan 暂停/恢复
+
+```
+AgentHandler.Execute(req)
+  → WorkPlan.Run()
+    → Approve 节点 → Plan Agent 生成计划 → pauseSnapshot
+    → 返回 PausedWorkPlan
+  → sendQuestion() → 构建 awaiting_approval JSON
+  → 返回给 caller
+
+AgentHandler.Execute(_decide)
+  → handleDecide({question_id, choice})
+  → WorkPlan.SetDecision(choice) → Resume()
+    → executeApprove() → 继续后续节点
 ```
 
 ---
@@ -711,131 +251,124 @@ REPL          Agent          Runtime      HubProvider    AgentHandler    WorkPla
 
 | 决策 | 位置 | 理由 |
 |------|------|------|
-| `_` 前缀工具对 LLM 不可见 | [Hub_provider.go](provider/Hub_provider.go) | 框架内部工具（`_decide`）不应被 LLM 自主调用 |
-| 审批结果不入 LLM context | [agent.go](core/agent.go) | 避免浪费 token，LLM 只看到最终结果 |
-| REPL 硬编码选项解析 | [repl.go](sdk/cli/repl.go) | 支持 key/数字/label/空输入，容错且无需 LLM 翻译 |
-| 嵌套审批自动循环 | [agent.go](core/agent.go) `resolveApproval` | 防止工作流多级审批时卡死 |
-| Registry 热加载 | microHub viper watch | 改 YAML 自动生效，无需重启 |
-| Prompt 文件热加载 | [prompt_loader.go](sdk/cli/prompt_loader.go) | fsnotify 监听，修改即生效 |
-| chart_sandbox 宿主机原生 | [chart_sandbox/main.go](model_agent/tools/chart_sandbox/main.go) | 图片直接落盘，返回路径，零 base64 开销 |
+| LLM 由 Agent 直接持有 | `core/agent/agent.go` | Runtime 不再做中间人，消除不必要的委托 |
+| 三层命名区分 | `Agent` / `session.Holder` / `tool_holder.Holder` | 避免一个 "Agent" 包揽三种含义 |
+| 两个接口独立注入 | `session.Holder{llm, tools}` | 测试时可独立 mock LLM 和工具 |
+| 瞬时重试下沉到 tool_holder | `core/tool_holder/tools.go` | Agent 不关心重试细节，换 mock 也不丢语义 |
+| hubRouter 下沉到 provider | `provider/hub_router.go` | gRPC 协议细节不泄漏到编排层 |
+| `_` 前缀工具对 LLM 不可见 | `provider/Hub_provider.go` | 框架内部工具不应被 LLM 自主调用 |
+| 审批结果不入 LLM context | `core/session/dispatch.go` | 避免浪费 token，LLM 只看到最终结果 |
+| 无循环依赖 | `workplan/` 定义自己的 Agent 接口 | WorkPlan 不依赖 core，core 不依赖 WorkPlan |
+| Prompt 文件热加载 | `sdk/cli/prompt_loader.go` | fsnotify 监听，修改即生效 |
 
 ---
 
-## 六、遗漏关键层补充
+## 六、已知问题
 
-### 6.1 Config 层 (`config/loader.go`)
+### Bug（需修复）
 
-```
-config.LoadConfig(path) → LLMConfig      // 读取 config.yaml 的 agent 块
-config.LoadAppConfig(path) → AppConfig    // 读取完整配置（agent + hub + registry）
-```
+| # | 严重度 | 问题 | 位置 |
+|---|--------|------|------|
+| B1 | 🔴 | `MCP()` 无锁并发 + `Shutdown()` 无锁访问 → nil dereference | `core/agent/agent.go:153-166` |
+| B2 | 🔴 | `ctx.Background()` 起 health probe goroutine，Shutdown 无法停止 | `core/agent/agent.go:112` |
+| B3 | 🔴 | `buildToolCalls` 非连续索引导致零值 ToolCall 注入 history | `llm/chat_client.go:302-310` |
+| B4 | 🔴 | `parseApprovalQuestionID` 用字符串操作解析 JSON，空白字符导致误判 | `core/session/dispatch.go:124` |
+| B5 | 🔴 | `ChatStream` 中 tool_call 返回时 onChunk 接收的内容被静默丢弃 | `core/session/chat.go:82-112` |
+| B6 | 🟡 | `chat.go` 压缩逻辑和主循环体在 Chat/ChatStream 中重复 ~80% | `core/session/chat.go` |
+| B7 | 🟡 | MCP `Attach()` 失败时 stdio 子进程泄漏 | `provider/mcp_provider.go:93-114` |
+| B8 | 🟡 | `ChatStream` 中 `*msg.Content` 可能 nil panic | `core/session/chat.go:49` |
+| B9 | 🟡 | `LoadAppConfig` 不对 LLM 字段设默认值 | `config/loader.go:69-92` |
+| B10 | 🟡 | `HasTool` 对 `_` 前缀工具返回 false，但 Dispatch 中 `tool_holder` 会提前拦截 | `provider/Hub_provider.go:93` vs `tool_holder/tools.go:49` |
+| B11 | 🟡 | `bufio.Scanner` 与 `handleApproval` 中的第二个 scanner 抢 `in` 缓冲区 | `sdk/cli/repl.go:73,179` |
+| B12 | 🟡 | `CLIApprovalGate.Ask` goroutine 泄漏：ctx cancel 后 goroutine 仍阻塞 Scanln | `workplan/gate.go:197-209` |
+| B13 | 🟡 | `SetMaxConcurrentWorkPlans` 无锁修改全局变量 | `workplan/plan.go:29-35` |
+| B14 | 🟡 | `Skills()` Description 字段赋值为 `t.Method` | `provider/Hub_provider.go:202` |
+| B15 | 🟡 | `Temperature=0` 被强制覆盖为 1.0，无法使用确定性输出 | `llm/chat_client.go:66,177` |
 
-AppConfig 结构：
+### 设计改进（建议）
 
-```
-AppConfig
-├── LLM: LLMConfig       (yaml tag: "agent")
-│   ├── BaseURL  string  (yaml: ai_url)
-│   ├── Model    string  (yaml: ai_name)
-│   ├── APIKey   string  (yaml: ai_api_key)
-│   ├── MaxTokens int
-│   ├── Timeout   int
-│   └── Temperature float64
-├── Hub: HubConfig       (yaml tag: "hub")
-│   ├── Addr string      (default: :50051)
-│   └── StartupDelayMs   (default: 100)
-└── Registry: RegistryConfig (yaml tag: "registry")
-    └── Path string       (default: ./config/registry.yaml)
-```
+| # | 问题 | 位置 |
+|---|------|------|
+| D1 | `EngineFactory` 命名不当 — 实际是 SessionFactory | `sdk/cluster/harness.go:74` |
+| D2 | `approvePlanPrompt()` 死代码 — `prepareApprove` 内联了相同逻辑 | `workplan/node.go:396` |
+| D3 | `chatCompletionRequest` 和 `chatCompletionStreamRequest` 仅差一个字段 | `llm/chat_client.go:37,125` |
+| D4 | `LoopOpt` 和 `NodeOpt` 是相同的 `func(*node)` | `workplan/sugar.go:27,253` |
+| D5 | `Skills()` 和 `Tools()` 的过滤逻辑重复 | `provider/Hub_provider.go` |
+| D6 | `mu2` 命名不明确 | `provider/Hub_provider.go:40` |
+| D7 | `ToolCallTimeOut` → 应为 `ToolCallTimeout` | `core/agent/agent.go` |
+| D8 | `panic()` 在 SDK 库代码中 | `sdk/cli/repl.go:37` |
+| D9 | Hub 就绪检查用 `time.Sleep` 而非健康检查 | `core/agent/agent.go:121` |
+| D10 | 压缩 prompt 硬编码英文 | `history/context_compress.go:17` |
+| D11 | `LLMConfig` godoc 仍说 "对应 config.yaml 的 agent 块" | `types/model.go:74` |
+| D12 | `maxConcurrentFork = 3` 硬编码 | `workplan/primitive.go:300` |
 
-### 6.2 LLM 层 (`llm/chat_client.go`)
+### 已修复
 
-```
-ChatClient                          ← 纯 stdlib http.Client，无第三方 SDK
-├── Cfg: LLMConfig
-├── Client: *http.Client
-├── Complete(ctx, messages, tools) → Message
-│   └── POST /v1/chat/completions → 返回完整响应（含 ToolCalls）
-└── CompleteStream(ctx, messages, tools, onChunk) → (content, reasoning, toolCalls, err)
-    └── SSE 流式解析：文本 delta → onChunk，tool_call delta → 内部累积
-    └── isToolMode 锁：一旦检测到 tool_call，抑制文本输出防止 JSON 碎片泄露
-```
+| # | 问题 | 状态 |
+|---|------|------|
+| ✅ | `resolveRoute` TOCTOU 竞态 | 单次 RLock |
+| ✅ | 废弃别名清理 | 删除 3 个方法 |
+| ✅ | `AppConfig.LLM` yaml 标签 | `agent` → `llm` |
+| ✅ | `config.LoadConfig` 默认值 | 补 MaxTokens/Timeout/Temperature |
+| ✅ | `tool_holder.Dispatch` 重试硬编码 | 字段可配置 |
+| ✅ | `SubagentRef` dead code | 已删除 |
+| ✅ | `sdk/api/` Deprecated 噪声 | 已清理 |
 
-### 6.3 MCP Provider (`provider/mcp_provider.go`)
+---
 
-多 MCP 服务器热插拔支持，与 HubProvider 互补（一个连本地 gRPC 工具，一个连外部 MCP 服务器）：
-
-```
-MCPProvider
-├── servers: map[string]*mcpServerConn    // 按 server name 管理多连接
-├── Tools() → []Tool                       // 聚合所有连接的 MCP 服务器工具
-│   └── 多服务器冲突处理：工具名加前缀 "serverName__toolName"
-├── Dispatch(ctx, name, argsJSON) → string
-│   └── splitToolName() 反解前缀 → 路由到正确的 MCP 连接
-├── Attach(ctx, MCPServerConfig) error     // 运行时热挂载（stdio/sse）
-├── Detach(name string)                    // 运行时卸载
-├── RefreshTools(ctx, serverName) error    // 重新拉取工具列表
-└── ServerNames() []string
-
-MCPServerConfig
-├── Name: string          // 唯一标识
-├── Transport: "stdio"|"sse"
-├── Command/Args/Env      // stdio 模式
-└── URL string            // sse 模式
-```
-
-### 6.4 WorkPlan 原语执行引擎 (`workplan/primitive.go`)
-
-9 种节点类型的执行原语：
-
-| 原语 | 行为 |
-|------|------|
-| `primitiveAuto` | 创建 Agent → `Chat(input)` → 返回 JSON 字符串 |
-| `prepareApprove` | 创建 Plan Agent → 生成结构化执行计划 → 构建 Question(K-V) → 暂停 |
-| `executeApprove` | 根据 `pauseDecision`：skip/abort/execute → 执行节点内容 |
-| `primitiveIf` | 执行 `ifCond(prevJSON)` → true/false 分支路由 |
-| `primitiveSwitch` | 遍历 `cases` → 首个 `Match==true` → 跳到对应 node |
-| `primitiveLoop` | 迭代执行 body node → 更新 Signal → 检查 `loopUntil/loopMaxIter` |
-| `primitiveFork` | 并发启动多个 Agent（上限 3）→ 合并结果为 `{"label": result, ...}` |
-| `primitiveEmit` | 保存 node 输出到 `wp.vars[key]`（模板渲染用） |
-| `primitiveCheckpoint` | 快照当前状态到 `wp.checkpoints[id]` |
-
-模板渲染：`primitiveRenderInput` 支持 `{{.PrevResult}}`（上一个节点输出）和 `{{.Vars.key}}`（Emit 保存的变量）。
-
-### 6.5 上下文压缩 (`history/context_compress.go`)
+## 七、依赖图
 
 ```
-CompressHistory(ctx, client, history, maxTokens) → compressedHistory
+                    ┌──────────┐
+                    │  types   │  ← 零内部依赖
+                    └────┬─────┘
+                         │
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+     ┌─────────┐   ┌──────────┐   ┌──────────┐
+     │   llm   │   │ history  │   │ provider │
+     └────┬────┘   └────┬─────┘   └────┬─────┘
+          │             │              │
+          └─────────────┼──────────────┘
+                        ▼
+              ┌──────────────────┐
+              │ core/tool_holder │  ← 纯工具层
+              └────────┬─────────┘
+                       │
+              ┌────────┴─────────┐
+              ▼                  ▼
+     ┌──────────────┐   ┌────────────────┐
+     │ core/session │   │ core/agent     │  ← 编排层
+     └──────┬───────┘   └───────┬────────┘
+            │                   │
+            └─────────┬─────────┘
+                      ▼
+              ┌──────────────┐
+              │   sdk/*      │  ← SDK 层
+              └──────────────┘
 
-算法：
-1. 分离 system 消息 + 保留最近 4 条非 system 消息
-2. 防止拆分 assistant(tool_call)/tool_result 配对
-3. 将早期消息序列化为文本 → 调用压缩 LLM（无 tools, T=0.3, max=300 tokens）
-4. 摘要作为 system 消息插入 → system + [摘要] + 近期消息
-5. 若压缩后仍超限 → fallback 到 TrimHistory（硬截断）
+   ┌──────────┐
+   │ workplan │  ← 独立岛（零内部依赖，自定 Agent 接口）
+   └──────────┘
 ```
 
-### 6.6 AgentPool — 多 Agent 会话池
+---
 
-REPL 支持切换多个 Agent 会话，每个有独立的 history 和 system prompt：
+## 八、文件统计
 
-```
-AgentPool
-├── agents: []*namedAgent    // {label, agent}
-├── current: int              // 当前活跃 index
-├── Add(label, systemPrompt) → int    // 新建会话
-├── Switch(idx) error                 // 切换会话
-├── Current() → *Agent               // 获取当前
-├── All() → []AgentSummary            // 列出所有
-└── Chat/ChatStream → 透传到当前 Agent
-```
+| 包 | 文件数 | 代码行（估算） | 职责 |
+|----|--------|---------------|------|
+| `core/agent/` | 3 | ~350 | 编排 |
+| `core/session/` | 4 | ~530 | 会话 |
+| `core/tool_holder/` | 3 | ~140 | 工具注册 |
+| `provider/` | 4 | ~750 | 工具适配 |
+| `types/` | 1 | ~95 | 类型定义 |
+| `llm/` | 1 | ~370 | HTTP 客户端 |
+| `history/` | 2 | ~360 | 上下文管理 |
+| `config/` | 1 | ~80 | 配置加载 |
+| `workplan/` | 6 | ~2000 | 工作流引擎 |
+| `sdk/api/` | 1 | ~35 | 类型别名 |
+| `sdk/cli/` | 2 | ~300 | REPL |
+| `sdk/cluster/` | 2 | ~420 | 部署框架 |
 
-### 6.7 WorkPlan 验证 (`workplan/validate.go`)
-
-`Run()` 启动前自动调用 `Validate()`：
-
-1. 检查至少有一个 node
-2. Loop 必须有 bodyID + 终止条件（Until 或 MaxIter）
-3. Fork 至少有一个 branch
-4. 所有目标 node 引用必须存在（If/Switch/Loop/Fork 的 target IDs）
-5. **DFS 三色算法**检测环（白/灰/黑），Loop body 边除外（循环体允许回边）
+**总计：~5400 行核心框架代码**（不含测试、示例、工具实现）

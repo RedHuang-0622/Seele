@@ -31,12 +31,12 @@ func main() {
 
 	// ── 2. 查看当前可用工具 ───────────────────────────────────────
 	fmt.Println("=== 已注册的 Hub Skills ===")
-	for _, s := range engine.Skills() {
+	for _, s := range engine.Hub().Skills() {
 		fmt.Printf("  %-20s [%s]\n", s.Name, s.Addr)
 	}
 
 	// ── 3. 创建 Agent 并对话 ──────────────────────────────────────
-	agent := engine.NewAgent("你是一个天气助手，可以查询城市天气。", 8)
+	agent := engine.NewSession("你是一个天气助手，可以查询城市天气。", 8)
 
 	// 第一轮：LLM 会自动调用 weather tool
 	reply, err := agent.Chat(ctx, "北京今天天气怎么样？")

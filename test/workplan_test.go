@@ -1,13 +1,4 @@
 // test/workplan_test.go
-//
-// 直接使用 Seele/workplan 包验证：
-//   1. 现有 Fork 机制是否支持多 Agent 不同工具注册表
-//   2. Loop-Signal-Emit 机制是否按预期生效
-//
-// Agent 使用真实 Runtime.NewAgent()，LLM 使用 mockLLMServer 控制回复，
-// 完整的 ReAct 循环被执行（非 mock Agent）。
-//
-// 运行：go test -v -run TestWorkPlan -timeout 60s ./test/
 package test
 
 import (
@@ -16,13 +7,11 @@ import (
 	"sync"
 	"testing"
 
-	core "github.com/sukasukasuka123/Seele/core"
-	types "github.com/sukasukasuka123/Seele/types"
 	"github.com/sukasukasuka123/Seele/workplan"
 )
 
 // =============================================================================
-// 测试 1：现有 Fork 是否支持多 Agent 不同注册表（真实 Agent 版本）
+// 测试 1：Fork 支持多 Agent 不同工具注册表
 // =============================================================================
 
 func TestWorkPlan_Fork_DifferentRegistries(t *testing.T) {
@@ -31,47 +20,35 @@ func TestWorkPlan_Fork_DifferentRegistries(t *testing.T) {
 	llmSrv.EnqueueText(`"前端 完成了任务: 实现 tool_a 功能"`)
 	llmSrv.EnqueueText(`"后端 完成了任务: 实现 tool_b 功能"`)
 
-	rtA, _ := core.NewRuntime(types.LLMConfig{
-		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
-	})
-	rtB, _ := core.NewRuntime(types.LLMConfig{
-		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
-	})
+	fa := newSessionFactory(newTestTools(llmSrv.URL()))
+	fb := newSessionFactory(newTestTools(llmSrv.URL()))
 
 	provA := newMockProvider("provA")
 	provA.AddTool("tool_a", "only for agent A")
-	rtA.Register(provA)
+	fa.Tools.Register(provA)
 
 	provB := newMockProvider("provB")
 	provB.AddTool("tool_b", "only for agent B")
-	rtB.Register(provB)
+	fb.Tools.Register(provB)
 
 	if provA.HasTool("tool_a") && provB.HasTool("tool_b") &&
 		!provA.HasTool("tool_b") && !provB.HasTool("tool_a") {
-		t.Log("OK: 两个 Runtime 的工具注册表互不重叠")
+		t.Log("OK: 两个工具注册表互不重叠")
 	} else {
 		t.Error("FAIL: 工具注册表未正确隔离")
 	}
 
 	factory := &forkRegFactory{
-		runtimes: map[string]*core.Runtime{
-			"前端": rtA,
-			"后端": rtB,
+		factories: map[string]*sessionFactory{
+			"前端": fa,
+			"后端": fb,
 		},
 	}
 
 	wp := workplan.New(factory, nil, "")
 	wp.Fork("并发任务", []workplan.ForkBranch{
-		{
-			Label:        "前端",
-			SystemPrompt: "label:前端 你是前端工程师",
-			Input:        "实现 tool_a 功能",
-		},
-		{
-			Label:        "后端",
-			SystemPrompt: "label:后端 你是后端工程师",
-			Input:        "实现 tool_b 功能",
-		},
+		{Label: "前端", SystemPrompt: "label:前端 你是前端工程师", Input: "实现 tool_a 功能"},
+		{Label: "后端", SystemPrompt: "label:后端 你是后端工程师", Input: "实现 tool_b 功能"},
 	})
 
 	result, err := wp.Run(context.Background())
@@ -85,17 +62,16 @@ func TestWorkPlan_Fork_DifferentRegistries(t *testing.T) {
 	if !factory.calledA || !factory.calledB {
 		t.Errorf("未覆盖所有分支: calledA=%v calledB=%v", factory.calledA, factory.calledB)
 	} else {
-		t.Log("OK: Fork 两个分支的 Agent 分别来自不同的 Runtime（不同工具注册表）")
+		t.Log("OK: Fork 两个分支的 Agent 分别来自不同的工具注册表")
 	}
 }
 
-// forkRegFactory 实现 workplan.AgentFactory，按 SystemPrompt 中的 label 前缀
-// 路由到不同的 Runtime。NewAgent 返回真实 Agent（走完整 ReAct 循环）。
+// forkRegFactory 按 SystemPrompt 中的 label 前缀路由到不同的 sessionFactory。
 type forkRegFactory struct {
-	mu       sync.Mutex
-	runtimes map[string]*core.Runtime
-	calledA  bool
-	calledB  bool
+	mu        sync.Mutex
+	factories map[string]*sessionFactory
+	calledA   bool
+	calledB   bool
 }
 
 func (f *forkRegFactory) NewAgent(systemPrompt string) workplan.Agent {
@@ -118,32 +94,24 @@ func (f *forkRegFactory) NewAgent(systemPrompt string) workplan.Agent {
 	}
 	f.mu.Unlock()
 
-	rt := f.runtimes[label]
-	if rt == nil {
-		for _, r := range f.runtimes {
-			rt = r
+	sf := f.factories[label]
+	if sf == nil {
+		for _, s := range f.factories {
+			sf = s
 			break
 		}
 	}
-
-	// 返回真实 Agent，会走完整 LLM → ReAct 循环
-	return rt.NewAgent(systemPrompt, 1)
+	return sf.NewAgent(systemPrompt)
 }
 
 // =============================================================================
-// 测试 2：Loop-Signal-Emit 机制（真实 Agent 版本）
+// 测试 2：Loop-Signal-Emit 机制
 // =============================================================================
 
 func TestWorkPlan_LoopSignalEmit(t *testing.T) {
 	llmSrv := newMockLLMServer()
 	defer llmSrv.Close()
 
-	// 预编排 7 次 LLM 回复：
-	//   调用1: 初始分析
-	//   调用2: 修复执行体 standalone（body 节点在 Loop 前独立执行）
-	//   调用3-5: Loop 迭代 0-2（第3次满足 Until）
-	//   调用6: 人工介入（Loop 后的下一个节点）
-	//   调用7: 完成通知
 	llmSrv.EnqueueText(`"问题1：CPU负载过高 —— 已重启"`)
 	llmSrv.EnqueueText(`"问题2：内存泄漏 —— 已清理"`)
 	llmSrv.EnqueueText(`"问题3：配置错误 —— 已修正"`)
@@ -152,11 +120,7 @@ func TestWorkPlan_LoopSignalEmit(t *testing.T) {
 	llmSrv.EnqueueText(`"系统已完全恢复正常"`)
 	llmSrv.EnqueueText(`"收尾完成"`)
 
-	rt, _ := core.NewRuntime(types.LLMConfig{
-		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
-	})
-
-	factory := &rtAgentFactory{rt: rt}
+	factory := newSessionFactory(newTestTools(llmSrv.URL()))
 
 	var mu sync.Mutex
 	iterResults := make([]string, 0)
@@ -191,7 +155,6 @@ func TestWorkPlan_LoopSignalEmit(t *testing.T) {
 		t.Fatalf("WorkPlan.Run: %v", err)
 	}
 
-	// ── 断言 ──────────────────────────────────────────────────────
 	t.Run("Signal_OnUpdate_called", func(t *testing.T) {
 		if len(signalValues) < 2 {
 			t.Errorf("expected >=2 OnUpdate callbacks, got %d: %v", len(signalValues), signalValues)
@@ -243,23 +206,18 @@ func TestWorkPlan_LoopSignalEmit(t *testing.T) {
 }
 
 // =============================================================================
-// 测试 3：Loop 耗尽后的 exhausted 路径（真实 Agent 版本）
+// 测试 3：Loop 耗尽后的 exhausted 路径
 // =============================================================================
 
 func TestWorkPlan_LoopExhausted(t *testing.T) {
 	llmSrv := newMockLLMServer()
 	defer llmSrv.Close()
 
-	// Agent 始终返回"故障仍未恢复"，Until 永不满足
 	for i := 0; i < 10; i++ {
 		llmSrv.EnqueueText(`"故障仍未恢复，还需继续修复"`)
 	}
 
-	rt, _ := core.NewRuntime(types.LLMConfig{
-		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
-	})
-
-	factory := &rtAgentFactory{rt: rt}
+	factory := newSessionFactory(newTestTools(llmSrv.URL()))
 
 	wp := workplan.New(factory, nil, "")
 
@@ -299,23 +257,18 @@ func TestWorkPlan_LoopExhausted(t *testing.T) {
 }
 
 // =============================================================================
-// 测试 4：Emit 变量在 Fork 分支中的引用（真实 Agent 版本）
+// 测试 4：Emit 变量在 Fork 分支中的引用
 // =============================================================================
 
 func TestWorkPlan_EmitInFork(t *testing.T) {
 	llmSrv := newMockLLMServer()
 	defer llmSrv.Close()
 
-	// 需求分析 + 2个Fork分支 = 3次LLM调用
 	llmSrv.EnqueueText(`"处理完成: 分析需求：用户登录功能"`)
 	llmSrv.EnqueueText(`"前端处理完成: 实现登录页面"`)
 	llmSrv.EnqueueText(`"后端处理完成: 实现登录接口"`)
 
-	rt, _ := core.NewRuntime(types.LLMConfig{
-		BaseURL: llmSrv.URL(), APIKey: "x", Model: "x", Timeout: 5,
-	})
-
-	factory := &rtAgentFactory{rt: rt}
+	factory := newSessionFactory(newTestTools(llmSrv.URL()))
 
 	wp := workplan.New(factory, nil, "")
 
@@ -323,16 +276,8 @@ func TestWorkPlan_EmitInFork(t *testing.T) {
 		Emit("保存需求", "requirement")
 
 	wp.Fork("并行开发", []workplan.ForkBranch{
-		{
-			Label:        "前端",
-			SystemPrompt: "你是前端工程师",
-			Input:        "实现登录页面，需求：{{.Vars.requirement}}",
-		},
-		{
-			Label:        "后端",
-			SystemPrompt: "你是后端工程师",
-			Input:        "实现登录接口，需求：{{.Vars.requirement}}",
-		},
+		{Label: "前端", SystemPrompt: "你是前端工程师", Input: "实现登录页面，需求：{{.Vars.requirement}}"},
+		{Label: "后端", SystemPrompt: "你是后端工程师", Input: "实现登录接口，需求：{{.Vars.requirement}}"},
 	})
 
 	result, err := wp.Run(context.Background())

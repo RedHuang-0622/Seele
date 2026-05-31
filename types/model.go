@@ -7,9 +7,10 @@ import "context"
 // ─────────────────────────────────────────────
 
 // ChatCompleter 是 LLM 补全能力的抽象接口。
-// llm.ChatClient 和 core.Runtime 均满足此接口，方便解耦。
+// *llm.ChatClient 天然满足此接口，便于测试时 mock。
 type ChatCompleter interface {
 	Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error)
+	CompleteStream(ctx context.Context, messages []Message, tools []Tool, onChunk func(delta string)) (content string, reasoningContent string, toolCalls []ToolCall, err error)
 }
 
 // Message 是 LLM 对话历史中的一条记录。
@@ -73,7 +74,7 @@ type SkillInfo struct {
 // 通过 LoadConfig 加载；部分字段可由环境变量覆盖（见 config.go）。
 // AppConfig 顶层对应 config.yaml 的根结构。
 type AppConfig struct {
-	LLM      LLMConfig      `yaml:"agent"` // yaml 顶层 key 是 agent
+	LLM      LLMConfig      `yaml:"llm"`
 	Hub      HubConfig      `yaml:"hub"`
 	Registry RegistryConfig `yaml:"registry"`
 }

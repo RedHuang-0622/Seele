@@ -12,7 +12,7 @@ import (
 //
 // config.yaml 期望格式：
 //
-//	agent:
+//	llm:
 //	  ai_url:     "https://..."
 //	  ai_name:    "qwen-plus"
 //	  ai_api_key: "sk-xxx"
@@ -30,10 +30,21 @@ func LoadConfig(path string) (types.LLMConfig, error) {
 	}
 
 	if app.LLM.BaseURL == "" {
-		return types.LLMConfig{}, fmt.Errorf("LoadConfig: agent.ai_url is required")
+		return types.LLMConfig{}, fmt.Errorf("LoadConfig: llm.ai_url is required")
 	}
 	if app.LLM.Model == "" {
-		return types.LLMConfig{}, fmt.Errorf("LoadConfig: agent.ai_name is required")
+		return types.LLMConfig{}, fmt.Errorf("LoadConfig: llm.ai_name is required")
+	}
+
+	// 默认值（与 LoadAppConfig 行为一致）
+	if app.LLM.MaxTokens <= 0 {
+		app.LLM.MaxTokens = 4096
+	}
+	if app.LLM.Timeout <= 0 {
+		app.LLM.Timeout = 60
+	}
+	if app.LLM.Temperature == 0 {
+		app.LLM.Temperature = 1.0
 	}
 
 	return app.LLM, nil
@@ -44,7 +55,7 @@ func LoadConfig(path string) (types.LLMConfig, error) {
 //
 // config.yaml 期望格式：
 //
-//	agent:
+//	llm:
 //	  ai_url:     "https://..."
 //	  ai_name:    "qwen-plus"
 //	  ai_api_key: "sk-xxx"

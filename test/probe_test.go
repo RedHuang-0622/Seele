@@ -159,7 +159,7 @@ func TestProbe_ServiceDiscovery(t *testing.T) {
 	log.Printf("[%.2fs] Engine init + probe took %v", probeElapsed(), engInitTime)
 
 	// 验证 echo 在 Skills 中可见
-	names := skillNames(eng.Skills())
+	names := skillNames(eng.Hub().Skills())
 	if !names["echo"] {
 		t.Fatalf("echo not discovered, skills=%v", names)
 	}
@@ -210,7 +210,7 @@ func TestProbe_OfflineDetection(t *testing.T) {
 	defer eng.Shutdown()
 
 	// 确认初始都可见
-	names := skillNames(eng.Skills())
+	names := skillNames(eng.Hub().Skills())
 	if !names["echo"] || !names["ping"] {
 		t.Fatalf("initial skills missing: echo=%v ping=%v", names["echo"], names["ping"])
 	}
@@ -224,7 +224,7 @@ func TestProbe_OfflineDetection(t *testing.T) {
 	echoOffline := false
 	deadline := time.Now().Add(25 * time.Second)
 	for time.Now().Before(deadline) {
-		names := skillNames(eng.Skills())
+		names := skillNames(eng.Hub().Skills())
 		if !names["echo"] {
 			echoOffline = true
 			log.Printf("[%.2fs] OFFLINE_DETECTED: echo gone from Skills(), ping=%v", probeElapsed(), names["ping"])
@@ -238,8 +238,8 @@ func TestProbe_OfflineDetection(t *testing.T) {
 
 	if !echoOffline {
 		// 通过 Retire 手动模拟验证 API 行为
-		eng.Retire("echo")
-		names = skillNames(eng.Skills())
+		eng.Hub().Retire("echo")
+		names = skillNames(eng.Hub().Skills())
 		if !names["echo"] {
 			log.Printf("[%.2fs] MANUAL: echo retired via API", probeElapsed())
 		}
@@ -247,7 +247,7 @@ func TestProbe_OfflineDetection(t *testing.T) {
 	}
 
 	// 验证 Retire/Restore 可用
-	eng.Restore("echo")
+	eng.Hub().Restore("echo")
 	log.Printf("[%.2fs] RESTORE: echo restored", probeElapsed())
 }
 
@@ -278,7 +278,7 @@ func TestProbe_RecoveryLatency(t *testing.T) {
 
 	// 先确认初始可用
 	ctx := context.Background()
-	agent := eng.NewAgent("", 2)
+	agent := eng.NewSession("", 2)
 	_, err := agent.Chat(ctx, `调用 echo 工具，content="before_kill"`)
 	if err != nil {
 		t.Logf("initial chat (pre-kill) error: %v", err)
@@ -287,17 +287,17 @@ func TestProbe_RecoveryLatency(t *testing.T) {
 
 	// 停掉 echo 并 Retire
 	echo.stop(t)
-	eng.Retire("echo")
+	eng.Hub().Retire("echo")
 	log.Printf("[%.2fs] KILLED+RETIRED: echo", probeElapsed())
 
 	// 重启 echo
 	echo.restart(t, base+"example_tools/example")
 	waitTCPPort(t, "localhost:50101", 10*time.Second)
-	eng.Restore("echo")
+	eng.Hub().Restore("echo")
 	log.Printf("[%.2fs] RESTARTED+RESTORED: echo", probeElapsed())
 
 	// 测量恢复后 dispatch 延迟
-	agent2 := eng.NewAgent("", 2)
+	agent2 := eng.NewSession("", 2)
 	recStart := time.Now()
 	reply, err := agent2.Chat(ctx, `调用 echo 工具，content="recovery_check"`)
 	recoveryTime := time.Since(recStart)
@@ -357,7 +357,7 @@ func TestProbe_ContinuousHealth(t *testing.T) {
 
 	for round := 0; round < 3; round++ {
 		for _, in := range inputs {
-			agent := eng.NewAgent("", 2)
+			agent := eng.NewSession("", 2)
 			start := time.Now()
 			_, err := agent.Chat(ctx, in.prompt)
 			lat := time.Since(start)

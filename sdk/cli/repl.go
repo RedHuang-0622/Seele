@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/sukasukasuka123/Seele/sdk/api"
+	"github.com/sukasukasuka123/Seele/core/agent"
 )
 
 // REPLOptions 控制 REPL 行为。
@@ -17,7 +17,7 @@ type REPLOptions struct {
 	Prompt           string      // 提示符，默认 "> "
 	SystemPrompt     string      // Agent 系统提示词（字符串，优先级低于 SystemPromptPath）
 	SystemPromptPath string      // Agent 系统提示词文件路径（推荐，支持热更新）
-	Engine           *api.Engine // 必填
+	Engine           *agent.Agent // 必填
 	Output           io.Writer   // 输出目标，默认 os.Stdout
 	Input            io.Reader   // 输入源，默认 os.Stdin
 	Stream           bool        // true 时使用流式输出，默认 false
@@ -48,7 +48,7 @@ func RunREPL(ctx context.Context, opts REPLOptions) {
 		in = os.Stdin
 	}
 
-	agent := opts.Engine.NewAgent(opts.SystemPrompt, 16)
+	agent := opts.Engine.NewSession(opts.SystemPrompt, 16)
 
 	// 热加载：若指定了 prompt 文件路径，启动文件监听，修改文件无需重启
 	var loader *PromptLoader
@@ -90,7 +90,7 @@ func RunREPL(ctx context.Context, opts REPLOptions) {
 		case "/help":
 			fmt.Fprintln(out, "指令: /skills  /clear  /reload  /help  exit")
 		case "/skills":
-			for _, s := range opts.Engine.Skills() {
+			for _, s := range opts.Engine.Hub().Skills() {
 				fmt.Fprintf(out, "  %-20s %s  [%s]\n", s.Name, s.Description, s.Addr)
 			}
 		case "/clear":
@@ -226,13 +226,13 @@ func parseChoiceIndex(s string) int {
 
 // OneShot 创建临时 Agent，执行单次对话并返回结果。
 // 适合脚本或管道场景。
-func OneShot(ctx context.Context, engine *api.Engine, systemPrompt, userInput string) (string, error) {
+func OneShot(ctx context.Context, engine *agent.Agent, systemPrompt, userInput string) (string, error) {
 	return engine.QuickChat(ctx, systemPrompt, userInput)
 }
 
 // OneShotStream 创建临时 Agent，执行单次流式对话。
 // onChunk 为 nil 时默认直接打印到 stdout。
-func OneShotStream(ctx context.Context, engine *api.Engine, systemPrompt, userInput string, onChunk func(string)) (string, error) {
+func OneShotStream(ctx context.Context, engine *agent.Agent, systemPrompt, userInput string, onChunk func(string)) (string, error) {
 	if onChunk == nil {
 		onChunk = func(delta string) { fmt.Print(delta) }
 	}

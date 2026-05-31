@@ -11,7 +11,9 @@ import (
 	"net/http/httptest"
 	"sync"
 
-	core "github.com/sukasukasuka123/Seele/core"
+	"github.com/sukasukasuka123/Seele/core/session"
+	"github.com/sukasukasuka123/Seele/core/tool_holder"
+	"github.com/sukasukasuka123/Seele/llm"
 	types "github.com/sukasukasuka123/Seele/types"
 	"github.com/sukasukasuka123/Seele/workplan"
 )
@@ -247,17 +249,30 @@ func (m *autoMockLLM) handler(w http.ResponseWriter, r *http.Request) {
 }
 
 // =============================================================================
-// rtAgentFactory —— 将 Runtime.NewAgent 适配为 workplan.AgentFactory
+// sessionFactory —— 持有 LLM + 工具，用于创建测试会话
 // =============================================================================
 
-// rtAgentFactory 从 Runtime 创建 Agent，用于 WorkPlan 测试。
-// 每个 Agent 是 Runtime.NewAgent 返回的真实 Agent，会走完整的 LLM ReAct 循环。
-type rtAgentFactory struct {
-	rt *core.Runtime
+// sessionFactory 从 LLM 客户端 + tool_holder 创建 session.Holder，
+// 适配 workplan.AgentFactory 接口。
+type sessionFactory struct {
+	Llm   *llm.ChatClient
+	Tools *tool_holder.Holder
 }
 
-func (f *rtAgentFactory) NewAgent(systemPrompt string) workplan.Agent {
-	return f.rt.NewAgent(systemPrompt, 1)
+func newSessionFactory(llmClient *llm.ChatClient, tools *tool_holder.Holder) *sessionFactory {
+	return &sessionFactory{Llm: llmClient, Tools: tools}
+}
+
+func (f *sessionFactory) NewAgent(systemPrompt string) workplan.Agent {
+	return session.New(f.Llm, f.Tools, systemPrompt, 1)
+}
+
+// newTestTools 快速创建一个带 LLM 的 tool_holder（用于 Fork 等多 Runtime 场景）。
+func newTestTools(baseURL string) (*llm.ChatClient, *tool_holder.Holder) {
+	llmClient := llm.NewChatClient(types.LLMConfig{
+		BaseURL: baseURL, APIKey: "x", Model: "x", Timeout: 5,
+	})
+	return llmClient, tool_holder.New()
 }
 
 // strPtr 返回字符串指针，用于构造 Message.Content。

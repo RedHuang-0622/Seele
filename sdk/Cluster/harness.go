@@ -72,7 +72,7 @@ type EngineFactory struct {
 }
 
 func (f *EngineFactory) NewAgent(systemPrompt string) workplan.Agent {
-	return f.Engine.NewAgent(systemPrompt, f.MaxLoops)
+	return f.Engine.NewSession(systemPrompt, f.MaxLoops)
 }
 
 // ── Run ──────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ func Run(wfMap WorkflowMap, cfg HarnessConfig) {
 	defer handler.Shutdown()
 
 	port := fmt.Sprintf(":%d", cfg.Port)
-	log.Printf("[%s] 就绪，工具数=%d", cfg.Name, len(engine.Skills()))
+	log.Printf("[%s] 就绪，工具数=%d", cfg.Name, len(engine.Hub().Skills()))
 
 	if err := tool.New(handler).Serve(port); err != nil {
 		log.Fatalf("[%s] Serve: %v", cfg.Name, err)
