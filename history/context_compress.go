@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 
-	llm "github.com/sukasukasuka123/Seele/llm"
 	types "github.com/sukasukasuka123/Seele/types"
 )
 
@@ -20,10 +19,6 @@ Focus on: key findings, errors encountered, actions taken, and final outcomes.
 Be extremely concise — output a short paragraph under 150 words.
 Do NOT re-execute any tools. Only summarize what already happened.`
 
-// compressMaxTokens 压缩 LLM 调用的输出上限。
-// 摘要应该远小于原始消息。
-const compressMaxTokens = 300
-
 // ── 压缩入口 ───────────────────────────────────────────────────────
 
 // CompressHistory 用 LLM 将早期 tool 执行记录压缩为简短摘要。
@@ -35,7 +30,7 @@ const compressMaxTokens = 300
 //  4. 若压缩后 token 数仍超限，fallback 到硬截断
 //
 // 返回压缩后的 history；永远不会返回 nil。
-func CompressHistory(ctx context.Context, client *llm.ChatClient, history []types.Message, maxTokens int) ([]types.Message, error) {
+func CompressHistory(ctx context.Context, client types.ChatCompleter, history []types.Message, maxTokens int) ([]types.Message, error) {
 	if maxTokens <= 0 {
 		maxTokens = DefaultContextConfig().MaxTokens
 	}
@@ -143,23 +138,17 @@ func buildCompressInput(msgs []types.Message) string {
 
 // callCompressLLM 调用 chatClient 生成压缩摘要。
 // 使用空的工具列表，确保 LLM 不会发起 tool_call。
-func callCompressLLM(ctx context.Context, client *llm.ChatClient, input string) (string, error) {
+func callCompressLLM(ctx context.Context, client types.ChatCompleter, input string) (string, error) {
 	if input == "" {
 		return "no previous context to summarize", nil
 	}
-
-	// 创建副本（值拷贝 Cfg），避免修改共享 client 的配置引发竞态。
-	// http.Client 是并发安全的，共享同一个实例没问题。
-	compressClient := *client
-	compressClient.Cfg.MaxTokens = compressMaxTokens
-	compressClient.Cfg.Temperature = 0.3
 
 	messages := []types.Message{
 		{Role: "system", Content: strPtr(compressSystemPrompt)},
 		{Role: "user", Content: &input},
 	}
 
-	msg, err := compressClient.Complete(ctx, messages, nil)
+	msg, err := client.Complete(ctx, messages, nil)
 	if err != nil {
 		return "", err
 	}

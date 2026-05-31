@@ -73,7 +73,7 @@ func (r *Runtime) NewAgent(systemPrompt string, loopTimes int) *Agent {
 		loopTimes = 4 // 默认值
 	}
 	a := &Agent{
-		runtime:          r,
+		svc:              r,
 		sessionID:        fmt.Sprintf("sess_%d", time.Now().UnixNano()),
 		maxLoops:         loopTimes,
 		contextCfg:       history.DefaultContextConfig(),
@@ -85,11 +85,26 @@ func (r *Runtime) NewAgent(systemPrompt string, loopTimes int) *Agent {
 	return a
 }
 
+// ── AgentServices 接口实现 ──────────────────────────────────────
+
+// Complete 将 LLM 补全委托给内部的 ChatClient。
+func (r *Runtime) Complete(ctx context.Context, messages []types.Message, tools []types.Tool) (types.Message, error) {
+	return r.llm.Complete(ctx, messages, tools)
+}
+
+// CompleteStream 将流式 LLM 补全委托给内部的 ChatClient。
+func (r *Runtime) CompleteStream(ctx context.Context, messages []types.Message, tools []types.Tool, onChunk func(delta string)) (string, string, []types.ToolCall, error) {
+	return r.llm.CompleteStream(ctx, messages, tools, onChunk)
+}
+
+// 编译期断言：*Runtime 实现了 AgentServices。
+var _ AgentServices = (*Runtime)(nil)
+
 // ── Agent 内部调用（不对外暴露）──────────────────────────────────
 
-// tools 聚合所有已注册 provider 的工具列表。
+// Tools 聚合所有已注册 provider 的工具列表。
 // 每次调用都实时读取，支持热更新（如 MCP Server 动态增减工具）。
-func (r *Runtime) tools() []types.Tool {
+func (r *Runtime) Tools() []types.Tool {
 	r.mu.RLock()
 	providers := r.providers
 	r.mu.RUnlock()

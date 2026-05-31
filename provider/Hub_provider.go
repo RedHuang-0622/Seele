@@ -89,6 +89,10 @@ func (p *HubProvider) Tools() []types.Tool {
 		if _, blocked := retired[t.Name]; blocked {
 			continue
 		}
+		// 隐藏框架内部工具（_ 前缀），LLM 不可见但 Dispatch 可达
+		if strings.HasPrefix(t.Name, "_") {
+			continue
+		}
 		newIndex[t.Name] = struct{}{}
 		result = append(result, types.Tool{
 			Type: "function",

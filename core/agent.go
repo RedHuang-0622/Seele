@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +13,27 @@ import (
 	"github.com/sukasukasuka123/Seele/provider"
 	types "github.com/sukasukasuka123/Seele/types"
 )
+
+// ApprovalCallback is called when a dispatched tool returns an awaiting_approval
+// response. The implementation should present the options to the user, collect
+// their choice, and return the choice key (matching one of the option keys in
+// the approval JSON). The agent handles dispatching _decide and looping
+// for nested approvals automatically.
+//
+// Returns the user's choice key (e.g., "execute", "skip", "abort").
+// Returns an error if the user cancels or input cannot be collected.
+type ApprovalCallback func(ctx context.Context, approvalJSON string) (choice string, err error)
+
+// AgentServices 定义 Agent 对其宿主运行时的能力需求。
+// Runtime 实现此接口，便于测试时 mock。
+type AgentServices interface {
+	// LLM 补全
+	Complete(ctx context.Context, messages []types.Message, tools []types.Tool) (types.Message, error)
+	CompleteStream(ctx context.Context, messages []types.Message, tools []types.Tool, onChunk func(delta string)) (content string, reasoningContent string, toolCalls []types.ToolCall, err error)
+	// 工具注册与调度
+	Tools() []types.Tool
+	Dispatch(ctx context.Context, name, argsJSON string) (string, error)
+}
 
 // Agent 是绑定到单个会话的智能体实例。
 //
@@ -24,7 +46,7 @@ import (
 // 并发安全性：Agent 本身不加锁，同一个 Agent 不应跨 goroutine 并发调用。
 // 如需并发，请通过 Runtime.New() 各自创建独立 Agent。
 type Agent struct {
-	runtime    *Runtime
+	svc        AgentServices
 	sessionID  string
 	history    []types.Message
 	maxLoops   int
@@ -32,6 +54,11 @@ type Agent struct {
 
 	toolFilter       []string // 工具白名单，空表示不限制
 	lastCompressLoop int      // 上次压缩所在的 loop 轮次，-1 表示尚未压缩
+
+	// OnApproval 设置后，工具返回的 awaiting_approval 响应将不会注入 LLM 上下文，
+	// 而是通过此回调直接与用户交互。回调返回 choice key 后，框架自动调用 _decide
+	// 恢复工作流，最终结果才注入 LLM 上下文。nil 时回退到旧行为（LLM 中转）。
+	OnApproval ApprovalCallback
 }
 
 // SessionID 返回本 Agent 的唯一会话标识符。
@@ -136,7 +163,7 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 		a.history = append(a.history, types.Message{Role: "user", Content: &userInput})
 	}
 
-	tools := a.filteredTools(a.runtime.tools())
+	tools := a.filteredTools(a.svc.Tools())
 
 	for loop := 0; loop < a.maxLoops; loop++ {
 		cfg := a.contextCfg
@@ -144,7 +171,7 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 		// 单轮 tool 结果通常不足以再次超过阈值
 		if a.lastCompressLoop < 0 || loop-a.lastCompressLoop > 1 {
 			if history.NeedCompression(a.history, cfg.CompressThreshold) {
-				compressed, err := history.CompressHistory(ctx, a.runtime.llm, a.history, cfg.MaxTokens)
+				compressed, err := history.CompressHistory(ctx, a.svc, a.history, cfg.MaxTokens)
 				if err != nil {
 					log.Printf("[agent.Chat] session:[%s] compression failed: %v, using hard trim", a.sessionID, err)
 					a.history = history.TrimHistory(a.history, cfg.MaxTokens)
@@ -155,7 +182,7 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 			}
 		}
 
-		msg, err := a.runtime.llm.Complete(ctx, a.history, tools)
+		msg, err := a.svc.Complete(ctx, a.history, tools)
 		if err != nil {
 			return "", fmt.Errorf("agent[%s] chat loop %d: %w", a.sessionID, loop, err)
 		}
@@ -172,7 +199,7 @@ func (a *Agent) Chat(ctx context.Context, userInput string) (string, error) {
 		}
 
 		a.dispatchToolCalls(ctx, msg.ToolCalls)
-		tools = a.filteredTools(a.runtime.tools())
+		tools = a.filteredTools(a.svc.Tools())
 	}
 
 	return "", fmt.Errorf("[agent.Chat] session:[%s] reached maxLoops (%d) without a final text reply",
@@ -193,13 +220,13 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 		a.history = append(a.history, types.Message{Role: "user", Content: &userInput})
 	}
 
-	tools := a.filteredTools(a.runtime.tools())
+	tools := a.filteredTools(a.svc.Tools())
 
 	for loop := 0; loop < a.maxLoops; loop++ {
 		cfg := a.contextCfg
 		if a.lastCompressLoop < 0 || loop-a.lastCompressLoop > 1 {
 			if history.NeedCompression(a.history, cfg.CompressThreshold) {
-				compressed, err := history.CompressHistory(ctx, a.runtime.llm, a.history, cfg.MaxTokens)
+				compressed, err := history.CompressHistory(ctx, a.svc, a.history, cfg.MaxTokens)
 				if err != nil {
 					log.Printf("[agent.ChatStream] session:[%s] compression failed: %v, using hard trim", a.sessionID, err)
 					a.history = history.TrimHistory(a.history, cfg.MaxTokens)
@@ -212,7 +239,7 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 
 		// 先缓冲所有 delta，确认非 tool_call 轮次后才推送，防止 tool_call JSON 碎片泄露
 		var chunks []string
-		fullContent, reasoningContent, toolCalls, err := a.runtime.llm.CompleteStream(
+		fullContent, reasoningContent, toolCalls, err := a.svc.CompleteStream(
 			ctx, a.history, tools,
 			func(delta string) {
 				chunks = append(chunks, delta)
@@ -243,7 +270,7 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 		})
 
 		a.dispatchToolCalls(ctx, toolCalls)
-		tools = a.filteredTools(a.runtime.tools())
+		tools = a.filteredTools(a.svc.Tools())
 	}
 
 	return "", fmt.Errorf("[agent.ChatStream] session:[%s] reached maxLoops (%d) without a final text reply",
@@ -254,6 +281,10 @@ func (a *Agent) ChatStream(ctx context.Context, userInput string, onChunk func(d
 //
 // 瞬时错误（ErrToolUnavailable）不注入 history，最多重试 3 次；
 // 业务错误包装为 {"error":"..."} 注入 history 供 LLM 感知。
+//
+// 审批拦截：若 OnApproval 回调已设置且工具返回 awaiting_approval 响应，
+// 该响应不会注入 LLM 上下文。而是通过回调收集用户选择，框架自动调用 _decide
+// 恢复工作流，仅最终业务结果进入 history。LLM 对审批过程完全无感知。
 func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCall) {
 	type dispatchResult struct {
 		tc        types.ToolCall
@@ -275,7 +306,7 @@ func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCal
 				defer func() { <-sem }()
 				defer wg.Done()
 				start := time.Now()
-				result, dispErr := a.runtime.Dispatch(ctx, tc.Function.Name, tc.Function.Arguments)
+				result, dispErr := a.svc.Dispatch(ctx, tc.Function.Name, tc.Function.Arguments)
 				elapsed := time.Since(start).Milliseconds()
 
 				if dispErr != nil {
@@ -316,6 +347,36 @@ func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCal
 		if r.transient {
 			continue
 		}
+
+		// 审批拦截：工具返回 awaiting_approval 时不注入 LLM 上下文，
+		// 而是通过 OnApproval 回调直接与用户交互
+		if a.OnApproval != nil {
+			if qID, ok := parseApprovalQuestionID(r.content); ok {
+				final, err := a.resolveApproval(ctx, r.content, qID)
+				if err != nil {
+					content := history.TruncateToolResult(
+						fmt.Sprintf(`{"error":%q}`, "approval failed: "+err.Error()),
+						a.contextCfg.MaxToolResultChars)
+					a.history = append(a.history, types.Message{
+						Role:       "tool",
+						ToolCallID: r.tc.ID,
+						Name:       r.tc.Function.Name,
+						Content:    &content,
+					})
+				} else {
+					content := history.TruncateToolResult(final, a.contextCfg.MaxToolResultChars)
+					a.history = append(a.history, types.Message{
+						Role:       "tool",
+						ToolCallID: r.tc.ID,
+						Name:       r.tc.Function.Name,
+						Content:    &content,
+					})
+				}
+				continue
+			}
+		}
+
+		// 普通 tool result：直接注入 history
 		content := history.TruncateToolResult(r.content, a.contextCfg.MaxToolResultChars)
 		a.history = append(a.history, types.Message{
 			Role:       "tool",
@@ -324,4 +385,73 @@ func (a *Agent) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCal
 			Content:    &content,
 		})
 	}
+}
+
+// resolveApproval 处理单个审批请求（含嵌套审批循环）。
+// 1. 通过 OnApproval 回调收集用户选择
+// 2. 调用 _decide 恢复工作流
+// 3. 若结果仍为 awaiting_approval（嵌套审批），重复步骤 1-2
+// 4. 返回最终业务结果
+func (a *Agent) resolveApproval(ctx context.Context, approvalJSON, questionID string) (string, error) {
+	// 防止无限循环（极端情况：嵌套审批）
+	const maxApprovalLoops = 10
+
+	current := approvalJSON
+	currentQID := questionID
+
+	for loop := 0; loop < maxApprovalLoops; loop++ {
+		choice, err := a.OnApproval(ctx, current)
+		if err != nil {
+			return "", fmt.Errorf("collect choice: %w", err)
+		}
+
+		decideArgs := fmt.Sprintf(`{"question_id":%q,"choice":%q}`, currentQID, choice)
+		result, dispErr := a.svc.Dispatch(ctx, "_decide", decideArgs)
+		if dispErr != nil {
+			return "", fmt.Errorf("dispatch _decide: %w", dispErr)
+		}
+
+		// 检查是否还有嵌套审批
+		if nextQID, ok := parseApprovalQuestionID(result); ok {
+			current = result
+			currentQID = nextQID
+			continue
+		}
+
+		return result, nil
+	}
+
+	return "", fmt.Errorf("nested approval exceeded max loops (%d)", maxApprovalLoops)
+}
+
+// parseApprovalQuestionID 检测工具返回是否包含 awaiting_approval 状态。
+// 若是，返回 question_id；否则返回空字符串和 false。
+func parseApprovalQuestionID(result string) (string, bool) {
+	// 快速检测：避免对非 JSON 或过长字符串做完整解析
+	if len(result) < 20 || len(result) > 10000 {
+		return "", false
+	}
+	if !strings.Contains(result, `"status"`) || !strings.Contains(result, `"awaiting_approval"`) {
+		return "", false
+	}
+
+	// 轻量解析：只提取 question_id，避免引入 encoding/json 的完整解析
+	idx := strings.Index(result, `"question_id"`)
+	if idx < 0 {
+		return "", false
+	}
+	// 跳过 "question_id": "
+	start := idx + len(`"question_id"`) + 1
+	// 跳过冒号和可能的空格
+	for start < len(result) && (result[start] == ':' || result[start] == ' ' || result[start] == '"') {
+		start++
+	}
+	end := start
+	for end < len(result) && result[end] != '"' {
+		end++
+	}
+	if end <= start {
+		return "", false
+	}
+	return result[start:end], true
 }

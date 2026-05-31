@@ -1,8 +1,16 @@
 package types
 
+import "context"
+
 // ─────────────────────────────────────────────
 // LLM 对话消息
 // ─────────────────────────────────────────────
+
+// ChatCompleter 是 LLM 补全能力的抽象接口。
+// llm.ChatClient 和 core.Runtime 均满足此接口，方便解耦。
+type ChatCompleter interface {
+	Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error)
+}
 
 // Message 是 LLM 对话历史中的一条记录。
 // Role: "system" | "user" | "assistant" | "tool"
