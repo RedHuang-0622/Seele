@@ -304,6 +304,11 @@ func (wp *WorkPlan) primitiveFork(ctx context.Context, n *node, prevJSON string)
 		wg.Add(1)
 		go func(i int, b ForkBranch) {
 			defer wg.Done()
+			defer func() {
+					if r := recover(); r != nil {
+						results[i] = branchResult{label: b.Label, err: fmt.Errorf("branch panic: %v", r)}
+					}
+				}()
 
 			// 获取信号量前先检查父 context 是否已取消
 			select {
@@ -326,6 +331,10 @@ func (wp *WorkPlan) primitiveFork(ctx context.Context, n *node, prevJSON string)
 				prompt = wp.defaultPrompt
 			}
 			agent := wp.factory.NewAgent(prompt)
+		if agent == nil {
+				results[i] = branchResult{label: b.Label, err: fmt.Errorf("factory returned nil agent for prompt: %q", prompt)}
+				return
+			}
 			if f, ok := agent.(interface{ SetToolFilter([]string) }); ok && n.toolFilter != nil {
 				f.SetToolFilter(n.toolFilter)
 			}

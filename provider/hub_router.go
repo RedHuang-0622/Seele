@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 
-	pb "github.com/sukasukasuka123/microHub/proto/gen/proto"
-	hubbase "github.com/sukasukasuka123/microHub/root_class/hub"
-	registry "github.com/sukasukasuka123/microHub/service_registry"
+	pb "github.com/RedHuang-0622/microHub/proto/gen/proto"
+	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
+	registry "github.com/RedHuang-0622/microHub/service_registry"
 )
 
 // NewHubRouter 创建一个 hubRouter，实现 hubbase.HubHandler 接口。

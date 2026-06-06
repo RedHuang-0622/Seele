@@ -112,6 +112,7 @@ func (p *MCPProvider) Attach(ctx context.Context, cfg MCPServerConfig) error {
 		Version: "1.0.0",
 	}
 	if _, err := c.Initialize(ctx, initReq); err != nil {
+		c.Close()
 		return fmt.Errorf("MCPProvider.Attach: initialize %q: %w", cfg.Name, err)
 	}
 

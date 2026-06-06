@@ -11,10 +11,10 @@ import (
 	"time"
 
 	types "github.com/sukasukasuka123/Seele/types"
-	jsonSchema "github.com/sukasukasuka123/microHub/jsonSchema"
-	"github.com/sukasukasuka123/microHub/pb_api"
-	hubbase "github.com/sukasukasuka123/microHub/root_class/hub"
-	registry "github.com/sukasukasuka123/microHub/service_registry"
+	jsonSchema "github.com/RedHuang-0622/microHub/jsonSchema"
+	"github.com/RedHuang-0622/microHub/pb_api"
+	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
+	registry "github.com/RedHuang-0622/microHub/service_registry"
 )
 
 // ErrToolUnavailable 表示工具暂时不可达（连接池满、超时、网络抖动等），
@@ -89,11 +89,13 @@ func (p *HubProvider) Tools() []types.Tool {
 		if _, blocked := retired[t.Name]; blocked {
 			continue
 		}
+		// toolIndex 包含所有工具（含 _ 前缀），确保 HasTool 对框架内部工具也返回 true
+		// 修复 B2：将 HasTool 索引置于 _ 前缀过滤之前
+		newIndex[t.Name] = struct{}{}
 		// 隐藏框架内部工具（_ 前缀），LLM 不可见但 Dispatch 可达
 		if strings.HasPrefix(t.Name, "_") {
 			continue
 		}
-		newIndex[t.Name] = struct{}{}
 		result = append(result, types.Tool{
 			Type: "function",
 			Function: types.ToolFunction{
@@ -200,7 +202,7 @@ func (p *HubProvider) Skills() []types.SkillInfo {
 		result = append(result, types.SkillInfo{
 			Name:        t.Name,
 			Method:      t.Method,
-			Description: t.Method,
+			Description: t.Method, // ToolEntry 无 Description 字段，暂用 Method；待 microHub 补充该字段后替换
 			Addr:        t.Addr,
 		})
 	}

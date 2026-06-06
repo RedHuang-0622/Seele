@@ -46,6 +46,9 @@ func (h *Holder) Chat(ctx context.Context, userInput string) (string, error) {
 		})
 
 		if len(msg.ToolCalls) == 0 {
+			if msg.Content == nil {
+				return "", fmt.Errorf("LLM returned empty content with no tool calls")
+			}
 			return *msg.Content, nil
 		}
 

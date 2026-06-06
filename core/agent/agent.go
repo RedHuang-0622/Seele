@@ -28,8 +28,8 @@ import (
 	"github.com/sukasukasuka123/Seele/core/tool_holder"
 	"github.com/sukasukasuka123/Seele/llm"
 	"github.com/sukasukasuka123/Seele/provider"
-	hubbase "github.com/sukasukasuka123/microHub/root_class/hub"
-	registry "github.com/sukasukasuka123/microHub/service_registry"
+	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
+	registry "github.com/RedHuang-0622/microHub/service_registry"
 )
 
 // ── Options ──────────────────────────────────────────────────────────
@@ -104,17 +104,34 @@ type Agent struct {
 //  2. 启动本地 microHub gRPC 服务
 //  3. 加载 LLM 配置，创建 ChatClient
 //  4. 创建 tool_holder，注册 HubProvider
+// 启动流程已重新排序（修复 B11）：配置验证前置，hub 在验证通过后才启动，
+// 避免配置加载失败时 hub goroutine 泄漏。
 func New(opts Options) (*Agent, error) {
 	opts.withDefaults()
 
-	// 1. 加载 registry
+	// 1. 加载 registry（无外部副作用，失败不会泄漏）
 	if err := registry.Init(opts.RegistryPath); err != nil {
 		return nil, fmt.Errorf("agent: registry init %q: %w", opts.RegistryPath, err)
 	}
 	registry.ProbeAllOnStartup()
 
-	// 2. 启动 Hub
+	// 2. 加载 LLM 配置 — 前置验证，失败不启动 hub
+	llmCfg, err := config.LoadConfig(opts.LLMConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("agent: load llm config %q: %w", opts.LLMConfigPath, err)
+	}
+	llmClient := llm.NewChatClient(llmCfg)
+
+	// 3. 创建 tool_holder + HubProvider（构造失败不启动 hub）
+	tools := tool_holder.New()
 	hub := hubbase.New(provider.NewHubRouter())
+	hubProv, err := provider.NewHubProvider(hub, opts.ToolCallTimeOut)
+	if err != nil {
+		return nil, fmt.Errorf("agent: new hub provider: %w", err)
+	}
+	tools.Register(hubProv)
+
+	// 4. 所有验证通过，启动 Hub
 	go func() {
 		if err := hub.ServeAsync(opts.HubAddr, 5); err != nil {
 			opts.Logger.Errorf("hub exited: %v", err)
@@ -122,21 +139,6 @@ func New(opts Options) (*Agent, error) {
 	}()
 	time.Sleep(opts.HubStartupDelay)
 	opts.Logger.Infof("hub listening on %s", opts.HubAddr)
-
-	// 3. 加载 LLM 配置，创建 ChatClient
-	llmCfg, err := config.LoadConfig(opts.LLMConfigPath)
-	if err != nil {
-		return nil, fmt.Errorf("agent: load llm config %q: %w", opts.LLMConfigPath, err)
-	}
-	llmClient := llm.NewChatClient(llmCfg)
-
-	// 4. 创建 tool_holder，注册 HubProvider
-	tools := tool_holder.New()
-	hubProv, err := provider.NewHubProvider(hub, opts.ToolCallTimeOut)
-	if err != nil {
-		return nil, fmt.Errorf("agent: new hub provider: %w", err)
-	}
-	tools.Register(hubProv)
 
 	healthCtx, healthCancel := context.WithCancel(context.Background())
 	registry.StartHealthProbe(healthCtx, 15*time.Second)

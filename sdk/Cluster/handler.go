@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/sukasukasuka123/Seele/workplan"
-	"github.com/sukasukasuka123/microHub/pb_api"
-	pb "github.com/sukasukasuka123/microHub/proto/gen/proto"
+	"github.com/RedHuang-0622/microHub/pb_api"
+	pb "github.com/RedHuang-0622/microHub/proto/gen/proto"
 )
 
 // WorkflowFunc 是单个工作流的函数签名。
@@ -122,6 +122,12 @@ func (h *AgentHandler) Execute(req *pb.ToolRequest) (<-chan *pb.ToolResponse, er
 
 	go func() {
 		defer close(ch)
+		defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[%s] workflow panic (method=%s): %v", h.name, req.Method, r)
+					ch <- errorResp(h.name, req.TaskId, "PANIC", fmt.Sprintf("workflow panic: %v", r))
+				}
+			}()
 
 		wf, ok := h.wfMap[req.Method]
 		if !ok {
@@ -187,6 +193,12 @@ func (h *AgentHandler) sendQuestion(wp *workplan.WorkPlan, ch chan<- *pb.ToolRes
 // handleDecide 处理 _decide 调用：匹配 K→V，恢复 WorkPlan 执行。
 func (h *AgentHandler) handleDecide(req *pb.ToolRequest, ch chan<- *pb.ToolResponse) {
 	defer close(ch)
+		defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[%s] _decide panic: %v", h.name, r)
+					ch <- errorResp(h.name, req.TaskId, "PANIC", fmt.Sprintf("_decide panic: %v", r))
+				}
+			}()
 
 	var params struct {
 		QuestionID string `json:"question_id"`

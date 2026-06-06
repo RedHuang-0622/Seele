@@ -62,16 +62,12 @@ type chatCompletionResponse struct {
 //   - 若模型发起 tool_calls，Message.ToolCalls 非空，Message.Content 可能为空。
 //   - 若模型直接回复，Message.Content 为文本，Message.ToolCalls 为空。
 func (c *ChatClient) Complete(ctx context.Context, messages []types.Message, tools []types.Tool) (types.Message, error) {
-	temperature := c.Cfg.Temperature
-	if temperature == 0 {
-		temperature = 1.0
-	}
 
 	reqBody := chatCompletionRequest{
 		Model:       c.Cfg.Model,
 		Messages:    messages,
 		MaxTokens:   c.Cfg.MaxTokens,
-		Temperature: temperature,
+		Temperature: c.Cfg.Temperature,
 	}
 	if len(tools) > 0 {
 		reqBody.Tools = tools
@@ -174,10 +170,6 @@ type chatCompletionStreamResponse struct {
 // 调用方负责关闭 body。
 func (c *ChatClient) doStreamRequest(ctx context.Context, messages []types.Message, tools []types.Tool) (io.ReadCloser, error) {
 	temperature := c.Cfg.Temperature
-	if temperature == 0 {
-		temperature = 1.0
-	}
-
 	reqBody := chatCompletionStreamRequest{
 		Model:       c.Cfg.Model,
 		Messages:    messages,

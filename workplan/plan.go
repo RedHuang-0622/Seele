@@ -22,11 +22,16 @@ type AgentFactory interface {
 
 // ── 全局 WorkPlan 并发控制 ────────────────────────────────────────
 
-var globalWorkPlanSem chan struct{}
+var (
+	globalWorkPlanSem   chan struct{}
+	globalWorkPlanSemMu sync.Mutex
+)
 
 // SetMaxConcurrentWorkPlans 限制全局同时执行的 WorkPlan 数量。
-// 设为 0 或负数移除限制。默认不限。
+// 设为 0 或负数移除限制。默认不限。并发安全。
 func SetMaxConcurrentWorkPlans(n int) {
+	globalWorkPlanSemMu.Lock()
+	defer globalWorkPlanSemMu.Unlock()
 	if n <= 0 {
 		globalWorkPlanSem = nil
 		return

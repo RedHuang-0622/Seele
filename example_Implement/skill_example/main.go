@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/sukasukasuka123/Seele/util"
-	"github.com/sukasukasuka123/microHub/pb_api"
-	pb "github.com/sukasukasuka123/microHub/proto/gen/proto"
-	tool "github.com/sukasukasuka123/microHub/root_class/tool"
+	"github.com/RedHuang-0622/microHub/pb_api"
+	pb "github.com/RedHuang-0622/microHub/proto/gen/proto"
+	tool "github.com/RedHuang-0622/microHub/root_class/tool"
 )
 
 type PingRequest struct {
