@@ -14,74 +14,89 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sukasukasuka123/Seele/core/session"
-	"github.com/sukasukasuka123/Seele/core/tool_holder"
-	history "github.com/sukasukasuka123/Seele/history"
-	"github.com/sukasukasuka123/Seele/llm"
-	prov "github.com/sukasukasuka123/Seele/provider"
-	types "github.com/sukasukasuka123/Seele/types"
-	"github.com/sukasukasuka123/Seele/workplan"
+	"github.com/RedHuang-0622/Seele/core/session"
+	"github.com/RedHuang-0622/Seele/core/tool_holder"
+	history "github.com/RedHuang-0622/Seele/history"
+	"github.com/RedHuang-0622/Seele/llm"
+	prov "github.com/RedHuang-0622/Seele/provider"
+	types "github.com/RedHuang-0622/Seele/types"
+	"github.com/RedHuang-0622/Seele/workplan"
 )
 
 // =============================================================================
 // controllableProvider —— 可控制失败模式的 ToolProvider
 // =============================================================================
 
-// controllableProvider 支持三种失败模式：
-//   - success：正常返回
-//   - transient：返回 ErrToolUnavailable（连接池满/超时等瞬时错误）
-//   - permanent：返回普通 error（工具业务错误）
-//
-// failCount 控制前 N 次调用返回错误，之后返回成功。
+// controllableProvider 支持三种失败模式的可控 ToolProvider。
+// 重构后实现新的 ToolProvider 接口（Tools() []ToolEntry），
+// 执行逻辑下沉到 controllableHandler（策略模式）。
 type controllableProvider struct {
-	name      string
-	tools     []types.Tool
-	toolIdx   map[string]struct{}
-	failMode        string        // "transient" | "permanent" | ""
-	failCount       int           // 前 N 次失败，0 表示永远失败
+	name            string
+	tools           []types.Tool
+	failMode        string // "transient" | "permanent" | ""
+	failCount       int    // 前 N 次失败，0 表示永远失败
 	mu              sync.Mutex
-	callCount       map[string]int // 每个工具的累计调用次数
-	successOverride string         // 若设置，成功时返回此内容而非默认 JSON
+	callCount       map[string]int  // 每个工具的累计调用次数
+	successOverride string          // 若设置，成功时返回此内容
 }
 
 func newControllableProvider(name string) *controllableProvider {
 	return &controllableProvider{
 		name:      name,
-		toolIdx:   make(map[string]struct{}),
 		callCount: make(map[string]int),
 	}
 }
 
-func (p *controllableProvider) ProviderName() string              { return p.name }
-func (p *controllableProvider) Tools() []types.Tool             { return p.tools }
-func (p *controllableProvider) HasTool(name string) bool          { _, ok := p.toolIdx[name]; return ok }
+func (p *controllableProvider) ProviderName() string { return p.name }
 
-func (p *controllableProvider) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
+func (p *controllableProvider) Tools() []prov.ToolEntry {
+	entries := make([]prov.ToolEntry, len(p.tools))
+	for i, t := range p.tools {
+		name := t.Function.Name
+		entries[i] = prov.ToolEntry{
+			Definition: t,
+			Handler: &controllableHandler{
+				provider: p,
+				toolName: name,
+			},
+		}
+	}
+	return entries
+}
+
+// controllableHandler 实现 ToolHandler，封装可控失败逻辑。
+type controllableHandler struct {
+	provider *controllableProvider
+	toolName string
+}
+
+func (h *controllableHandler) Execute(ctx context.Context, argsJSON string) (string, error) {
+	p := h.provider
 	p.mu.Lock()
-	p.callCount[name]++
-	count := p.callCount[name]
+	p.callCount[h.toolName]++
+	count := p.callCount[h.toolName]
 	p.mu.Unlock()
 
 	if p.failMode == "" {
 		if p.successOverride != "" {
 			return p.successOverride, nil
 		}
-		return `{"status":"ok","tool":"` + name + `"}`, nil
+		return `{"status":"ok","tool":"` + h.toolName + `"}`, nil
 	}
 
 	if p.failCount > 0 && count > p.failCount {
 		if p.successOverride != "" {
 			return p.successOverride, nil
 		}
-		return `{"status":"ok","tool":"` + name + `"}`, nil
+		return `{"status":"ok","tool":"` + h.toolName + `"}`, nil
 	}
 
 	switch p.failMode {
 	case "transient":
 		return "", fmt.Errorf("%w: %s: simulated unavailability (call %d)",
-			prov.ErrToolUnavailable, name, count)
+			prov.ErrToolUnavailable, h.toolName, count)
 	case "permanent":
-		return "", fmt.Errorf("%s: simulated business error (call %d)", name, count)
+		return "", fmt.Errorf("%s: simulated business error (call %d)", h.toolName, count)
 	default:
 		return `{"status":"ok"}`, nil
 	}
@@ -104,7 +119,6 @@ func (p *controllableProvider) AddTool(name, desc string) {
 			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
 	})
-	p.toolIdx[name] = struct{}{}
 }
 
 // =============================================================================

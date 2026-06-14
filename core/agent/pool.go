@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sukasukasuka123/Seele/core/session"
+	"github.com/RedHuang-0622/Seele/core/session"
 )
 
 // Pool 管理多个对话会话，支持切换当前活跃会话。

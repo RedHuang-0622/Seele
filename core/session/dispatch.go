@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	history "github.com/sukasukasuka123/Seele/history"
-	types "github.com/sukasukasuka123/Seele/types"
+	history "github.com/RedHuang-0622/Seele/history"
+	types "github.com/RedHuang-0622/Seele/types"
 )
 
 // dispatchToolCalls 并发执行 tool_calls，将结果追加到 history。

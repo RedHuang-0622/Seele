@@ -2,33 +2,38 @@ package provider
 
 import (
 	"context"
+	"errors"
 
-	types "github.com/sukasukasuka123/Seele/types"
+	types "github.com/RedHuang-0622/Seele/types"
 )
 
-// ToolProvider 是工具来源的统一抽象。
+// ErrToolUnavailable 表示工具暂时不可达（连接池满、超时、网络抖动等），
+// 与工具返回的业务错误不同。调用方可据此决定重试而非将错误注入对话历史。
+var ErrToolUnavailable = errors.New("tool temporarily unavailable")
+
+// ToolHandler 是工具执行的策略接口。
 //
-// 设计原则：
-//   - 实现方只负责"提供工具"和"执行工具"，不感知 LLM、历史、会话
-//   - Runtime 通过此接口聚合多个来源，Agent 完全不接触该接口
+// 三种实现：
+//   - HubToolHandler    — gRPC 调用远程 microHub Skill 进程
+//   - MCPToolHandler    — stdio/SSE 调用 MCP Server
+//   - InlineToolHandler — 直接调用本地 Go 函数
+type ToolHandler interface {
+	Execute(ctx context.Context, argsJSON string) (string, error)
+}
+
+// ToolEntry 是所有 provider 向 tool_holder 暴露的统一结构。
+// 不管工具来源是 gRPC、MCP 还是 Go 函数，tool_holder 看到的都是
+// 一样的 {Definition + Handler} 组合。
+type ToolEntry struct {
+	Definition types.Tool
+	Handler    ToolHandler
+}
+
+// ToolProvider 是所有工具来源的抽象接口。
 //
-// 已有实现：
-//   - HubProvider   —— 封装现有 microHub + registry 逻辑
-//   - MCPProvider   —— 通过 MCP 协议连接外部工具服务器
+// 每次调用 Tools() 实时查询，支持热更新（MCP 动态增减、Hub 在线/离线变化）。
+// tool_holder 通过此接口聚合所有来源，agent 层完全不接触该接口。
 type ToolProvider interface {
-	// ProviderName 返回唯一标识符，用于日志和 Retire/Restore 路由
 	ProviderName() string
-
-	// Tools 返回当前可用工具列表（格式：OpenAI function calling schema）
-	// 每次 LLM 调用前都会调用此方法，实现应保证热更新
-	Tools() []types.Tool
-
-	// Dispatch 执行指定工具，返回结果 JSON 字符串
-	// name 为工具名（与 Tools() 中 Function.Name 一致）
-	// argsJSON 为 LLM 生成的参数 JSON 字符串，已通过 json.Valid 校验
-	Dispatch(ctx context.Context, name, argsJSON string) (string, error)
-
-	// HasTool 判断此 provider 是否包含指定工具名
-	// Runtime 用此方法做路由，避免遍历 Tools() 切片
-	HasTool(name string) bool
+	Tools() []ToolEntry
 }

@@ -460,7 +460,7 @@ Seele/
 | 包 | 用途 |
 |----|------|
 | `github.com/mark3labs/mcp-go` | MCP 协议客户端 |
-| `github.com/sukasukasuka123/microHub` | 内部 gRPC 微服务框架 (BaseHub, registry, pb_api) |
+| `github.com/RedHuang-0622/microHub` | 内部 gRPC 微服务框架 (BaseHub, registry, pb_api) |
 | `gopkg.in/yaml.v3` | YAML 解析 |
 | `github.com/spf13/viper` | util 层的 YAML 读取 (仅 util/yaml_reading.go 使用) |
 

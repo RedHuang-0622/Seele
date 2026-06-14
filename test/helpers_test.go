@@ -11,35 +11,49 @@ import (
 	"net/http/httptest"
 	"sync"
 
-	"github.com/sukasukasuka123/Seele/core/session"
-	"github.com/sukasukasuka123/Seele/core/tool_holder"
-	"github.com/sukasukasuka123/Seele/llm"
-	types "github.com/sukasukasuka123/Seele/types"
-	"github.com/sukasukasuka123/Seele/workplan"
+	prov "github.com/RedHuang-0622/Seele/provider"
+	"github.com/RedHuang-0622/Seele/core/session"
+	"github.com/RedHuang-0622/Seele/core/tool_holder"
+	"github.com/RedHuang-0622/Seele/llm"
+	types "github.com/RedHuang-0622/Seele/types"
+	"github.com/RedHuang-0622/Seele/workplan"
 )
 
 // =============================================================================
 // mockProvider —— 基于内存 map 的 ToolProvider，用于单元测试
+// 重构后实现新 ToolProvider 接口（Tools() []ToolEntry），执行逻辑在 mockHandler。
 // =============================================================================
 
 type mockProvider struct {
-	name    string
-	tools   []types.Tool
-	toolIdx map[string]struct{}
+	name  string
+	tools []types.Tool
 }
 
 func newMockProvider(name string) *mockProvider {
-	return &mockProvider{
-		name:    name,
-		toolIdx: make(map[string]struct{}),
-	}
+	return &mockProvider{name: name}
 }
 
-func (p *mockProvider) ProviderName() string     { return p.name }
-func (p *mockProvider) Tools() []types.Tool    { return p.tools }
-func (p *mockProvider) HasTool(name string) bool { _, ok := p.toolIdx[name]; return ok }
-func (p *mockProvider) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
-	return `{"status":"ok","tool":"` + name + `","args":` + argsJSON + `}`, nil
+func (p *mockProvider) ProviderName() string { return p.name }
+
+func (p *mockProvider) Tools() []prov.ToolEntry {
+	entries := make([]prov.ToolEntry, len(p.tools))
+	for i, t := range p.tools {
+		name := t.Function.Name
+		entries[i] = prov.ToolEntry{
+			Definition: t,
+			Handler:    &mockHandler{toolName: name},
+		}
+	}
+	return entries
+}
+
+// mockHandler 实现 ToolHandler，返回预设的成功 JSON。
+type mockHandler struct {
+	toolName string
+}
+
+func (h *mockHandler) Execute(ctx context.Context, argsJSON string) (string, error) {
+	return `{"status":"ok","tool":"` + h.toolName + `","args":` + argsJSON + `}`, nil
 }
 
 func (p *mockProvider) AddTool(name, desc string) {
@@ -51,7 +65,6 @@ func (p *mockProvider) AddTool(name, desc string) {
 			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
 	})
-	p.toolIdx[name] = struct{}{}
 }
 
 // =============================================================================

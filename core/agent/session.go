@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 
-	"github.com/sukasukasuka123/Seele/core/session"
-	"github.com/sukasukasuka123/Seele/core/tool_holder"
+	"github.com/RedHuang-0622/Seele/core/session"
+	"github.com/RedHuang-0622/Seele/core/tool_holder"
 )
 
 // NewSession 创建一个绑定到本 Agent 工具集的对话会话。

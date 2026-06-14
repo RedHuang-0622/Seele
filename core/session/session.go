@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	history "github.com/sukasukasuka123/Seele/history"
-	types "github.com/sukasukasuka123/Seele/types"
+	history "github.com/RedHuang-0622/Seele/history"
+	types "github.com/RedHuang-0622/Seele/types"
 )
 
 // Holder 管理一次 LLM 对话会话。

@@ -1,4 +1,4 @@
-module github.com/sukasukasuka123/Seele
+module github.com/RedHuang-0622/Seele
 
 go 1.25.5
 

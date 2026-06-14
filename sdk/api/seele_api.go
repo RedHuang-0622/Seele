@@ -4,8 +4,8 @@
 package api
 
 import (
-	"github.com/sukasukasuka123/Seele/core/agent"
-	"github.com/sukasukasuka123/Seele/core/session"
+	"github.com/RedHuang-0622/Seele/core/agent"
+	"github.com/RedHuang-0622/Seele/core/session"
 )
 
 // ── 类型别名 ──────────────────────────────────────────────────────────
@@ -14,6 +14,7 @@ import (
 type Options = agent.Options
 
 // Engine 是 Seele 的编排器。等同于 agent.Agent。
+// 通过类型别名自动继承 Agent 的所有方法（RegisterInlineTool 等）。
 type Engine = agent.Agent
 
 // Logger 是日志接口。

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	history "github.com/sukasukasuka123/Seele/history"
-	types "github.com/sukasukasuka123/Seele/types"
+	history "github.com/RedHuang-0622/Seele/history"
+	types "github.com/RedHuang-0622/Seele/types"
 )
 
 // Chat 追加 userInput 消息，驱动 LLM 推理并自动执行 tool_calls，

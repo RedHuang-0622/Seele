@@ -1,48 +1,27 @@
 package provider
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
-	types "github.com/sukasukasuka123/Seele/types"
+	types "github.com/RedHuang-0622/Seele/types"
 	jsonSchema "github.com/RedHuang-0622/microHub/jsonSchema"
-	"github.com/RedHuang-0622/microHub/pb_api"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 	registry "github.com/RedHuang-0622/microHub/service_registry"
 )
 
-// ErrToolUnavailable 表示工具暂时不可达（连接池满、超时、网络抖动等），
-// 与工具返回的业务错误不同。调用方可据此决定重试而非将错误注入对话历史。
-var ErrToolUnavailable = errors.New("tool temporarily unavailable")
-
 // HubProvider 将现有 microHub + registry 封装为 ToolProvider。
-//
-// 这是对原 Runtime 中内联 Hub 逻辑的直接提取：
-//   - tools()     → HubProvider.Tools()
-//   - dispatch()  → HubProvider.Dispatch()
-//
-// retired 集合（Retire/Restore）从 Runtime 下沉到此处管理，
-// 因为它只对 Hub 工具生效。
 type HubProvider struct {
 	hub             *hubbase.BaseHub
 	mu              sync.RWMutex
 	retired         map[string]struct{}
 	toolCallTimeout time.Duration
-
-	// toolIndex 缓存工具名到是否存在的 bool，每次 Tools() 刷新
-	// 避免 HasTool 每次遍历完整列表
-	mu2       sync.RWMutex
-	toolIndex map[string]struct{}
 }
 
 // NewHubProvider 创建 HubProvider。
-// hub 不能为 nil，registry 须在此之前已完成 Init。
 func NewHubProvider(hub *hubbase.BaseHub, timeout time.Duration) (*HubProvider, error) {
 	if hub == nil {
 		return nil, fmt.Errorf("HubProvider: hub must not be nil")
@@ -51,7 +30,6 @@ func NewHubProvider(hub *hubbase.BaseHub, timeout time.Duration) (*HubProvider, 
 		hub:             hub,
 		retired:         make(map[string]struct{}),
 		toolCallTimeout: timeout,
-		toolIndex:       make(map[string]struct{}),
 	}, nil
 }
 
@@ -75,13 +53,13 @@ func (p *HubProvider) Restore(name string) {
 
 // ── ToolProvider 接口实现 ─────────────────────────────────────────
 
-func (p *HubProvider) Tools() []types.Tool {
+// Tools 返回所有 Hub 工具的 ToolEntry（含 _ 前缀内部工具）。
+// _ 前缀过滤由 tool_holder.Tools() 统一处理。
+func (p *HubProvider) Tools() []ToolEntry {
 	retired := p.retiredSnapshot()
 	all := registry.GetOnlineTools()
 
-	newIndex := make(map[string]struct{}, len(all))
-	result := make([]types.Tool, 0, len(all))
-
+	result := make([]ToolEntry, 0, len(all))
 	for _, t := range all {
 		if registry.IsOffline(t.Addr) {
 			continue
@@ -89,101 +67,23 @@ func (p *HubProvider) Tools() []types.Tool {
 		if _, blocked := retired[t.Name]; blocked {
 			continue
 		}
-		// toolIndex 包含所有工具（含 _ 前缀），确保 HasTool 对框架内部工具也返回 true
-		// 修复 B2：将 HasTool 索引置于 _ 前缀过滤之前
-		newIndex[t.Name] = struct{}{}
-		// 隐藏框架内部工具（_ 前缀），LLM 不可见但 Dispatch 可达
-		if strings.HasPrefix(t.Name, "_") {
-			continue
-		}
-		result = append(result, types.Tool{
-			Type: "function",
-			Function: types.ToolFunction{
-				Name:        t.Name,
-				Description: t.Method,
-				Parameters:  buildParameters(t.InputSchema),
+		result = append(result, ToolEntry{
+			Definition: types.Tool{
+				Type: "function",
+				Function: types.ToolFunction{
+					Name:        t.Name,
+					Description: t.Method,
+					Parameters:  buildParameters(t.InputSchema),
+				},
+			},
+			Handler: &HubToolHandler{
+				Hub:     p.hub,
+				Method:  t.Method,
+				Timeout: p.toolCallTimeout,
 			},
 		})
 	}
-
-	p.mu2.Lock()
-	p.toolIndex = newIndex
-	p.mu2.Unlock()
-
 	return result
-}
-
-func (p *HubProvider) HasTool(name string) bool {
-	p.mu2.RLock()
-	_, ok := p.toolIndex[name]
-	p.mu2.RUnlock()
-	return ok
-}
-
-func (p *HubProvider) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
-	t, ok := registry.SelectToolByName(name)
-	if !ok {
-		return "", fmt.Errorf("HubProvider: skill %q not in registry", name)
-	}
-
-	p.mu.RLock()
-	_, blocked := p.retired[name]
-	p.mu.RUnlock()
-	if blocked {
-		return "", fmt.Errorf("HubProvider: skill %q is retired", name)
-	}
-
-	if !json.Valid([]byte(argsJSON)) {
-		return "", fmt.Errorf("HubProvider: skill %q invalid JSON args: %.200s", name, argsJSON)
-	}
-
-	req, err := pb_api.Request().
-		Method(t.Method).
-		Params([]byte(argsJSON)).
-		Build()
-	if err != nil {
-		return "", fmt.Errorf("HubProvider: build request for %q: %w", name, err)
-	}
-
-	dispatchCtx, cancel := context.WithTimeout(ctx, p.toolCallTimeout)
-	defer cancel()
-
-	start := time.Now()
-	results := p.hub.Dispatch(dispatchCtx, req)
-	log.Printf("[HubProvider] dispatch skill=%s method=%s latency=%dms",
-		name, t.Method, time.Since(start).Milliseconds())
-
-	if len(results) == 0 {
-		return "", fmt.Errorf("HubProvider: skill %q: no response (is the tool process running?)", name)
-	}
-
-	var parts, errs []string
-	for _, r := range results {
-		if r.Err != nil {
-			errs = append(errs, r.Err.Error())
-			continue
-		}
-		for _, resp := range r.Responses {
-			switch resp.Status {
-			case "error":
-				for _, e := range resp.Errors {
-					errs = append(errs, fmt.Sprintf("[%s] %s: %s", resp.ToolName, e.Code, e.Message))
-				}
-			case "ok", "partial":
-				if raw := string(resp.Result); raw != "" && raw != "{}" {
-					parts = append(parts, raw)
-				}
-			}
-		}
-	}
-
-	if len(errs) > 0 && len(parts) == 0 {
-		if allTransportErrors(results) {
-			return "", fmt.Errorf("%w: HubProvider: skill %q: %s", ErrToolUnavailable, name, strings.Join(errs, "; "))
-		}
-		return "", fmt.Errorf("HubProvider: skill %q failed: %s", name, strings.Join(errs, "; "))
-	}
-	return strings.Join(parts, "\n"), nil
 }
 
 // ── Skills 摘要（供 Engine.Skills() 使用）────────────────────────
@@ -202,7 +102,7 @@ func (p *HubProvider) Skills() []types.SkillInfo {
 		result = append(result, types.SkillInfo{
 			Name:        t.Name,
 			Method:      t.Method,
-			Description: t.Method, // ToolEntry 无 Description 字段，暂用 Method；待 microHub 补充该字段后替换
+			Description: t.Method,
 			Addr:        t.Addr,
 		})
 	}
@@ -221,22 +121,8 @@ func (p *HubProvider) retiredSnapshot() map[string]struct{} {
 	return snap
 }
 
-// allTransportErrors 判断所有 DispatchResult 是否均为传输层错误（工具不可达）。
-// 若任一结果包含业务层响应（工具正常处理了请求并返回了结果/错误），则返回 false。
-func allTransportErrors(results []hubbase.DispatchResult) bool {
-	if len(results) == 0 {
-		return true
-	}
-	for _, r := range results {
-		if r.Err == nil && len(r.Responses) > 0 {
-			return false // 工具收到请求并给出了业务响应
-		}
-	}
-	return true
-}
+// ── schema 转换（从原 runtime.go 迁移，只服务于 Hub 工具）───────
 
-// buildParameters 将 microHub input_schema 转为 OpenAI JSON Schema。
-// （从原 runtime.go 迁移至此，因为它只服务于 Hub 工具）
 func buildParameters(inputSchema string) map[string]interface{} {
 	fallback := map[string]interface{}{
 		"type":       "object",

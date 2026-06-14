@@ -1,0 +1,17 @@
+# Seele 框架示例 — 工具注册表（最小配置）
+# 内联工具不需要外部服务，此文件保持为空即可
+services:
+  tools: []
+
+pool:
+  grpc_conn:
+    min_size:             1
+    max_size:             30
+    idle_buffer_factor:   0.55
+    survive_time_sec:     600
+    monitor_interval_sec: 6
+    max_retries:          3
+    retry_interval_ms:    200
+    reconnect_on_get:     true
+    ping_interval_sec:    30
+    max_wait_queue:       10

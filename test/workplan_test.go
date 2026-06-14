@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/sukasukasuka123/Seele/workplan"
+	"github.com/RedHuang-0622/Seele/workplan"
 )
 
 // =============================================================================
@@ -31,11 +31,23 @@ func TestWorkPlan_Fork_DifferentRegistries(t *testing.T) {
 	provB.AddTool("tool_b", "only for agent B")
 	fb.Tools.Register(provB)
 
-	if provA.HasTool("tool_a") && provB.HasTool("tool_b") &&
-		!provA.HasTool("tool_b") && !provB.HasTool("tool_a") {
+	// 验证工具注册隔离（通过 tool_holder.Tools 检查，而非旧 HasTool）
+	toolsA := fa.Tools.Tools()
+	hasA, hasBinA := false, false
+	for _, t := range toolsA {
+		if t.Function.Name == "tool_a" { hasA = true }
+		if t.Function.Name == "tool_b" { hasBinA = true }
+	}
+	toolsB := fb.Tools.Tools()
+	hasB, hasAinB := false, false
+	for _, t := range toolsB {
+		if t.Function.Name == "tool_b" { hasB = true }
+		if t.Function.Name == "tool_a" { hasAinB = true }
+	}
+	if hasA && hasB && !hasBinA && !hasAinB {
 		t.Log("OK: 两个工具注册表互不重叠")
 	} else {
-		t.Error("FAIL: 工具注册表未正确隔离")
+		t.Errorf("FAIL: 工具注册表未正确隔离 hasA=%v hasB=%v hasBinA=%v hasAinB=%v", hasA, hasB, hasBinA, hasAinB)
 	}
 
 	factory := &forkRegFactory{

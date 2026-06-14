@@ -44,8 +44,8 @@
 ### 📦 依赖升级
 
 ```
-github.com/sukasukasuka123/microHub     v0.1.4 → github.com/RedHuang-0622/microHub     v0.1.5
-github.com/sukasukasuka123/TemplatePoolByGO v0.1.7 → github.com/RedHuang-0622/TemplatePoolByGO v0.1.8
+github.com/RedHuang-0622/microHub     v0.1.4 → github.com/RedHuang-0622/microHub     v0.1.5
+github.com/RedHuang-0622/TemplatePoolByGO v0.1.7 → github.com/RedHuang-0622/TemplatePoolByGO v0.1.8
 ```
 
 **TemplatePoolByGO v0.1.8 关键变更：**

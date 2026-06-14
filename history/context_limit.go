@@ -3,7 +3,7 @@ package history
 import (
 	"strings"
 
-	types "github.com/sukasukasuka123/Seele/types"
+	types "github.com/RedHuang-0622/Seele/types"
 )
 
 // ── 上下文预算配置 ─────────────────────────────────────────────────

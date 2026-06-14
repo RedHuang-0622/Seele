@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	types "github.com/sukasukasuka123/Seele/types"
+	types "github.com/RedHuang-0622/Seele/types"
 	"gopkg.in/yaml.v3"
 )
 

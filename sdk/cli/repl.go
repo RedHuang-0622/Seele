@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/sukasukasuka123/Seele/core/agent"
+	"github.com/RedHuang-0622/Seele/core/agent"
 )
 
 // REPLOptions 控制 REPL 行为。

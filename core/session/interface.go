@@ -3,7 +3,7 @@ package session
 import (
 	"context"
 
-	types "github.com/sukasukasuka123/Seele/types"
+	types "github.com/RedHuang-0622/Seele/types"
 )
 
 // ApprovalCallback is called when a dispatched tool returns an awaiting_approval

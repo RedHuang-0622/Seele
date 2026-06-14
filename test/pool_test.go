@@ -28,7 +28,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sukasukasuka123/Seele/core/session"
+	prov "github.com/RedHuang-0622/Seele/provider"
+	"github.com/RedHuang-0622/Seele/core/session"
+	types "github.com/RedHuang-0622/Seele/types"
 )
 
 // =============================================================================
@@ -147,13 +149,14 @@ func TestPool_AgentPipeline(t *testing.T) {
 // =============================================================================
 
 // countingProvider 记录 Dispatch 被调用的并发数，用于检测"连接"是否泄漏。
+// 重构后通过 countingHandler（策略模式）实现计数逻辑。
 type countingProvider struct {
-	*mockProvider
 	active    int64
 	maxActive int64
 	total     int64
 	mu        sync.Mutex
 	records   []dispatchRecord
+	tools     []types.Tool
 }
 
 type dispatchRecord struct {
@@ -164,40 +167,70 @@ type dispatchRecord struct {
 }
 
 func newCountingProvider(name string) *countingProvider {
-	return &countingProvider{
-		mockProvider: newMockProvider(name),
-	}
+	return &countingProvider{}
 }
 
-func (p *countingProvider) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
-	active := atomic.AddInt64(&p.active, 1)
-	atomic.AddInt64(&p.total, 1)
+func (p *countingProvider) ProviderName() string { return "counting" }
+
+func (p *countingProvider) Tools() []prov.ToolEntry {
+	entries := make([]prov.ToolEntry, len(p.tools))
+	for i, t := range p.tools {
+		name := t.Function.Name
+		entries[i] = prov.ToolEntry{
+			Definition: t,
+			Handler: &countingHandler{
+				toolName: name,
+				counter:  p,
+			},
+		}
+	}
+	return entries
+}
+
+func (p *countingProvider) AddTool(name, desc string) {
+	p.tools = append(p.tools, types.Tool{
+		Type: "function",
+		Function: types.ToolFunction{
+			Name:        name,
+			Description: desc,
+			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+	})
+}
+
+// countingHandler 实现 ToolHandler，统计并发调用数据。
+type countingHandler struct {
+	toolName string
+	counter  *countingProvider
+}
+
+func (h *countingHandler) Execute(ctx context.Context, argsJSON string) (string, error) {
+	active := atomic.AddInt64(&h.counter.active, 1)
+	atomic.AddInt64(&h.counter.total, 1)
 
 	for {
-		cur := atomic.LoadInt64(&p.maxActive)
-		if active <= cur || atomic.CompareAndSwapInt64(&p.maxActive, cur, active) {
+		cur := atomic.LoadInt64(&h.counter.maxActive)
+		if active <= cur || atomic.CompareAndSwapInt64(&h.counter.maxActive, cur, active) {
 			break
 		}
 	}
 
-	p.mu.Lock()
-	rec := dispatchRecord{name: name, start: time.Now()}
-	p.mu.Unlock()
+	h.counter.mu.Lock()
+	rec := dispatchRecord{name: h.toolName, start: time.Now()}
+	h.counter.mu.Unlock()
 
 	// 模拟 50ms 处理时间
 	time.Sleep(50 * time.Millisecond)
 
-	result, err := p.mockProvider.Dispatch(ctx, name, argsJSON)
+	atomic.AddInt64(&h.counter.active, -1)
 
-	atomic.AddInt64(&p.active, -1)
-
-	p.mu.Lock()
+	h.counter.mu.Lock()
 	rec.end = time.Now()
 	rec.latency = rec.end.Sub(rec.start)
-	p.records = append(p.records, rec)
-	p.mu.Unlock()
+	h.counter.records = append(h.counter.records, rec)
+	h.counter.mu.Unlock()
 
-	return result, err
+	return `{"status":"ok","tool":"` + h.toolName + `","args":` + argsJSON + `}`, nil
 }
 
 // TestPool_AgentConnectionRelease 通过 Agent.Chat() 管道验证 dispatch 后连接正常释放。
@@ -324,7 +357,7 @@ func TestPool_Integration_WorkflowStress(t *testing.T) {
 	}
 
 	const (
-		base    = "github.com/sukasukasuka123/Seele/"
+		base    = "github.com/RedHuang-0622/Seele/"
 		regPath = "../config/registry.yaml"
 		cfgPath = "../config/config.yaml"
 		hubAddr = ":51065"

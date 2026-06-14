@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sukasukasuka123/Seele/types"
+	"github.com/RedHuang-0622/Seele/types"
 )
 
 // ChatClient 是对 OpenAI 兼容 /v1/chat/completions 的轻量封装。

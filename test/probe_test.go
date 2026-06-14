@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	types "github.com/sukasukasuka123/Seele/types"
-	"github.com/sukasukasuka123/Seele/sdk/api"
+	types "github.com/RedHuang-0622/Seele/types"
+	"github.com/RedHuang-0622/Seele/sdk/api"
 )
 
 // =============================================================================
@@ -140,7 +140,7 @@ func TestProbe_ServiceDiscovery(t *testing.T) {
 	probeResetTimer()
 
 	const (
-		base    = "github.com/sukasukasuka123/Seele/"
+		base    = "github.com/RedHuang-0622/Seele/"
 		regPath = "../config/registry.yaml"
 		cfgPath = "../config/config.yaml"
 		hubAddr = ":51061"
@@ -192,7 +192,7 @@ func TestProbe_OfflineDetection(t *testing.T) {
 	probeResetTimer()
 
 	const (
-		base    = "github.com/sukasukasuka123/Seele/"
+		base    = "github.com/RedHuang-0622/Seele/"
 		regPath = "../config/registry.yaml"
 		cfgPath = "../config/config.yaml"
 		hubAddr = ":51062"
@@ -263,7 +263,7 @@ func TestProbe_RecoveryLatency(t *testing.T) {
 	probeResetTimer()
 
 	const (
-		base    = "github.com/sukasukasuka123/Seele/"
+		base    = "github.com/RedHuang-0622/Seele/"
 		regPath = "../config/registry.yaml"
 		cfgPath = "../config/config.yaml"
 		hubAddr = ":51063"
@@ -321,7 +321,7 @@ func TestProbe_ContinuousHealth(t *testing.T) {
 	probeResetTimer()
 
 	const (
-		base    = "github.com/sukasukasuka123/Seele/"
+		base    = "github.com/RedHuang-0622/Seele/"
 		regPath = "../config/registry.yaml"
 		cfgPath = "../config/config.yaml"
 		hubAddr = ":51064"

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	types "github.com/sukasukasuka123/Seele/types"
+	types "github.com/RedHuang-0622/Seele/types"
 )
 
 // keepRecent 在压缩时始终保留的最后 N 条非 system 消息。

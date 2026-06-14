@@ -24,10 +24,10 @@ import (
 	"sync"
 	"time"
 
-	config "github.com/sukasukasuka123/Seele/config"
-	"github.com/sukasukasuka123/Seele/core/tool_holder"
-	"github.com/sukasukasuka123/Seele/llm"
-	"github.com/sukasukasuka123/Seele/provider"
+	config "github.com/RedHuang-0622/Seele/config"
+	"github.com/RedHuang-0622/Seele/core/tool_holder"
+	"github.com/RedHuang-0622/Seele/llm"
+	"github.com/RedHuang-0622/Seele/provider"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 	registry "github.com/RedHuang-0622/microHub/service_registry"
 )
@@ -86,15 +86,16 @@ func (l *stdLogger) Errorf(f string, a ...interface{}) { log.Printf("[agent] ERR
 //	sess := a.NewSession("you are helpful", 8)
 //	reply, _ := sess.Chat(ctx, "hello")
 type Agent struct {
-	llm         *llm.ChatClient
-	tools       *tool_holder.Holder
-	hub         *hubbase.BaseHub
-	hubProvider *provider.HubProvider
-	mcpProvider *provider.MCPProvider // 延迟初始化，mcpMu 保护
-	mcpMu       sync.Mutex
-	opts        Options
-	shutdown    chan struct{}
-	healthCancel context.CancelFunc // 停止 health probe goroutine
+	llm            *llm.ChatClient
+	tools          *tool_holder.Holder
+	hub            *hubbase.BaseHub
+	hubProvider    *provider.HubProvider
+	mcpProvider    *provider.MCPProvider    // 延迟初始化，mcpMu 保护
+	inlineProvider *provider.InlineProvider // 延迟初始化，首次 RegisterInlineTool 时创建
+	mcpMu          sync.Mutex
+	opts           Options
+	shutdown       chan struct{}
+	healthCancel   context.CancelFunc // 停止 health probe goroutine
 }
 
 // New 创建 Agent 并完成初始化。
@@ -180,6 +181,17 @@ func (a *Agent) MCP() *provider.MCPProvider {
 		a.opts.Logger.Infof("MCP provider initialized")
 	}
 	return a.mcpProvider
+}
+
+// RegisterInlineTool 注册一个 Go 函数工具。首次调用时自动创建 InlineProvider。
+// 预期在启动阶段调用（单 goroutine），运行期动态注册需自备同步。
+func (a *Agent) RegisterInlineTool(name, desc string, inputSchema map[string]interface{}, handler func(ctx context.Context, argsJSON string) (string, error)) {
+	if a.inlineProvider == nil {
+		a.inlineProvider = provider.NewInlineProvider()
+		a.tools.Register(a.inlineProvider)
+		a.opts.Logger.Infof("Inline provider initialized")
+	}
+	a.inlineProvider.Register(name, desc, inputSchema, handler)
 }
 
 // Shutdown 关闭 Agent，释放资源。并发安全。
