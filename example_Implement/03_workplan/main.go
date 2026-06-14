@@ -22,19 +22,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RedHuang-0622/Seele/sdk/api"
+	"github.com/RedHuang-0622/Seele/config"
+	"github.com/RedHuang-0622/Seele/core/agent"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
 
 // =============================================================================
-// EngineFactory：将 *api.Engine 适配为 workplan.AgentFactory
+// EngineFactory：将 *agent.Agent 适配为 workplan.AgentFactory
 // =============================================================================
 //
 // WorkPlan 通过 AgentFactory 接口创建 Agent，不直接依赖 Engine 具体类型。
 // 这层薄适配是解耦的关键：测试时可以注入 MockFactory。
 
 type EngineFactory struct {
-	engine *api.Engine
+	engine *agent.Agent
 }
 
 func (f *EngineFactory) NewAgent(systemPrompt string) workplan.Agent {
@@ -366,9 +367,12 @@ func ExampleGraphInspection(factory workplan.AgentFactory) {
 // =============================================================================
 
 func main() {
-	engine, err := api.New(api.Options{
-		RegistryPath:  "../config/registry.yaml",
-		LLMConfigPath: "../config/config.yaml",
+	llmCfg, err := config.LoadConfig("../config/config.yaml")
+	if err != nil {
+		log.Fatalf("LLM config load failed: %v", err)
+	}
+	engine, err := agent.New(agent.Options{
+		LLMConfig: llmCfg,
 	})
 	if err != nil {
 		log.Fatalf("engine init failed: %v", err)

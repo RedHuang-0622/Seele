@@ -1,5 +1,12 @@
 # Seele 框架代码审查 —— 上下文控制 & WorkPlan 深度解析
 
+> ⚠️ **本文档已过时**（2026-05-20）。下述内容基于 v0.1 旧架构编写：
+> - 工具层仍为旧 4 方法 `ToolProvider`（Dispatch/HasTool），实际已重构为 1 方法 + Handler 策略
+> - 编排层引用已删除的 `core/runtime.go`，实际已拆分为 `core/agent/` + `core/tool_holder/`
+> - WorkPlan 仍为旧线性原语模型，实际底层已重构为 Graph + Edge + NodeRunner 图引擎
+>
+> **请以 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [review.md](review.md) 为准。** 本文仅保留作为上下文控制机制的参考。
+>
 > 审查日期：2026-05-20 · 聚焦：上下文控制机制、WorkPlan 工作形式、各原语回调方法
 
 ---

@@ -14,18 +14,23 @@ import (
 // =============================================================================
 
 type autoRunner struct {
-	id           string
-	systemPrompt string
-	input        string
-	toolFilter   []string
-	factory      AgentFactory
+	id            string
+	systemPrompt  string
+	input         string
+	toolFilter    []string
+	factory       AgentFactory
+	defaultPrompt string // 从 WorkPlan 继承的默认 prompt，systemPrompt 为空时使用
 }
 
 func (r *autoRunner) ID() string { return r.id }
 
 func (r *autoRunner) Run(ctx context.Context, ec *ExecutionContext) (string, error) {
 	input := renderTemplate(r.input, ec)
-	agent := r.factory.NewAgent(r.systemPrompt)
+	prompt := r.systemPrompt
+	if prompt == "" {
+		prompt = r.defaultPrompt
+	}
+	agent := r.factory.NewAgent(prompt)
 	if f, ok := agent.(interface{ SetToolFilter([]string) }); ok && len(r.toolFilter) > 0 {
 		f.SetToolFilter(r.toolFilter)
 	}
@@ -65,9 +70,10 @@ type loopRunner struct {
 	signal     *Signal
 
 	// 构建期缓存：循环体的配置
-	bodyPrompt string
-	bodyInput  string
-	factory    AgentFactory
+	bodyPrompt     string
+	bodyInput      string
+	factory        AgentFactory
+	defaultPrompt  string
 }
 
 func (r *loopRunner) ID() string { return r.id }
@@ -94,7 +100,11 @@ func (r *loopRunner) Run(ctx context.Context, ec *ExecutionContext) (string, err
 				Vars:       ec.Vars,
 			})
 		}
-		agent := r.factory.NewAgent(r.bodyPrompt)
+		prompt := r.bodyPrompt
+		if prompt == "" {
+			prompt = r.defaultPrompt
+		}
+		agent := r.factory.NewAgent(prompt)
 		out, err := agent.Chat(ctx, input)
 		if err != nil {
 			return r.signal.Get(), fmt.Errorf("loop iter %d: %w", iter, err)
@@ -120,9 +130,11 @@ func (r *loopRunner) Run(ctx context.Context, ec *ExecutionContext) (string, err
 // =============================================================================
 
 type forkRunner struct {
-	id       string
-	branches []ForkBranch
-	factory  AgentFactory
+	id            string
+	branches      []ForkBranch
+	factory       AgentFactory
+	defaultPrompt string
+	maxConcurrent int // Fork 最大并发分支数，默认 3
 }
 
 func (r *forkRunner) ID() string { return r.id }
@@ -136,8 +148,7 @@ func (r *forkRunner) Run(ctx context.Context, ec *ExecutionContext) (string, err
 
 	results := make([]branchResult, len(r.branches))
 	var wg sync.WaitGroup
-	const maxConcurrent = 3
-	sem := make(chan struct{}, maxConcurrent)
+	sem := make(chan struct{}, r.maxConcurrent)
 
 	for i, branch := range r.branches {
 		wg.Add(1)
@@ -165,7 +176,7 @@ func (r *forkRunner) Run(ctx context.Context, ec *ExecutionContext) (string, err
 			input := renderTemplate(b.Input, ec)
 			prompt := b.SystemPrompt
 			if prompt == "" {
-				prompt = "" // 继承 defaultPrompt 由 factory 处理
+				prompt = r.defaultPrompt
 			}
 			agent := r.factory.NewAgent(prompt)
 			if agent == nil {
@@ -250,13 +261,14 @@ func (r *emitRunner) Run(ctx context.Context, ec *ExecutionContext) (string, err
 // approveRunner 不通过 graph.Execute 自动执行；WorkPlan.Run() 检测到 approve 节点后
 // 在调用 runner.Run() 之前暂停。Run() 方法仅在 Resume 后执行已批准的动作。
 type approveRunner struct {
-	id           string
-	systemPrompt string
-	input        string
-	options      []ChoiceOption
-	kvs          map[string]any
-	timeout      time.Duration
-	factory AgentFactory
+	id            string
+	systemPrompt  string
+	input         string
+	options       []ChoiceOption
+	kvs           map[string]any
+	timeout       time.Duration
+	factory       AgentFactory
+	defaultPrompt string
 
 	// wp 引用父 WorkPlan，用于 prepareApprove / executeApprove
 	wp *WorkPlan
@@ -276,7 +288,11 @@ func (r *approveRunner) Run(ctx context.Context, ec *ExecutionContext) (string, 
 	default:
 		// execute
 		input := renderTemplate(r.input, ec)
-		agent := r.factory.NewAgent(r.systemPrompt)
+		prompt := r.systemPrompt
+		if prompt == "" {
+			prompt = r.defaultPrompt
+		}
+		agent := r.factory.NewAgent(prompt)
 		out, err := agent.Chat(ctx, input)
 		if err != nil {
 			return "", fmt.Errorf("executeApprove: %w", err)

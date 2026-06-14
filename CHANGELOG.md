@@ -2,6 +2,68 @@
 
 ---
 
+## v0.3.0 (2026-06-14) — 架构重构
+
+> **主题：策略模式工具层 + WorkPlan 图引擎 + SchemaOf**
+
+### 🏗️ 01 — 工具层策略模式重构
+
+ToolProvider 接口从 4 方法精简为 1 方法，引入 Handler 策略接口：
+
+```
+旧: ToolProvider{Tools, Dispatch, HasTool, ProviderName}
+新: ToolProvider{Tools} → ToolEntry{Definition + ToolHandler}
+```
+
+- 新增 `ToolHandler` 策略接口（1 方法 `Execute`）
+- 三种实现：`HubToolHandler`（gRPC）、`MCPToolHandler`（stdio/SSE）、`InlineToolHandler`（Go 函数）
+- 新增 `InlineProvider` — 纯 Go 函数工具管理（零网络开销）
+- `tool_holder` 改用 `map[string]ToolEntry` O(1) 分发，替代 O(n) 遍历
+- `_` 前缀工具隔离下沉到 `tool_holder.Tools()` 统一处理
+
+新增文件：`hub_handler.go`、`mcp_handler.go`、`inline_handler.go`、`inline_provider.go`
+
+### 🏗️ 02 — WorkPlan 图引擎抽象
+
+线性链表 → Graph + Edge + NodeRunner 图引擎：
+
+- 新增 `Graph`、`Edge`（一等公民，含 Condition/Priority/Label）、`NodeRunner` 接口、`ExecutionContext`
+- 6 种 Runner：`autoRunner`、`loopRunner`、`forkRunner`、`approveRunner`、`checkpointRunner`、`emitRunner`、`controlRunner`
+- `resolve()` 统一路由：无条件边优先 → 条件边按 Priority 匹配
+- Sugar 层完整适配：所有方法内部委托 `graph.AddNode`/`AddEdge`
+- 外部 API 零变化
+
+新增文件：`graph.go`、`runner.go`
+
+### ✨ SchemaOf — struct → JSON Schema 自动生成
+
+- `SchemaOf(v)` 用反射从 Go struct 自动生成 `map[string]interface{}` JSON Schema
+- 支持 5 个标签：`json`（属性名/omitempty）、`desc`（description）、`enum`（枚举约束）、`default`（默认值）
+- 类型自动映射 + 嵌套递归 + 指针解引用
+
+新增文件：`schema.go`、`schema_test.go`（10/10 PASS）
+
+### 🗑️ 示例重写
+
+删除旧示例，新增 4 个结构化示例 + 共享配置：
+
+```
+01_hello_seele → 02_inline_tools → 03_workplan → 04_mcp
+```
+
+### 🐛 Bug 修复
+
+- `NodeResult.Output` 从未赋值 → `FinalOutput()` 永远空（race test 发现）
+- `Shutdown()` 未停止 hub gRPC（资源泄漏）
+- `New()` 失败时 hub goroutine 泄漏 → 启动顺序重排
+- 35 个文件 `sukasukasuka123` → `RedHuang-0622` 用户名迁移
+
+### 📊 变更统计
+
+53 文件，+4095 / -1586 行
+
+---
+
 ## v0.1.0 (2026-06-06) — 首个里程碑版本
 
 > **主题：架构定型 + 资源池升级**

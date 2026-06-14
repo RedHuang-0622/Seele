@@ -24,10 +24,10 @@ import (
 	"sync"
 	"time"
 
-	config "github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/core/tool_holder"
 	"github.com/RedHuang-0622/Seele/llm"
 	"github.com/RedHuang-0622/Seele/provider"
+	types "github.com/RedHuang-0622/Seele/types"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 	registry "github.com/RedHuang-0622/microHub/service_registry"
 )
@@ -36,11 +36,11 @@ import (
 
 // Options 配置 Agent 的启动参数。
 type Options struct {
-	RegistryPath    string        // registry.yaml 路径（必填）
-	LLMConfigPath   string        // config.yaml 路径（必填）
-	HubAddr         string        // Hub gRPC 监听地址，默认 ":0"
-	HubStartupDelay time.Duration // 等待 Hub 启动时间，默认 100ms
-	ToolCallTimeOut time.Duration // 单次工具调用超时，默认 5s
+	RegistryPath    string          // registry.yaml 路径（可选，仅使用 Hub 工具时需要）
+	LLMConfig       types.LLMConfig // LLM 配置（由调用方加载后注入，不在此包内读取文件）
+	HubAddr         string          // Hub gRPC 监听地址，默认 ":0"
+	HubStartupDelay time.Duration   // 等待 Hub 启动时间，默认 100ms
+	ToolCallTimeOut time.Duration   // 单次工具调用超时，默认 5s
 	Logger          Logger
 }
 
@@ -78,9 +78,10 @@ func (l *stdLogger) Errorf(f string, a ...interface{}) { log.Printf("[agent] ERR
 //
 // 创建方式：
 //
+//	llmCfg, _ := config.LoadConfig("./config.yaml")
 //	a, err := agent.New(agent.Options{
-//	    RegistryPath:  "./registry.yaml",
-//	    LLMConfigPath: "./config.yaml",
+//	    RegistryPath: "./registry.yaml",
+//	    LLMConfig:    llmCfg,   // 由调用方加载后注入，框架不读文件
 //	})
 //	defer a.Shutdown()
 //	sess := a.NewSession("you are helpful", 8)
@@ -103,25 +104,24 @@ type Agent struct {
 // 启动流程：
 //  1. 加载 registry.yaml（skill 列表 + Hub 配置）
 //  2. 启动本地 microHub gRPC 服务
-//  3. 加载 LLM 配置，创建 ChatClient
+//  3. 使用调用方注入的 LLMConfig 创建 ChatClient
 //  4. 创建 tool_holder，注册 HubProvider
+//
 // 启动流程已重新排序（修复 B11）：配置验证前置，hub 在验证通过后才启动，
 // 避免配置加载失败时 hub goroutine 泄漏。
 func New(opts Options) (*Agent, error) {
 	opts.withDefaults()
 
-	// 1. 加载 registry（无外部副作用，失败不会泄漏）
-	if err := registry.Init(opts.RegistryPath); err != nil {
-		return nil, fmt.Errorf("agent: registry init %q: %w", opts.RegistryPath, err)
+	// 1. 加载 registry（可选——仅使用 Hub 工具时需要）
+	if opts.RegistryPath != "" {
+		if err := registry.Init(opts.RegistryPath); err != nil {
+			return nil, fmt.Errorf("agent: registry init %q: %w", opts.RegistryPath, err)
+		}
+		registry.ProbeAllOnStartup()
 	}
-	registry.ProbeAllOnStartup()
 
-	// 2. 加载 LLM 配置 — 前置验证，失败不启动 hub
-	llmCfg, err := config.LoadConfig(opts.LLMConfigPath)
-	if err != nil {
-		return nil, fmt.Errorf("agent: load llm config %q: %w", opts.LLMConfigPath, err)
-	}
-	llmClient := llm.NewChatClient(llmCfg)
+	// 2. LLM 配置由调用方注入（已加载），直接创建客户端
+	llmClient := llm.NewChatClient(opts.LLMConfig)
 
 	// 3. 创建 tool_holder + HubProvider（构造失败不启动 hub）
 	tools := tool_holder.New()
@@ -141,8 +141,12 @@ func New(opts Options) (*Agent, error) {
 	time.Sleep(opts.HubStartupDelay)
 	opts.Logger.Infof("hub listening on %s", opts.HubAddr)
 
-	healthCtx, healthCancel := context.WithCancel(context.Background())
-	registry.StartHealthProbe(healthCtx, 15*time.Second)
+	var healthCancel context.CancelFunc
+	if opts.RegistryPath != "" {
+		healthCtx, cancel := context.WithCancel(context.Background())
+		registry.StartHealthProbe(healthCtx, 15*time.Second)
+		healthCancel = cancel
+	}
 
 	a := &Agent{
 		llm:          llmClient,

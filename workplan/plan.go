@@ -20,23 +20,40 @@ type AgentFactory interface {
 	NewAgent(systemPrompt string) Agent
 }
 
-// ── 全局 WorkPlan 并发控制 ────────────────────────────────────────
+// ── WorkPlanOption 函数选项 ──────────────────────────────────────
 
-var (
-	globalWorkPlanSem   chan struct{}
-	globalWorkPlanSemMu sync.Mutex
-)
+// WorkPlanOption 是 WorkPlan 构造时的可选配置。
+type WorkPlanOption func(*WorkPlan)
 
-// SetMaxConcurrentWorkPlans 限制全局同时执行的 WorkPlan 数量。
-// 设为 0 或负数移除限制。默认不限。并发安全。
-func SetMaxConcurrentWorkPlans(n int) {
-	globalWorkPlanSemMu.Lock()
-	defer globalWorkPlanSemMu.Unlock()
-	if n <= 0 {
-		globalWorkPlanSem = nil
-		return
+// WithSemaphore 设置 WorkPlan 执行时的并发信号量。
+// 多个 WorkPlan 可共享同一个 buffered channel，实现跨实例的并发控制。
+// nil 表示不限制并发。
+func WithSemaphore(sem chan struct{}) WorkPlanOption {
+	return func(wp *WorkPlan) { wp.sem = sem }
+}
+
+// WithMaxForkConcurrency 设置 Fork 节点的最大并发分支数。默认 3。
+func WithMaxForkConcurrency(n int) WorkPlanOption {
+	return func(wp *WorkPlan) { wp.maxForkConcurrency = n }
+}
+
+// SemaphoreProvider 是 AgentFactory 的可选扩展接口。
+// 当 AgentFactory 实现此接口时，WorkPlan 可自动获取并发信号量。
+type SemaphoreProvider interface {
+	WorkPlanSemaphore() chan struct{}
+}
+
+// SemaphoreOpts 从 AgentFactory 提取并发信号量选项（如可用）。
+// 用于 workflow 函数中便捷注入：
+//
+//	wp := workplan.New(factory, gate, prompt, workplan.SemaphoreOpts(factory)...)
+func SemaphoreOpts(factory AgentFactory) []WorkPlanOption {
+	if sp, ok := factory.(SemaphoreProvider); ok {
+		if sem := sp.WorkPlanSemaphore(); sem != nil {
+			return []WorkPlanOption{WithSemaphore(sem)}
+		}
 	}
-	globalWorkPlanSem = make(chan struct{}, n)
+	return nil
 }
 
 // =============================================================================
@@ -66,9 +83,11 @@ type WorkPlan struct {
 	entryID   string          // 入口节点 ID
 	lastNodeID string         // sugar 自动连边跟踪（v0.2 新增）
 
-	defaultPrompt string
-	factory       AgentFactory
-	gate          ApprovalGate
+	defaultPrompt      string
+	factory            AgentFactory
+	gate               ApprovalGate
+	sem                chan struct{} // 可选的并发信号量，nil = 不限
+	maxForkConcurrency int           // Fork 最大并发分支数，默认 3
 
 	// ── 执行期（Run 时初始化）────────────────────────────────────
 	vars map[string]string // Emit 写入的命名变量
@@ -82,18 +101,23 @@ type WorkPlan struct {
 }
 
 // New 创建 WorkPlan。
-func New(factory AgentFactory, gate ApprovalGate, defaultPrompt string) *WorkPlan {
+func New(factory AgentFactory, gate ApprovalGate, defaultPrompt string, opts ...WorkPlanOption) *WorkPlan {
 	if gate == nil {
 		gate = &CLIApprovalGate{}
 	}
-	return &WorkPlan{
-		graph:            NewGraph(),
-		nodeIndex:        make(map[string]*node),
-		factory:          factory,
-		gate:             gate,
-		defaultPrompt: defaultPrompt,
-		execState:     StateNotStarted,
+	wp := &WorkPlan{
+		graph:              NewGraph(),
+		nodeIndex:          make(map[string]*node),
+		factory:            factory,
+		gate:               gate,
+		defaultPrompt:      defaultPrompt,
+		maxForkConcurrency: 3,
+		execState:          StateNotStarted,
 	}
+	for _, o := range opts {
+		o(wp)
+	}
+	return wp
 }
 
 // =============================================================================
@@ -105,11 +129,11 @@ func (wp *WorkPlan) Run(ctx context.Context) (*WorkPlanResult, error) {
 		return nil, err
 	}
 
-	// 全局并发限制
-	if globalWorkPlanSem != nil {
+	// 并发限制（实例级信号量，nil = 不限）
+	if wp.sem != nil {
 		select {
-		case globalWorkPlanSem <- struct{}{}:
-			defer func() { <-globalWorkPlanSem }()
+		case wp.sem <- struct{}{}:
+			defer func() { <-wp.sem }()
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -183,11 +207,11 @@ func (wp *WorkPlan) Run(ctx context.Context) (*WorkPlanResult, error) {
 
 		nodeStart := time.Now()
 		output, err := runner.Run(ctx, ec)
-		elapsed := time.Since(nodeStart)
 
 		nr := &NodeResult{
 			NodeID:    currentID,
 			Kind:      n.kind.String(),
+			Output:    output,
 			StartedAt: nodeStart,
 			EndedAt:   time.Now(),
 		}
@@ -199,10 +223,7 @@ func (wp *WorkPlan) Run(ctx context.Context) (*WorkPlanResult, error) {
 			result.TotalElapsed = time.Since(start)
 			return result, fmt.Errorf("node %q: %w", n.id, err)
 		}
-		if elapsed > 0 {
-			_ = elapsed
-		}
-		if !nr.Skipped && output != "" {
+		if output != "" {
 			ec.PrevOutput = output
 		}
 

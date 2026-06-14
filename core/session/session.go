@@ -19,12 +19,12 @@ import (
 // 并发安全性：Holder 本身不加锁，同一个 Holder 不应跨 goroutine 并发调用。
 // 如需并发，请各自创建独立 Holder。
 type Holder struct {
-	llm        types.ChatCompleter
-	tools      ToolDispatcher
-	sessionID  string
-	history    []types.Message
-	maxLoops   int
-	contextCfg history.ContextConfig
+	llm   types.ChatCompleter
+	tools ToolDispatcher
+
+	sessionID string
+	history   []types.Message
+	cfg       SessionConfig
 
 	toolFilter       []string // 工具白名单，空表示不限制
 	lastCompressLoop int      // 上次压缩所在的 loop 轮次，-1 表示尚未压缩
@@ -35,16 +35,14 @@ type Holder struct {
 }
 
 // New 创建一个新的会话 Holder。
-func New(llm types.ChatCompleter, tools ToolDispatcher, systemPrompt string, loopTimes int) *Holder {
-	if loopTimes <= 0 {
-		loopTimes = 4
-	}
+// cfg 的零值字段自动使用 DefaultSessionConfig() 默认值。
+func New(llm types.ChatCompleter, tools ToolDispatcher, systemPrompt string, cfg SessionConfig) *Holder {
+	cfg = cfg.Effective()
 	h := &Holder{
 		llm:              llm,
 		tools:            tools,
 		sessionID:        fmt.Sprintf("sess_%d", time.Now().UnixNano()),
-		maxLoops:         loopTimes,
-		contextCfg:       history.DefaultContextConfig(),
+		cfg:              cfg,
 		lastCompressLoop: -1,
 	}
 	if systemPrompt != "" {
@@ -94,22 +92,25 @@ func (h *Holder) ForceAppendHistory(msg types.Message) {
 // ── 配置 ────────────────────────────────────────────────────────────
 
 // MaxLoops 返回当前的最大 tool_call 循环次数。
-func (h *Holder) MaxLoops() int { return h.maxLoops }
+func (h *Holder) MaxLoops() int { return h.cfg.MaxLoops }
 
 // SetMaxLoops 设置单次 Chat 调用中最多允许的 tool_call 循环次数。
 func (h *Holder) SetMaxLoops(n int) {
 	if n > 0 {
-		h.maxLoops = n
+		h.cfg.MaxLoops = n
 	}
 }
 
 // ContextConfig 返回当前上下文管理配置。
-func (h *Holder) ContextConfig() history.ContextConfig { return h.contextCfg }
+func (h *Holder) ContextConfig() history.ContextConfig { return h.cfg.ContextCfg }
 
 // SetContextConfig 设置上下文管理配置。零值字段使用默认值。
 func (h *Holder) SetContextConfig(cfg history.ContextConfig) {
-	h.contextCfg = cfg.Effective()
+	h.cfg.ContextCfg = cfg.Effective()
 }
+
+// SessionConfig 返回当前会话配置的只读副本。
+func (h *Holder) SessionConfig() SessionConfig { return h.cfg }
 
 // SetToolFilter 设置工具白名单。nil 表示不限制，空切片表示无可用工具。
 func (h *Holder) SetToolFilter(filter []string) {

@@ -62,7 +62,7 @@ func TestPool_AgentPipeline(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				agent := session.New(llmClient, tools, "", 2)
+				agent := session.New(llmClient, tools, "", session.SessionConfig{MaxLoops: 2})
 				callStart := time.Now()
 				_, err := agent.Chat(ctx, fmt.Sprintf("call tool_%d", idx))
 				latencies[idx] = time.Since(callStart)
@@ -116,7 +116,7 @@ func TestPool_AgentPipeline(t *testing.T) {
 					innerWg.Add(1)
 					go func(call int) {
 						defer innerWg.Done()
-						agent := session.New(llmClient, tools, "", 2)
+						agent := session.New(llmClient, tools, "", session.SessionConfig{MaxLoops: 2})
 						idx := atomic.AddInt32(&callIdx, 1)
 						callStart := time.Now()
 						_, err := agent.Chat(ctx, fmt.Sprintf("call tool_%d", call))
@@ -253,7 +253,7 @@ func TestPool_AgentConnectionRelease(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			agent := session.New(llmClient, tools, "", 2)
+			agent := session.New(llmClient, tools, "", session.SessionConfig{MaxLoops: 2})
 			_, _ = agent.Chat(ctx, fmt.Sprintf("call tool_%d", idx))
 		}(i)
 	}
@@ -313,7 +313,7 @@ func TestPool_AgentQueueBuildup(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				agent := session.New(llmClient, tools, "", 2)
+				agent := session.New(llmClient, tools, "", session.SessionConfig{MaxLoops: 2})
 				start := time.Now()
 				_, err := agent.Chat(ctx, fmt.Sprintf("call tool_%d", idx%4))
 				lat := time.Since(start)
@@ -502,7 +502,7 @@ func TestPool_RegisterUnregisterRace(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			agent := session.New(llmClient, tools, "", 2)
+			agent := session.New(llmClient, tools, "", session.SessionConfig{MaxLoops: 2})
 			_, _ = agent.Chat(ctx, "call stable_tool")
 		}()
 	}

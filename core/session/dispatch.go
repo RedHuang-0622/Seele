@@ -24,9 +24,8 @@ func (h *Holder) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCa
 		content string
 	}
 
-	const maxConcurrent = 5
 	results := make([]dispatchResult, len(toolCalls))
-	sem := make(chan struct{}, maxConcurrent)
+	sem := make(chan struct{}, h.cfg.MaxConcurrentDispatch)
 	var wg sync.WaitGroup
 
 	for i, tc := range toolCalls {
@@ -42,7 +41,7 @@ func (h *Holder) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCa
 			if dispErr != nil {
 				log.Printf("[session.dispatch] %s tool_call %s FAILED (%dms): %v",
 					h.sessionID, tc.Function.Name, elapsed, dispErr)
-				results[i] = dispatchResult{tc: tc, content: fmt.Sprintf(`{"error":%q}`, dispErr.Error())}
+				results[i] = dispatchResult{tc: tc, content: jsonError(dispErr.Error())}
 			} else {
 				log.Printf("[session.dispatch] %s tool_call %s OK (%dms)",
 					h.sessionID, tc.Function.Name, elapsed)
@@ -59,7 +58,7 @@ func (h *Holder) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCa
 				if err != nil {
 					content := history.TruncateToolResult(
 						fmt.Sprintf(`{"error":%q}`, "approval failed: "+err.Error()),
-						h.contextCfg.MaxToolResultChars)
+						h.cfg.ContextCfg.MaxToolResultChars)
 					h.history = append(h.history, types.Message{
 						Role:       "tool",
 						ToolCallID: r.tc.ID,
@@ -67,7 +66,7 @@ func (h *Holder) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCa
 						Content:    &content,
 					})
 				} else {
-					content := history.TruncateToolResult(final, h.contextCfg.MaxToolResultChars)
+					content := history.TruncateToolResult(final, h.cfg.ContextCfg.MaxToolResultChars)
 					h.history = append(h.history, types.Message{
 						Role:       "tool",
 						ToolCallID: r.tc.ID,
@@ -79,7 +78,7 @@ func (h *Holder) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCa
 			}
 		}
 
-		content := history.TruncateToolResult(r.content, h.contextCfg.MaxToolResultChars)
+		content := history.TruncateToolResult(r.content, h.cfg.ContextCfg.MaxToolResultChars)
 		h.history = append(h.history, types.Message{
 			Role:       "tool",
 			ToolCallID: r.tc.ID,
@@ -91,18 +90,17 @@ func (h *Holder) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCa
 
 // resolveApproval 处理单个审批请求（含嵌套审批循环）。
 func (h *Holder) resolveApproval(ctx context.Context, approvalJSON, questionID string) (string, error) {
-	const maxApprovalLoops = 10
-
 	current := approvalJSON
 	currentQID := questionID
 
-	for loop := 0; loop < maxApprovalLoops; loop++ {
+	for loop := 0; loop < h.cfg.MaxApprovalLoops; loop++ {
 		choice, err := h.OnApproval(ctx, current)
 		if err != nil {
 			return "", fmt.Errorf("collect choice: %w", err)
 		}
 
-		decideArgs := fmt.Sprintf(`{"question_id":%q,"choice":%q}`, currentQID, choice)
+		decideArgsBytes, _ := json.Marshal(map[string]string{"question_id": currentQID, "choice": choice})
+		decideArgs := string(decideArgsBytes)
 		result, dispErr := h.tools.Dispatch(ctx, "_decide", decideArgs)
 		if dispErr != nil {
 			return "", fmt.Errorf("dispatch _decide: %w", dispErr)
@@ -117,7 +115,14 @@ func (h *Holder) resolveApproval(ctx context.Context, approvalJSON, questionID s
 		return result, nil
 	}
 
-	return "", fmt.Errorf("nested approval exceeded max loops (%d)", maxApprovalLoops)
+	return "", fmt.Errorf("nested approval exceeded max loops (%d)", h.cfg.MaxApprovalLoops)
+}
+
+// jsonError 将错误信息安全地编码为 JSON {"error":"..."} 格式。
+// 使用 json.Marshal 而非 %q，确保控制字符和特殊符号正确转义为合法 JSON。
+func jsonError(errMsg string) string {
+	b, _ := json.Marshal(struct{ Error string }{Error: errMsg})
+	return string(b)
 }
 
 // parseApprovalQuestionID 检测工具返回是否包含 awaiting_approval 状态。

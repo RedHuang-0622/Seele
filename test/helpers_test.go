@@ -277,7 +277,7 @@ func newSessionFactory(llmClient *llm.ChatClient, tools *tool_holder.Holder) *se
 }
 
 func (f *sessionFactory) NewAgent(systemPrompt string) workplan.Agent {
-	return session.New(f.Llm, f.Tools, systemPrompt, 1)
+	return session.New(f.Llm, f.Tools, systemPrompt, session.SessionConfig{MaxLoops: 1})
 }
 
 // newTestTools 快速创建一个带 LLM 的 tool_holder（用于 Fork 等多 Runtime 场景）。

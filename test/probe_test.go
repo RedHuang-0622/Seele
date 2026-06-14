@@ -21,8 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RedHuang-0622/Seele/config"
+	"github.com/RedHuang-0622/Seele/core/agent"
 	types "github.com/RedHuang-0622/Seele/types"
-	"github.com/RedHuang-0622/Seele/sdk/api"
 )
 
 // =============================================================================
@@ -104,16 +105,20 @@ func waitTCPPort(t *testing.T, addr string, timeout time.Duration) {
 // Engine 快速创建（测试用）
 // =============================================================================
 
-func newProbeEngine(t *testing.T, regPath, cfgPath, hubAddr string) *api.Engine {
+func newProbeEngine(t *testing.T, regPath, cfgPath, hubAddr string) *agent.Agent {
 	t.Helper()
-	eng, err := api.New(api.Options{
+	llmCfg, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("config.LoadConfig(%q): %v", cfgPath, err)
+	}
+	eng, err := agent.New(agent.Options{
 		RegistryPath:    regPath,
-		LLMConfigPath:   cfgPath,
+		LLMConfig:       llmCfg,
 		HubAddr:         hubAddr,
 		ToolCallTimeOut: 3 * time.Second,
 	})
 	if err != nil {
-		t.Fatalf("api.New: %v", err)
+		t.Fatalf("agent.New: %v", err)
 	}
 	log.Printf("[%.2fs] ENGINE ready, hub=%s", probeElapsed(), hubAddr)
 	return eng

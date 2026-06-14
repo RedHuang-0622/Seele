@@ -22,16 +22,20 @@ import (
 	"log"
 	"time"
 
+	"github.com/RedHuang-0622/Seele/config"
+	"github.com/RedHuang-0622/Seele/core/agent"
 	"github.com/RedHuang-0622/Seele/provider"
-	"github.com/RedHuang-0622/Seele/sdk/api"
 )
 
 func main() {
 	ctx := context.Background()
 
-	engine, err := api.New(api.Options{
-		RegistryPath:  "../config/registry.yaml",
-		LLMConfigPath: "../config/config.yaml",
+	llmCfg, err := config.LoadConfig("../config/config.yaml")
+	if err != nil {
+		log.Fatalf("LLM config load failed: %v", err)
+	}
+	engine, err := agent.New(agent.Options{
+		LLMConfig: llmCfg,
 	})
 	if err != nil {
 		log.Fatalf("engine init failed: %v", err)

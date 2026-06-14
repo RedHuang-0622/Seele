@@ -24,10 +24,15 @@ core/
     ├── provider.go           ← Register() / Unregister()
     └── tools.go              ← Tools() / Dispatch()（含瞬时重试）
 
-provider/                     ← ToolProvider 接口 + 两个具体实现
-├── tool_provider.go          ← ToolProvider 接口定义 + ErrToolUnavailable
+provider/                     ← ToolProvider 接口 (1方法) + 三个具体实现
+├── tool_provider.go          ← ToolProvider + ToolHandler + ToolEntry + ErrToolUnavailable
 ├── Hub_provider.go           ← HubProvider: 封装 microHub gRPC 工具
+├── hub_handler.go            ← HubToolHandler: gRPC 执行策略
 ├── mcp_provider.go           ← MCPProvider: 封装 MCP 协议工具（stdio/sse）
+├── mcp_handler.go            ← MCPToolHandler: MCP 执行策略
+├── inline_provider.go        ← InlineProvider: Go 函数工具管理
+├── inline_handler.go         ← InlineToolHandler: Go 函数执行策略
+├── schema.go                 ← SchemaOf: struct→JSON Schema 反射生成
 └── hub_router.go             ← hubRouter: microHub 的路由器实现
 
 types/model.go                ← 纯数据结构（零内部依赖）
@@ -37,13 +42,15 @@ history/                      ← 上下文管理
 └── context_limit.go          ← Token 估算 + 结果截断 + 配置
 config/loader.go              ← YAML 配置加载
 
-workplan/                     ← 声明式工作流引擎（零内部依赖）
+workplan/                     ← 声明式工作流引擎（v0.3 底层为图引擎）
 ├── plan.go                   ← WorkPlan 定义 + Run/Resume
-├── node.go                   ← Node, Question, ChoiceOption
-├── primitive.go              ← 9 种执行原语
-├── sugar.go                  ← 声明式 DSL（Auto/If/Loop/Fork...）
+├── graph.go                  ← Graph + Edge + ExecutionContext + NodeRunner
+├── runner.go                 ← 6 种 NodeRunner 实现
+├── sugar.go                  ← 声明式 DSL（Auto/If/Loop/Fork... — 构建 Graph）
+├── node.go                   ← node/Signal/SwitchCase/ForkBranch/NodeResult
 ├── gate.go                   ← ApprovalGate 接口 + 3 种实现
-└── validate.go               ← 拓扑校验（DFS 三色环检测）
+├── validate.go               ← 拓扑校验（DFS 三色环检测）
+└── primitive.go              ← 旧执行引擎（待废弃，已迁至 runner.go）
 
 sdk/
 ├── api/seele_api.go          ← 类型别名层（Engine = agent.Agent）
@@ -114,15 +121,16 @@ sdk/
 ```go
 // core/agent/agent.go
 type Agent struct {
-    llm         *llm.ChatClient          // LLM 客户端（Agent 直接持有，所有 session 共享）
-    tools       *tool_holder.Holder      // 工具注册中心
-    hub         *hubbase.BaseHub         // microHub gRPC 服务
-    hubProvider *provider.HubProvider    // Hub 工具适配器
-    mcpProvider *provider.MCPProvider    // MCP 工具适配器（延迟初始化，mcpMu 保护）
-    mcpMu       sync.Mutex              // 保护 mcpProvider 读写，与 Shutdown 互斥
-    opts        Options
-    shutdown    chan struct{}            // 关闭信号，与 MCP() 协作防 nil dereference
-    healthCancel context.CancelFunc     // 停止 health probe goroutine
+    llm            *llm.ChatClient          // LLM 客户端（Agent 直接持有，所有 session 共享）
+    tools          *tool_holder.Holder      // 工具注册中心
+    hub            *hubbase.BaseHub         // microHub gRPC 服务
+    hubProvider    *provider.HubProvider    // Hub 工具适配器
+    mcpProvider    *provider.MCPProvider    // MCP 工具适配器（延迟初始化，mcpMu 保护）
+    inlineProvider *provider.InlineProvider // 内联工具（延迟初始化）
+    mcpMu          sync.Mutex              // 保护 mcpProvider 读写，与 Shutdown 互斥
+    opts           Options
+    shutdown       chan struct{}            // 关闭信号
+    healthCancel   context.CancelFunc       // 停止 health probe goroutine
 }
 
 // 构造
@@ -137,6 +145,9 @@ a.QuickChatStream(ctx, prompt, input, onChunk) (string, error)
 a.Hub()  *provider.HubProvider   // Skills / Retire / Restore
 a.MCP()  *provider.MCPProvider   // Attach / Detach / Refresh（延迟创建，并发安全）
 a.Tools() *tool_holder.Holder    // 工具注册中心
+
+// 内联工具注册（v0.3 新增）
+a.RegisterInlineTool(name, desc, inputSchema, handler)
 ```
 
 ### 3.2 会话层 Holder
@@ -172,14 +183,16 @@ type ToolDispatcher interface {
 ```go
 // core/tool_holder/holder.go
 type Holder struct {
+    mu                sync.RWMutex
     providers         []provider.ToolProvider
+    toolMap           map[string]provider.ToolEntry   // v0.3: O(1) 分发
     DispatchRetries   int           // 默认 3
     DispatchRetryDelay time.Duration // 默认 2s
 }
 
 // 实现 session.ToolDispatcher
-h.Tools() []types.Tool          // 聚合所有 provider
-h.Dispatch(ctx, name, argsJSON) // 路由 + 瞬时重试
+h.Tools() []types.Tool              // 聚合所有 provider，过滤 _ 前缀
+h.Dispatch(ctx, name, argsJSON)     // O(1) map 查找 + 瞬时重试
 ```
 
 ### 3.4 Provider 层
@@ -188,14 +201,22 @@ h.Dispatch(ctx, name, argsJSON) // 路由 + 瞬时重试
 // provider/tool_provider.go
 type ToolProvider interface {
     ProviderName() string
-    Tools() []types.Tool
-    Dispatch(ctx, name, argsJSON string) (string, error)
-    HasTool(name string) bool
+    Tools() []ToolEntry              // v0.3: 1 方法替代旧 4 方法
 }
 
-// HubProvider  — 封装 microHub service_registry
-// MCPProvider  — 封装 MCP 协议（stdio/sse）
-// hubRouter    — 实现 hubbase.HubHandler（gRPC 路由）
+type ToolEntry struct {
+    Definition types.Tool
+    Handler    ToolHandler
+}
+
+type ToolHandler interface {
+    Execute(ctx context.Context, argsJSON string) (string, error)
+}
+
+// HubProvider     — 封装 microHub service_registry（Retire/Restore/Skills）
+// MCPProvider     — 封装 MCP 协议（stdio/sse，Attach/Detach/Refresh）
+// InlineProvider  — Go 函数工具（Register/Unregister，零网络开销）
+// hubRouter       — 实现 hubbase.HubHandler（gRPC 路由）
 ```
 
 ---
@@ -254,77 +275,80 @@ AgentHandler.Execute(_decide)
 ## 五、关键设计决策
 
 | 决策 | 位置 | 理由 |
-|------|------|------|
-| LLM 由 Agent 直接持有 | `core/agent/agent.go` | Runtime 不再做中间人，消除不必要的委托 |
+| ---- | ---- | ---- |
+| LLM 由 Agent 直接持有 | `core/agent/agent.go` | 消除不必要的 Runtime 中间层 |
 | 三层命名区分 | `Agent` / `session.Holder` / `tool_holder.Holder` | 避免一个 "Agent" 包揽三种含义 |
 | 两个接口独立注入 | `session.Holder{llm, tools}` | 测试时可独立 mock LLM 和工具 |
-| 瞬时重试下沉到 tool_holder | `core/tool_holder/tools.go` | Agent 不关心重试细节，换 mock 也不丢语义 |
+| 瞬时重试下沉到 tool_holder | `core/tool_holder/tools.go` | Agent 不关心重试细节 |
 | hubRouter 下沉到 provider | `provider/hub_router.go` | gRPC 协议细节不泄漏到编排层 |
-| `_` 前缀工具对 LLM 不可见 | `provider/Hub_provider.go` | 框架内部工具不应被 LLM 自主调用 |
-| 审批结果不入 LLM context | `core/session/dispatch.go` | 避免浪费 token，LLM 只看到最终结果 |
-| 无循环依赖 | `workplan/` 定义自己的 Agent 接口 | WorkPlan 不依赖 core，core 不依赖 WorkPlan |
+| `_` 前缀工具对 LLM 不可见 | `core/tool_holder/tools.go` | 框架内部工具不被 LLM 自主调用 |
+| 审批结果不入 LLM context | `core/session/dispatch.go` | 避免浪费 token |
+| 无循环依赖 | `workplan/` 定义自己的 Agent 接口 | WorkPlan 不依赖 core |
 | Prompt 文件热加载 | `sdk/cli/prompt_loader.go` | fsnotify 监听，修改即生效 |
-| MCP 延迟初始化 | `core/agent/agent.go MCP()` | 按需创建，减少非 MCP 场景的启动成本 |
-| shutdown channel 机制 | `core/agent/agent.go` | MCP() 检测 shutdown 状态，避免 Shutdown 期间创建新 provider |
-| health probe 可取消 | `core/agent/agent.go healthCancel` | Shutdown 时通过 context cancel 停止 goroutine |
+| MCP 延迟初始化 | `core/agent/agent.go MCP()` | 按需创建，减少启动成本 |
+| shutdown channel 机制 | `core/agent/agent.go` | MCP() 检测 shutdown 状态 |
+| health probe 可取消 | `core/agent/agent.go healthCancel` | Shutdown 时停止 goroutine |
+| **ToolProvider 1 方法** | `provider/tool_provider.go` | v0.3: 策略模式，Handler 分离执行 |
+| **ToolEntry = Def + Handler** | `provider/tool_provider.go` | v0.3: 统一抽象，O(1) map 分发 |
+| **SchemaOf 自动生成** | `provider/schema.go` | v0.3: 告别手写 map[string]interface{} |
+| **Graph + Edge + NodeRunner** | `workplan/graph.go` | v0.3: 图引擎替代线性链表 |
 
 ---
 
 ## 六、已知问题
 
-### Bug（需修复）
+### Bug（待修复）
 
 | # | 严重度 | 问题 | 位置 |
 |---|--------|------|------|
-| B1 | 🔴 | MCP `Attach()` 失败时 stdio 子进程泄漏（client 已创建但 Initialize 失败后未 Close） | `provider/mcp_provider.go:93-116` |
-| B2 | 🔴 | `HubProvider.HasTool()` 对 `_` 前缀工具返回 false，导致 `tool_holder.Dispatch("_decide", ...)` 路由失败 — REPL 审批恢复路径（`resolveApproval` → `h.tools.Dispatch("_decide")`）无法找到提供者 | `provider/Hub_provider.go:107-118` |
-| B3 | 🔴 | `Chat()` 中 `return *msg.Content` — 若 LLM 返回 tool_calls=[] 但 Content=nil 会 panic | `core/session/chat.go:49` |
-| B4 | 🟡 | `chat.go` 压缩逻辑和主循环体在 Chat/ChatStream 中重复 ~80%（压缩检查块完全相同，主循环结构高度相似） | `core/session/chat.go` |
-| B5 | 🟡 | `LoadAppConfig` 不对 LLM 字段设默认值（`LoadConfig` 设了，但 `LoadAppConfig` 只设 Hub 和 Registry） | `config/loader.go:69-92` |
-| B6 | 🟡 | `bufio.Scanner` 与 `handleApproval` 中的第二个 scanner 共享底层 `in` reader，第二个 scanner 可能消耗主 scanner 的缓冲数据 | `sdk/cli/repl.go:73,179` |
-| B7 | 🟡 | `CLIApprovalGate.Ask` goroutine 泄漏：ctx cancel 后 goroutine 仍阻塞 `fmt.Scanln` | `workplan/gate.go:197-201` |
-| B8 | 🟡 | `SetMaxConcurrentWorkPlans` 无锁修改全局变量 `globalWorkPlanSem`，并发调用存在 data race | `workplan/plan.go:29-35` |
-| B9 | 🟡 | `Skills()` Description 字段赋值为 `t.Method` 而非 `t.Description` | `provider/Hub_provider.go:203` |
-| B10 | 🟡 | `Temperature=0` 被强制覆盖为 1.0，无法使用确定性输出（`Complete` 和 `doStreamRequest` 两处） | `llm/chat_client.go:66-68, 176-179` |
-| B11 | 🔴 | `New()` 失败时 hub goroutine 泄漏 — `config.LoadConfig` 或 `NewHubProvider` 失败时，已启动的 hub 协程未被停止 | `core/agent/agent.go:117-138` |
-| B12 | 🔴 | `primitiveFork` goroutine panic → 死锁 — `factory.NewAgent()` 返回 nil 时 `agent.Chat()` panic，goroutine 无 recover，`wg.Wait()` 永久阻塞 | `workplan/primitive.go:328-338` |
-| B13 | 🟡 | `AgentHandler.Execute` 和 `handleDecide` goroutine 无 panic recovery — 工作流 panic 时 channel 空关闭，调用方收到 nil | `sdk/cluster/handler.go:119, 123-148` |
-| B14 | 🟡 | `ChatStream` SSE 读取错误顺序 — `readErr` 在 line 被处理后检查，异常断开时可能处理截断的数据帧 | `llm/chat_client.go:339-363` |
+| B1 | 🔴 | MCP `Attach()` 失败时 stdio 子进程泄漏（client 已创建但 Initialize 失败后未 Close） | `provider/mcp_provider.go` |
+| B2 | 🔴 | `Shutdown()` 未停止 hub gRPC 服务 — goroutine 泄漏 | `core/agent/agent.go` |
+| B3 | 🟡 | `chat.go` 压缩逻辑和主循环体在 Chat/ChatStream 中重复 ~80% | `core/session/chat.go` |
+| B4 | 🟡 | `bufio.Scanner` 与 `handleApproval` 中的第二个 scanner 共享底层 `in` reader | `sdk/cli/repl.go` |
+| B5 | 🟡 | `CLIApprovalGate.Ask` goroutine 泄漏：ctx cancel 后 goroutine 仍阻塞 `fmt.Scanln` | `workplan/gate.go` |
+| B6 | 🟡 | `Temperature=0` 被强制覆盖为 1.0，无法使用确定性输出 | `llm/chat_client.go` |
+| B7 | 🟡 | `ChatStream` SSE 读取错误顺序 — `readErr` 在 line 被处理后检查 | `llm/chat_client.go` |
+| B8 | 🟡 | MCP handler 将业务错误包装为 `ErrToolUnavailable` | `provider/mcp_handler.go` |
+| B9 | 🟡 | `EstimateTokens = len(text)/3` 对中英文估算都不精确 | `history/context_limit.go` |
 
 ### 设计改进（建议）
 
 | # | 问题 | 位置 |
 |---|------|------|
-| D1 | `EngineFactory` 命名不当 — 实际创建的是 Session，应命名为 `SessionFactory` | `sdk/cluster/harness.go:74` |
-| D2 | `approvePlanPrompt()` 死代码 — `prepareApprove` 内联了相同逻辑，未调用该方法 | `workplan/node.go:396` vs `workplan/primitive.go:88` |
-| D3 | `chatCompletionRequest` 和 `chatCompletionStreamRequest` 仅差一个 `Stream bool` 字段 | `llm/chat_client.go:37,125` |
-| D4 | `LoopOpt` 和 `NodeOpt` 是相同的 `func(*node)` 类型（类型别名不会增加类型安全） | `workplan/sugar.go:27,253` |
-| D5 | `Skills()` 和 `Tools()` 的过滤逻辑重复（offline 检查、retired 过滤） | `provider/Hub_provider.go` |
-| D6 | `mu2` 命名不明确，应改为 `indexMu` | `provider/Hub_provider.go:40` |
-| D7 | `ToolCallTimeOut` → 应为 `ToolCallTimeout`（拼写错误） | `core/agent/agent.go:43` |
-| D8 | `panic()` 在 SDK 库代码中 — 应返回 error 由调用方处理 | `sdk/cli/repl.go:37` |
-| D9 | Hub 就绪检查用 `time.Sleep` 而非健康检查（`opts.HubStartupDelay` 粗暴等待） | `core/agent/agent.go:123` |
-| D10 | 压缩 prompt 硬编码英文，不支持多语言 | `history/context_compress.go:17` |
-| D11 | `LLMConfig` godoc 仍说 "对应 config.yaml 的 agent 块"，实际已改为 `llm:` | `types/model.go:82` |
-| D12 | `maxConcurrentFork = 3` 硬编码，无配置入口 | `workplan/primitive.go:300` |
+| D1 | 两套执行引擎并存（`primitive.go` + `runner.go`），应统一 | `workplan/` |
+| D2 | `graph.Execute()` 完美实现但无人调用，`plan.go:Run()` 手动调度 | `workplan/` |
+| D3 | `sdk/api/seele_api.go` 纯 type alias，零抽象价值 | `sdk/api/` |
+| D4 | `EngineFactory` 命名不当 — 实际创建 Session | `sdk/cluster/harness.go` |
+| D5 | `go 1.25.5` 版本过高，应降为 1.23 | `go.mod` |
+| D6 | `go-sql-driver/mysql` 依赖但全项目零引用 | `go.mod` |
+| D7 | `ToolCallTimeOut` → 应为 `ToolCallTimeout`（拼写错误） | `core/agent/agent.go` |
+| D8 | 压缩 prompt 硬编码英文，不支持多语言 | `history/context_compress.go` |
+| D9 | `maxConcurrentFork = 3` 硬编码，无配置入口 | `workplan/runner.go` |
+| D10 | `approvePlanPrompt()` 死代码 — 内联了相同逻辑但未调用 | `workplan/node.go` |
 
-### 已修复
+### 已修复（v0.3 重构）
 
 | # | 问题 | 状态 |
 |---|------|------|
-| ✅ | `MCP()` 无锁并发 — 新增 `mcpMu` + `shutdown` channel 防护 | 已修复 |
-| ✅ | `Shutdown()` 无锁访问 `mcpProvider` — 新增 `mcpMu.Lock()` 保护 | 已修复 |
-| ✅ | `ctx.Background()` health probe goroutine 不可停止 — 新增 `healthCancel` 并在 Shutdown 中调用 | 已修复 |
-| ✅ | `buildToolCalls` 非连续索引导致零值 ToolCall — 改用 append + index check | 已修复 |
-| ✅ | `parseApprovalQuestionID` 字符串解析 JSON → 改用 `json.Unmarshal` | 已修复 |
-| ✅ | `ChatStream` tool_call 时 onChunk 静默丢弃 → 现在推送思考文本到 onChunk | 已修复 |
-| ✅ | `resolveRoute` TOCTOU 竞态 — 单次 RLock 完成解析和查找 | 已修复 |
-| ✅ | 废弃别名清理 — 删除 3 个方法 | 已修复 |
-| ✅ | `AppConfig.LLM` yaml 标签 `agent` → `llm` | 已修复 |
+| ✅ | ToolProvider 4 方法接口臃肿 → 1 方法 + Handler 策略模式 | 已修复 |
+| ✅ | tool_holder O(n) 遍历 → map O(1) 分发 | 已修复 |
+| ✅ | `_` 前缀工具 dispatch 路由失败 (B2) | 已修复 |
+| ✅ | WorkPlan 线性链表 → Graph + Edge 图引擎 | 已修复 |
+| ✅ | `NodeResult.Output` 从未赋值 → FinalOutput 永远空 | 已修复 |
+| ✅ | `MCP()` 无锁并发 → mcpMu + shutdown channel | 已修复 |
+| ✅ | `Shutdown()` 无锁访问 `mcpProvider` | 已修复 |
+| ✅ | health probe goroutine 不可停止 → healthCancel | 已修复 |
+| ✅ | `RegisterInlineTool` + `SchemaOf` API 新增 | 已修复 |
+| ✅ | B11 `New()` 失败时 hub goroutine 泄漏 | 已修复 |
+| ✅ | B3 `Chat()` nil Content panic | 已修复 |
+| ✅ | B8 `SetMaxConcurrentWorkPlans` data race | 已修复 |
+| ✅ | B12 `primitiveFork` nil agent panic → forkRunner 加了 recovery | 已修复 |
+| ✅ | B13 `AgentHandler` goroutine 无 recovery → forkRunner 加了 panic recovery | 部分修复 |
 | ✅ | `config.LoadConfig` 默认值 — 补 MaxTokens/Timeout/Temperature | 已修复 |
-| ✅ | `tool_holder.Dispatch` 重试硬编码 — 改为 `DispatchRetries`/`DispatchRetryDelay` 字段可配置 | 已修复 |
-| ✅ | `SubagentRef` dead code — 已删除 | 已修复 |
-| ✅ | `sdk/api/` Deprecated 噪声 — 已清理 | 已修复 |
+| ✅ | `tool_holder.Dispatch` 重试可配置 | 已修复 |
+| ✅ | `AppConfig.LLM` yaml 标签 `agent` → `llm` | 已修复 |
+| ✅ | `parseApprovalQuestionID` → `json.Unmarshal` | 已修复 |
+| ✅ | 废弃别名 + dead code 清理 | 已修复 |
 
 ---
 
@@ -369,21 +393,21 @@ AgentHandler.Execute(_decide)
 ## 八、文件统计
 
 | 包 | 文件数 | 代码行（估算） | 职责 |
-|----|--------|---------------|------|
+| ---- | ------ | -------------- | ---- |
 | `core/agent/` | 3 | ~350 | 编排 |
 | `core/session/` | 4 | ~530 | 会话 |
-| `core/tool_holder/` | 3 | ~140 | 工具注册 |
-| `provider/` | 4 | ~750 | 工具适配 |
+| `core/tool_holder/` | 3 | ~150 | 工具注册+O(1)分发 |
+| `provider/` | 9 | ~1100 | 工具适配+SchemaOf |
 | `types/` | 1 | ~95 | 类型定义 |
 | `llm/` | 1 | ~370 | HTTP 客户端 |
 | `history/` | 2 | ~360 | 上下文管理 |
 | `config/` | 1 | ~80 | 配置加载 |
-| `workplan/` | 6 | ~2000 | 工作流引擎 |
+| `workplan/` | 8 | ~2200 | 工作流图引擎 |
 | `sdk/api/` | 1 | ~35 | 类型别名 |
 | `sdk/cli/` | 2 | ~300 | REPL |
 | `sdk/cluster/` | 2 | ~420 | 部署框架 |
 
-**总计：~5400 行核心框架代码**（不含测试、示例、工具实现）
+**总计：~6000 行核心框架代码**（不含测试、示例、工具实现）
 
 ---
 

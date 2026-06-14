@@ -9,8 +9,8 @@ import (
 
 // NewSession 创建一个绑定到本 Agent 工具集的对话会话。
 // prompt 为空时不注入 system 消息。
-func (a *Agent) NewSession(prompt string, loops int) *session.Holder {
-	return session.New(a.llm, a.tools, prompt, loops)
+func (a *Agent) NewSession(prompt string, maxLoops int) *session.Holder {
+	return session.New(a.llm, a.tools, prompt, session.SessionConfig{MaxLoops: maxLoops})
 }
 
 // QuickChat 一次性对话，不保留历史。

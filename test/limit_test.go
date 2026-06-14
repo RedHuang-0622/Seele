@@ -140,7 +140,7 @@ func newTestFixture() (*llm.ChatClient, *tool_holder.Holder, *mockLLMServer, *co
 
 // newTestSession 快速创建一个测试会话。
 func newTestSession(llmClient *llm.ChatClient, tools *tool_holder.Holder, prompt string, loops int) *session.Holder {
-	return session.New(llmClient, tools, prompt, loops)
+	return session.New(llmClient, tools, prompt, session.SessionConfig{MaxLoops: loops})
 }
 
 // =============================================================================

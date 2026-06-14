@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/RedHuang-0622/Seele/core/session"
@@ -16,33 +15,23 @@ import (
 // 编译期断言：*Holder 实现了 session.ToolDispatcher。
 var _ session.ToolDispatcher = (*Holder)(nil)
 
-// Tools 聚合所有已注册 provider 的工具列表。
-// 每次调用实时重建 map（支持热更新），统一过滤 _ 前缀内部工具。
+// Tools 返回所有已注册工具的 LLM 可见定义列表。
+//
+// v0.4 优化：通过 atomic.Pointer 读取预过滤的 toolList，零锁开销。
+// 写路径（Register/Unregister）分配新 holderState 后原子替换指针，
+// 读路径始终看到一致的快照。
 func (h *Holder) Tools() []types.Tool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.rebuildLocked()
-
-	var result []types.Tool
-	for name, entry := range h.toolMap {
-		if strings.HasPrefix(name, "_") {
-			continue // 框架内部工具，LLM 不可见
-		}
-		result = append(result, entry.Definition)
-	}
-	return result
+	return h.state.Load().toolList
 }
 
 // Dispatch 通过 map 查找 handler 并执行。O(1) 路由，策略模式。
 //
+// v0.4 优化：通过 atomic.Pointer 读取 toolMap，零锁开销。
 // 瞬时错误（provider.ErrToolUnavailable）自动重试。
 // 业务错误直接返回，不重试。
 func (h *Holder) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
-	h.mu.RLock()
-	entry, ok := h.toolMap[name]
-	h.mu.RUnlock()
-
+	st := h.state.Load()
+	entry, ok := st.toolMap[name]
 	if !ok {
 		return "", fmt.Errorf("tool_holder.dispatch: tool %q not found in any provider", name)
 	}

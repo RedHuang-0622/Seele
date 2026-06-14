@@ -1,6 +1,7 @@
 # Seele 设计文档
 
 > 架构讲解与设计决策 · 生成时间: 2026-06-06
+> ⚠️ 本文档集基于 **v0.1 架构**。v0.3（2026-06-14）重构了工具层（策略模式）和 WorkPlan 底层（图引擎），详见 [CHANGELOG.md](../../CHANGELOG.md) 和 [ARCHITECTURE.md](../../ARCHITECTURE.md)。
 
 ## 文档索引
 

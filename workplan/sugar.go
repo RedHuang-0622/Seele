@@ -1,6 +1,7 @@
 package workplan
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -49,11 +50,12 @@ func (wp *WorkPlan) Auto(id, input string, opts ...NodeOpt) *WorkPlan {
 	applyOpts(n, opts)
 
 	runner := &autoRunner{
-		id:           n.id,
-		systemPrompt: n.systemPrompt,
-		input:        n.input,
-		toolFilter:   n.toolFilter,
-		factory: wp.factory,
+		id:            n.id,
+		systemPrompt:  n.systemPrompt,
+		input:         n.input,
+		toolFilter:    n.toolFilter,
+		factory:       wp.factory,
+		defaultPrompt: wp.defaultPrompt,
 	}
 	return wp.registerNode(n, runner)
 }
@@ -79,6 +81,7 @@ func (wp *WorkPlan) Approve(id, input string, options []ChoiceOption, opts ...No
 		kvs:            n.approveKVS,
 		timeout:        n.approveTimeout,
 		factory:        wp.factory,
+		defaultPrompt:  wp.defaultPrompt,
 
 		wp:             wp,
 	}
@@ -240,6 +243,7 @@ func (wp *WorkPlan) Switch(id string, cases ...SwitchCase) *WorkPlan {
 	}
 
 	for i, c := range cases {
+		c := c // 捕获循环变量（Go 闭包语义：for range 复用同一变量地址）
 		wp.graph.AddEdge(Edge{
 			From: nodeID, To: c.NextID, Priority: i, Label: "case",
 			Condition: func(ec *ExecutionContext) bool {
@@ -297,13 +301,14 @@ func (wp *WorkPlan) Loop(id, bodyID string, opts ...LoopOpt) *Signal {
 
 	nodeID := n.id
 	runner := &loopRunner{
-		id:         nodeID,
-		until:      n.loopUntil,
-		maxIter:    n.loopMaxIter,
-		signal:     sig,
-		bodyPrompt: ternaryStr(bodyNode != nil, bodyNode.systemPrompt, ""),
-		bodyInput:  ternaryStr(bodyNode != nil, bodyNode.input, ""),
-		factory:    wp.factory,
+		id:            nodeID,
+		until:         n.loopUntil,
+		maxIter:       n.loopMaxIter,
+		signal:        sig,
+		bodyPrompt:    ternaryStr(bodyNode != nil, bodyNode.systemPrompt, ""),
+		bodyInput:     ternaryStr(bodyNode != nil, bodyNode.input, ""),
+		factory:       wp.factory,
+		defaultPrompt: wp.defaultPrompt,
 
 	}
 	wp.graph.AddNode(runner)
@@ -347,9 +352,11 @@ func (wp *WorkPlan) Fork(id string, branches []ForkBranch, opts ...NodeOpt) *Wor
 	applyOpts(n, opts)
 
 	runner := &forkRunner{
-		id:       n.id,
-		branches: n.forkBranches,
-		factory:  wp.factory,
+		id:            n.id,
+		branches:      n.forkBranches,
+		factory:       wp.factory,
+		defaultPrompt: wp.defaultPrompt,
+		maxConcurrent: wp.maxForkConcurrency,
 	}
 	return wp.registerNode(n, runner)
 }
@@ -387,7 +394,7 @@ func (wp *WorkPlan) resolveID(id, prefix string) string {
 	if id != "" {
 		return id
 	}
-	return wp.primitiveAutoID(prefix)
+	return fmt.Sprintf("%s_%d", prefix, len(wp.nodes)+1)
 }
 
 func ternaryStr(cond bool, a, b string) string {

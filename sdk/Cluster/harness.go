@@ -11,12 +11,11 @@ package cluster
 //
 //	func main() {
 //	    agent.Run(agent.WorkflowMap{
-//	        "model_report": workflows.ModelReportWorkflow,
+//	        "my_workflow": workflows.MyWorkflow,
 //	    }, agent.HarnessConfig{
-//	        Name:         "model_workflow",
+//	        Name:         "my_agent",
 //	        Port:         51111,
-//	        RegistryPath: "model_agent/registries/registry_workflow.yaml",
-//	        LLMConfigPath: "model_agent/config.yaml",
+//	        RegistryPath: "./registry.yaml",
 //	    })
 //	}
 //
@@ -29,7 +28,8 @@ import (
 	"log"
 	"time"
 
-	seeleapi "github.com/RedHuang-0622/Seele/sdk/api"
+	"github.com/RedHuang-0622/Seele/core/agent"
+	types "github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
 	tool "github.com/RedHuang-0622/microHub/root_class/tool"
 )
@@ -47,8 +47,8 @@ type HarnessConfig struct {
 	// RegistryPath 自包含注册表路径（services.tools + pool，直接给 Engine 用）。
 	RegistryPath string
 
-	// LLMConfigPath LLM 配置文件路径。
-	LLMConfigPath string
+	// LLMConfig 已加载的 LLM 配置（由调用方从 YAML/环境变量等来源加载）。
+	LLMConfig types.LLMConfig
 
 	// MaxLoops 单次 Agent.Chat 最大 ReAct 循环次数，默认 8。
 	MaxLoops int
@@ -65,22 +65,25 @@ func (c *HarnessConfig) withDefaults() {
 
 // ── EngineFactory ────────────────────────────────────────────────
 
-// EngineFactory 将 seeleapi.Engine 适配为 workplan.AgentFactory。
+// EngineFactory 将 *agent.Agent 适配为 workplan.AgentFactory。
 type EngineFactory struct {
-	Engine   *seeleapi.Engine
-	MaxLoops int
+	Engine      *agent.Agent
+	MaxLoops    int
+	workPlanSem chan struct{} // 可选，nil = 不限并发
 }
 
 func (f *EngineFactory) NewAgent(systemPrompt string) workplan.Agent {
 	return f.Engine.NewSession(systemPrompt, f.MaxLoops)
 }
 
+// WorkPlanSemaphore 实现 workplan.SemaphoreProvider 接口。
+func (f *EngineFactory) WorkPlanSemaphore() chan struct{} { return f.workPlanSem }
+
 // ── Run ──────────────────────────────────────────────────────────
 
 // Run 是 Harness 的唯一入口。阻塞直到进程退出。
 func Run(wfMap WorkflowMap, cfg HarnessConfig) {
 	cfg.withDefaults()
-	workplan.SetMaxConcurrentWorkPlans(cfg.MaxConcurrentWorkPlans)
 
 	if cfg.Name == "" {
 		log.Fatal("[agent] Name is required")
@@ -95,9 +98,9 @@ func Run(wfMap WorkflowMap, cfg HarnessConfig) {
 	log.Printf("[%s] 启动，端口 :%d，注册表 %s", cfg.Name, cfg.Port, cfg.RegistryPath)
 
 	// 1. 初始化 Engine（注册表自包含，直接传入）
-	engine, err := seeleapi.New(seeleapi.Options{
+	engine, err := agent.New(agent.Options{
 		RegistryPath:    cfg.RegistryPath,
-		LLMConfigPath:   cfg.LLMConfigPath,
+		LLMConfig:       cfg.LLMConfig,
 		ToolCallTimeOut: 120 * time.Second,
 	})
 	if err != nil {
@@ -110,6 +113,9 @@ func Run(wfMap WorkflowMap, cfg HarnessConfig) {
 	gate := workplan.NewNetworkApprovalGate()
 
 	factory := &EngineFactory{Engine: engine, MaxLoops: cfg.MaxLoops}
+	if cfg.MaxConcurrentWorkPlans > 0 {
+		factory.workPlanSem = make(chan struct{}, cfg.MaxConcurrentWorkPlans)
+	}
 	handler := NewAgentHandler(cfg.Name, factory, wfMap)
 	handler.SetApprovalGate(gate)
 	defer handler.Shutdown()
