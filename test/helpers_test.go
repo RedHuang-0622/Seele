@@ -13,7 +13,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent/api"
 	"github.com/RedHuang-0622/Seele/agent/tool"
-	seelectx "github.com/RedHuang-0622/Seele/context"
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
 	
 	types "github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"

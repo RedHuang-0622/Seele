@@ -1,4 +1,4 @@
-package tool
+package mcp
 
 import (
 	"context"
@@ -8,19 +8,19 @@ import (
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/RedHuang-0622/Seele/agent/tool/interfaces"
 )
 
-// MCPToolHandler 通过 stdio/SSE 调用 MCP Server 工具。
-// 实现 ToolHandler 接口。
-type MCPToolHandler struct {
+// Handler 通过 stdio/SSE 调用 MCP Server 工具。实现 interfaces.ToolHandler 接口。
+type Handler struct {
 	Client   *mcpclient.Client
-	ToolName string // MCP server 侧的工具名（未加前缀的原始名）
+	ToolName string
 }
 
-func (h *MCPToolHandler) Execute(ctx context.Context, argsJSON string) (string, error) {
+func (h *Handler) Execute(ctx context.Context, argsJSON string) (string, error) {
 	var args map[string]interface{}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("MCPToolHandler: parse args for %q: %w", h.ToolName, err)
+		return "", fmt.Errorf("mcp.Handler: parse args for %q: %w", h.ToolName, err)
 	}
 
 	req := mcp.CallToolRequest{}
@@ -29,11 +29,9 @@ func (h *MCPToolHandler) Execute(ctx context.Context, argsJSON string) (string, 
 
 	result, err := h.Client.CallTool(ctx, req)
 	if err != nil {
-		// 连接断开等传输错误标记为瞬时不可用
-		return "", fmt.Errorf("%w: MCPToolHandler: call %q: %v", ErrToolUnavailable, h.ToolName, err)
+		return "", fmt.Errorf("%w: mcp.Handler: call %q: %v", interfaces.ErrToolUnavailable, h.ToolName, err)
 	}
 
-	// 提取 content 文本
 	var parts []string
 	for _, c := range result.Content {
 		text := mcp.GetTextFromContent(c)

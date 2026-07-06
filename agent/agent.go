@@ -11,8 +11,9 @@ import (
 	"github.com/RedHuang-0622/Seele/agent/api"
 	apigw "github.com/RedHuang-0622/Seele/agent/gateway/api"
 	toolgw "github.com/RedHuang-0622/Seele/agent/gateway/tool"
-	"github.com/RedHuang-0622/Seele/agent/tool"
+	holder "github.com/RedHuang-0622/Seele/agent/tool/holder"
 	hubprov "github.com/RedHuang-0622/Seele/agent/tool/hub"
+	mcp "github.com/RedHuang-0622/Seele/agent/tool/mcp"
 	"github.com/RedHuang-0622/Seele/types"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 	registry "github.com/RedHuang-0622/microHub/service_registry"
@@ -67,7 +68,7 @@ func (l *stdLogger) Errorf(f string, a ...interface{}) { log.Printf("[agent] ERR
 //
 //	Agent
 //	  ├── llmClient *api.ChatClient   ← 持有 LLM 客户端，所有 session 共享
-//	  ├── tools     *tool.Holder      ← 持有工具注册中心
+//	  ├── tools     *holder.Holder      ← 持有工具注册中心
 //	  ├── apiGW     apigw.Gateway     ← API 账号网关
 //	  ├── toolGW    toolgw.Gateway    ← 工具网关（含插件过滤）
 //	  │
@@ -76,13 +77,13 @@ func (l *stdLogger) Errorf(f string, a ...interface{}) { log.Printf("[agent] ERR
 //	  └── Shutdown()
 type Agent struct {
 	llmClient      *api.ChatClient
-	tools          *tool.Holder
+	tools          *holder.Holder
 	apiGW          apigw.Gateway
 	toolGW         toolgw.Gateway
 	hub            *hubbase.BaseHub
 	hubProvider    *hubprov.HubProvider
-	mcpProvider    *tool.MCPProvider    // 延迟初始化，mcpMu 保护
-	inlineProvider *tool.InlineProvider // 延迟初始化
+	mcpProvider    *mcp.Provider    // 延迟初始化，mcpMu 保护
+	// 延迟初始化
 	mcpMu          sync.Mutex
 	opts           Options
 	shutdown       chan struct{}
@@ -97,7 +98,7 @@ type Agent struct {
 //  3. 创建 AccountPool（单账号或从 YAML 加载）
 //  4. 创建 API / Tool 网关
 //  5. 创建 api.ChatClient（已连接账号池）
-//  6. 创建 HubProvider 并注册到 tool.Holder
+//  6. 创建 HubProvider 并注册到 holder.Holder
 func New(opts Options) (*Agent, error) {
 	opts.withDefaults()
 
@@ -133,7 +134,7 @@ func New(opts Options) (*Agent, error) {
 	apiGW := apigw.NewDefaultGateway(pool)
 
 	// 4. 创建 tool holder
-	tools := tool.New()
+	tools := holder.New()
 
 	// 5. 创建 tool 网关
 	toolGW := toolgw.NewDefaultGateway(tools)
@@ -189,7 +190,7 @@ func (a *Agent) Hub() *hubprov.HubProvider { return a.hubProvider }
 
 // MCP 返回 MCPProvider（延迟初始化），提供 MCP Server 的 Attach / Detach / Refresh。
 // 首次调用时自动创建并注册到 tool_holder。若 Shutdown 已开始则返回 nil。
-func (a *Agent) MCP() *tool.MCPProvider {
+func (a *Agent) MCP() *mcp.Provider {
 	a.mcpMu.Lock()
 	defer a.mcpMu.Unlock()
 
@@ -199,21 +200,17 @@ func (a *Agent) MCP() *tool.MCPProvider {
 			return nil
 		default:
 		}
-		a.mcpProvider = tool.NewMCPProvider()
+		a.mcpProvider = mcp.NewProvider()
 		a.tools.Register(a.mcpProvider)
 		a.opts.Logger.Infof("MCP provider initialized")
 	}
 	return a.mcpProvider
 }
 
-// RegisterInlineTool 注册一个 Go 函数工具。首次调用时自动创建 InlineProvider。
+// RegisterInlineTool 注册一个 Go 函数工具（委托给 Holder.RegisterInline）。
 func (a *Agent) RegisterInlineTool(name, desc string, inputSchema map[string]interface{}, handler func(ctx context.Context, argsJSON string) (string, error)) {
-	if a.inlineProvider == nil {
-		a.inlineProvider = tool.NewInlineProvider()
-		a.tools.Register(a.inlineProvider)
-		a.opts.Logger.Infof("Inline provider initialized")
-	}
-	a.inlineProvider.Register(name, desc, inputSchema, handler)
+	a.tools.RegisterInline(name, desc, inputSchema, handler)
+	a.opts.Logger.Infof("inline tool registered: %s", name)
 }
 
 // Shutdown 关闭 Agent，释放资源。并发安全。

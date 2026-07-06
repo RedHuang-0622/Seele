@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RedHuang-0622/Seele/agent/tool"
+	"github.com/RedHuang-0622/Seele/agent/tool/interfaces"
 	types "github.com/RedHuang-0622/Seele/types"
 	jsonSchema "github.com/RedHuang-0622/microHub/jsonSchema"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
@@ -58,11 +58,11 @@ func (p *HubProvider) Restore(name string) {
 
 // ── ToolProvider 接口实现 ─────────────────────────────────────────
 
-func (p *HubProvider) Tools() []tool.ToolEntry {
+func (p *HubProvider) Tools() []interfaces.ToolEntry {
 	retired := p.retiredSnapshot()
 	all := registry.GetOnlineTools()
 
-	result := make([]tool.ToolEntry, 0, len(all))
+	result := make([]interfaces.ToolEntry, 0, len(all))
 	for _, t := range all {
 		if registry.IsOffline(t.Addr) {
 			continue
@@ -70,7 +70,7 @@ func (p *HubProvider) Tools() []tool.ToolEntry {
 		if _, blocked := retired[t.Name]; blocked {
 			continue
 		}
-		result = append(result, tool.ToolEntry{
+		result = append(result, interfaces.ToolEntry{
 			Definition: types.Tool{
 				Type: "function",
 				Function: types.ToolFunction{

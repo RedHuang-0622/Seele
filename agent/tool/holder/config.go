@@ -1,14 +1,10 @@
-package tool
+package holder
 
 import "time"
 
 // HolderConfig 工具持有者的可调参数。
-// 零值字段使用 DefaultHolderConfig() 中的默认值。
 type HolderConfig struct {
-	// DispatchRetries 瞬时错误（ErrToolUnavailable）的最大重试次数。默认 3。
-	DispatchRetries int
-
-	// DispatchRetryDelay 重试间隔。默认 2s。
+	DispatchRetries    int
 	DispatchRetryDelay time.Duration
 }
 
@@ -20,7 +16,6 @@ func DefaultHolderConfig() HolderConfig {
 	}
 }
 
-// Effective 返回实际生效的配置，零值字段用默认值填充。
 func (c HolderConfig) Effective() HolderConfig {
 	d := DefaultHolderConfig()
 	if c.DispatchRetries <= 0 {

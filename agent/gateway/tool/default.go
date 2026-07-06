@@ -3,17 +3,17 @@ package toolgw
 import (
 	"context"
 
-	"github.com/RedHuang-0622/Seele/agent/tool"
+	holder "github.com/RedHuang-0622/Seele/agent/tool/holder"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
-// DefaultGateway 是基于 agent/tool.Holder 的默认工具网关实现。
+// DefaultGateway 是基于 agent/holder.Holder 的默认工具网关实现。
 type DefaultGateway struct {
-	holder *tool.Holder
+	holder *holder.Holder
 }
 
 // NewDefaultGateway 创建基于指定 Holder 的默认工具网关。
-func NewDefaultGateway(holder *tool.Holder) *DefaultGateway {
+func NewDefaultGateway(holder *holder.Holder) *DefaultGateway {
 	return &DefaultGateway{holder: holder}
 }
 

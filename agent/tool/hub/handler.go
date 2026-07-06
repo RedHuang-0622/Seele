@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RedHuang-0622/Seele/agent/tool"
+	"github.com/RedHuang-0622/Seele/agent/tool/interfaces"
 	"github.com/RedHuang-0622/microHub/pb_api"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 )
 
 // HubToolHandler 通过 gRPC 调用远程 microHub Skill 进程。
-// 实现 tool.ToolHandler 接口，封装了协议适配和结果解析。
+// 实现 interfaces.ToolHandler 接口，封装了协议适配和结果解析。
 type HubToolHandler struct {
 	Hub     *hubbase.BaseHub
 	Method  string
@@ -37,7 +37,7 @@ func (h *HubToolHandler) Execute(ctx context.Context, argsJSON string) (string, 
 	results := h.Hub.Dispatch(ctx, req)
 
 	if len(results) == 0 {
-		return "", fmt.Errorf("%w: HubToolHandler: method=%s: no response", tool.ErrToolUnavailable, h.Method)
+		return "", fmt.Errorf("%w: HubToolHandler: method=%s: no response", interfaces.ErrToolUnavailable, h.Method)
 	}
 
 	var parts, errs []string
@@ -63,7 +63,7 @@ func (h *HubToolHandler) Execute(ctx context.Context, argsJSON string) (string, 
 	if len(errs) > 0 && len(parts) == 0 {
 		if allTransportErrors(results) {
 			return "", fmt.Errorf("%w: HubToolHandler: method=%s: %s",
-				tool.ErrToolUnavailable, h.Method, strings.Join(errs, "; "))
+				interfaces.ErrToolUnavailable, h.Method, strings.Join(errs, "; "))
 		}
 		return "", fmt.Errorf("HubToolHandler: method=%s failed: %s", h.Method, strings.Join(errs, "; "))
 	}
