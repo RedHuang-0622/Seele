@@ -1,39 +1,19 @@
+// Package provider 将所有工具来源（Hub、MCP、Inline）封装为 ToolProvider 接口，
+// 供 tool_holder 统一调度。
+//
+// 类型定义已迁移到 core/tool，此文件仅做 re-export 保持兼容。
 package provider
 
-import (
-	"context"
-	"errors"
+import "github.com/RedHuang-0622/Seele/agent/tool"
 
-	types "github.com/RedHuang-0622/Seele/types"
-)
+// ToolHandler 委托到 core/tool
+type ToolHandler = tool.ToolHandler
 
-// ErrToolUnavailable 表示工具暂时不可达（连接池满、超时、网络抖动等），
-// 与工具返回的业务错误不同。调用方可据此决定重试而非将错误注入对话历史。
-var ErrToolUnavailable = errors.New("tool temporarily unavailable")
+// ToolEntry 委托到 core/tool
+type ToolEntry = tool.ToolEntry
 
-// ToolHandler 是工具执行的策略接口。
-//
-// 三种实现：
-//   - HubToolHandler    — gRPC 调用远程 microHub Skill 进程
-//   - MCPToolHandler    — stdio/SSE 调用 MCP Server
-//   - InlineToolHandler — 直接调用本地 Go 函数
-type ToolHandler interface {
-	Execute(ctx context.Context, argsJSON string) (string, error)
-}
+// ToolProvider 委托到 core/tool
+type ToolProvider = tool.ToolProvider
 
-// ToolEntry 是所有 provider 向 tool_holder 暴露的统一结构。
-// 不管工具来源是 gRPC、MCP 还是 Go 函数，tool_holder 看到的都是
-// 一样的 {Definition + Handler} 组合。
-type ToolEntry struct {
-	Definition types.Tool
-	Handler    ToolHandler
-}
-
-// ToolProvider 是所有工具来源的抽象接口。
-//
-// 每次调用 Tools() 实时查询，支持热更新（MCP 动态增减、Hub 在线/离线变化）。
-// tool_holder 通过此接口聚合所有来源，agent 层完全不接触该接口。
-type ToolProvider interface {
-	ProviderName() string
-	Tools() []ToolEntry
-}
+// ErrToolUnavailable 委托到 core/tool
+var ErrToolUnavailable = tool.ErrToolUnavailable
