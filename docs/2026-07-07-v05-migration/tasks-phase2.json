@@ -1,0 +1,21 @@
+{
+  "meta": {
+    "phase": 2,
+    "description": "Phase 2: Agent 主结构整合 + provider import 更新",
+    "parallel": false
+  },
+  "tasks": [
+    {
+      "id": "E",
+      "description": "agent/ 主结构 — 使用双 Gateway + context/",
+      "dependencies": ["A", "B", "C", "D"],
+      "prompt": "在 G:/Program/go/Seele/agent/ 下创建/更新以下文件：\n\n## 1. agent/agent.go\n从 core/agent/agent.go 迁移。主要变更：\n- Options 结构体新增 APIGateway 字段？还是内部创建？\n- 保持 New() 接口签名不变：New(opts Options) (*Agent, error)\n- Agent 结构体持有：\n    - apiGW    apigw.Gateway\n    - toolGW   toolgw.Gateway\n    - llmClient *api.LLMClient（桥接两个 gateway）\n    - 原有 hub/mcp/inline provider 访问方法保留\n- New() 中：\n    - 创建 AccountPool → 包装为 DefaultAPIGateway\n    - 创建 tool.Holder → 包装为 DefaultToolGateway\n    - 创建 LLMClient，传入两个 Gateway\n    - 原 Hub/Inline/MCP 注册流程保持\n\n## 2. agent/session.go\n从 core/agent/session.go 迁移。\nNewSession 改为使用 context/ 而非 core/session/：\n\nfunc (a *Agent) NewSession(prompt string, maxLoops int) *seelectx.Holder {\n    return seelectx.New(a.llmClient, a.toolGW, prompt, seelectx.SessionConfig{MaxLoops: maxLoops})\n}\n\n保持 QuickChat、QuickChatStream、DirectDispatch、Tools 方法。\n\n## 3. agent/pool.go\n从 core/agent/pool.go 迁移。Pool 管理多个会话。\n\n## 4. 确认\nimport 路径：\n- \"github.com/RedHuang-0622/Seele/agent/api\"\n- \"github.com/RedHuang-0622/Seele/agent/gateway/api\" as apigw\n- \"github.com/RedHuang-0622/Seele/agent/gateway/tool\" as toolgw\n- \"github.com/RedHuang-0622/Seele/agent/tool\"\n- seelectx \"github.com/RedHuang-0622/Seele/context\"\n- \"github.com/RedHuang-0622/Seele/provider\"\n- 运行 go build ./agent/... 确认编译通过"
+    },
+    {
+      "id": "F",
+      "description": "provider/ import 更新 — 指向 agent/tool",
+      "dependencies": ["B"],
+      "prompt": "更新 G:/Program/go/Seele/provider/ 下的 import 路径：\n\n## 1. provider/tool_provider.go\n当前 type alias 指向 core/tool，改为指向 agent/tool：\n\npackage provider\n\nimport \"github.com/RedHuang-0622/Seele/agent/tool\"\n\ntype ToolHandler = tool.ToolHandler\ntype ToolEntry = tool.ToolEntry\ntype ToolProvider = tool.ToolProvider\nvar ErrToolUnavailable = tool.ErrToolUnavailable\n\n## 2. 运行确认\n- go build ./provider/... 确认编译通过"
+    }
+  ]
+}

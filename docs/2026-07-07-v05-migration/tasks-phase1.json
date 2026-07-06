@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "phase": 1,
+    "description": "Phase 1: 并行创建新结构 — agent/api, agent/tool, agent/gateway, context",
+    "parallel": true
+  },
+  "tasks": [
+    {
+      "id": "A",
+      "description": "agent/api/ 包 — 从 provider/account/ + llm/ 迁入",
+      "dependencies": [],
+      "prompt": "在 G:/Program/go/Seele/agent/api/ 下创建以下文件：\n\n## 1. pool.go\n从 provider/account/pool.go 复制并调整到 agent/api/pool.go。包名改为 api。\n内容：Account、AccountPool、ProviderType、NewAccountPool、Get、GetByProvider、Add、All。\n\n## 2. config.go\n从 provider/account/config.go 复制并调整到 agent/api/config.go。包名改为 api。\n内容：AccountsConfig、AccountEntry、LoadAccountsConfig、LoadAccountsConfigBytes。\n\n## 3. client.go\n从 llm/chat_client.go 迁移到 agent/api/client.go。包名改为 api。\n需要新增双网关桥接能力：\n- 保留现有 ChatClient 结构（Cfg、Client、pool）\n- 保留 WithAccountPool 方法\n- 保留 Complete/CompleteStream 方法\n\n## 4. 确认\n- 包名为 api\n- 所有 import 使用 github.com/RedHuang-0622/Seele/agent/api （自引用）和 github.com/RedHuang-0622/Seele/types\n- 运行 go build ./agent/api/... 确认编译通过"
+    },
+    {
+      "id": "B",
+      "description": "agent/tool/ 包 — 合并 core/tool/ + core/tool_holder/",
+      "dependencies": [],
+      "prompt": "在 G:/Program/go/Seele/agent/tool/ 下创建以下文件：\n\n## 1. interface.go\n从 core/tool/interface.go 复制到 agent/tool/interface.go。\n包名改为 tool。\n内容：ErrToolUnavailable、ToolHandler、ToolEntry、ToolProvider。\n\n## 2. plugin.go\n从 core/tool_holder/plugin.go 复制到 agent/tool/plugin.go。\n包名改为 tool。更新 import 路径。\n内容：Plugin、PluginManager、matchGlob。\n\n## 3. holder.go\n从 core/tool_holder/holder.go 复制到 agent/tool/holder.go。\n包名改为 tool。更新 import：原来引用 provider.ToolEntry → 改为 tool.ToolEntry（本包）。\n内容：Holder、holderState、New、rebuildLocked、WithPluginManager、ActivatePlugin、DeactivatePlugin 等。\n\n## 4. tools.go\n从 core/tool_holder/tools.go 复制到 agent/tool/tools.go。\n包名改为 tool。Tools() 和 Dispatch() 方法，使用本包的 ToolEntry。\n\n## 5. provider.go\n从 core/tool_holder/provider.go 复制到 agent/tool/provider.go。\n包名改为 tool。Register/Unregister 使用本包 ToolProvider。\n\n## 6. config.go\n从 core/tool_holder/config.go 复制到 agent/tool/config.go。\n包名改为 tool。HolderConfig、DefaultHolderConfig。\n\n## 7. 确认\n- 包名为 tool\n- import 路径统一为 github.com/RedHuang-0622/Seele/agent/tool\n- 运行 go build ./agent/tool/... 确认编译通过"
+    },
+    {
+      "id": "C",
+      "description": "agent/gateway/ 包 — 双网关接口 + 默认实现",
+      "dependencies": [],
+      "prompt": "在 G:/Program/go/Seele/agent/gateway/ 下创建以下文件：\n\n## 1. agent/gateway/api/gateway.go\n包名 apigw。定义 API 号池网关接口：\n\npackage apigw\n\nimport (\n    \"context\"\n    \"github.com/RedHuang-0622/Seele/agent/api\"\n)\n\ntype Gateway interface {\n    Select(ctx context.Context) (*api.Account, error)\n    Health(ctx context.Context) map[string]error\n    Register(account *api.Account)\n}\n\n## 2. agent/gateway/api/default.go\n包名 apigw。默认实现：\n- 使用 api.AccountPool 做 round-robin\n- 线程安全\n\n## 3. agent/gateway/tool/gateway.go\n包名 toolgw。定义工具网关接口：\n\npackage toolgw\n\nimport (\n    \"context\"\n    \"github.com/RedHuang-0622/Seele/types\"\n)\n\ntype Gateway interface {\n    VisibleTools(ctx context.Context) []types.Tool\n    Dispatch(ctx context.Context, name, argsJSON string) (string, error)\n    ActivatePlugin(name string) error\n    ActivePlugin() string\n    DeactivatePlugin()\n}\n\n## 4. agent/gateway/tool/default.go\n包名 toolgw。默认实现：\n- 持有 agent/tool.Holder 引用\n- VisibleTools 检查 PluginManager 进行过滤\n- Dispatch 委托给 Holder.Dispatch\n- ActivatePlugin/DeactivatePlugin 委托给 Holder\n\n## 5. 确认\n- 运行 go build ./agent/gateway/... 确认编译通过"
+    },
+    {
+      "id": "D",
+      "description": "context/ 包 — 合并 core/session/ + history/",
+      "dependencies": [],
+      "prompt": "在 G:/Program/go/Seele/context/ 下创建以下文件：\n\n注意：import 路径要写成 seelectx \"github.com/RedHuang-0622/Seele/context\" 避免与 stdlib context 冲突。\n但当在 context 包内部时，直接引用本包内容。\n\n## 1. context/holder.go（从 core/session/session.go）\n包名 seelectx。Holder 结构体、New、SessionID、History、ClearHistory、UpdateSystemPrompt、ForceAppendHistory。\n去掉 pluginMgr 相关字段和方法。保持 toolFilter。\n\n## 2. context/chat.go（从 core/session/chat.go）\n包名 seelectx。completionStrategy、chatLoop、Chat、ChatStream。\n\n## 3. context/dispatch.go（从 core/session/dispatch.go）\n包名 seelectx。dispatchToolCalls、resolveApproval、jsonError、parseApprovalQuestionID。\n\n## 4. context/config.go（从 core/session/config.go）\n包名 seelectx。SessionConfig、DefaultSessionConfig。\n\n## 5. context/interface.go（从 core/session/interface.go）\n包名 seelectx。ApprovalCallback、ToolDispatcher。\n\n## 6. context/history.go（从 history/context_compress.go + history/context_limit.go 合并）\n包名 seelectx。CompressHistory、TrimHistory、NeedCompression、TruncateToolResult、ContextConfig。\n\n## 7. context/storage.go（新文件）\n包名 seelectx。\n\n// LocalStorage 会话本地存储接口\ntype LocalStorage interface {\n    Save(key string, data []byte) error\n    Load(key string) ([]byte, error)\n    List(prefix string) ([]string, error)\n    Delete(key string) error\n}\n\n// FileStorage 基于文件系统的实现\ntype FileStorage struct {\n    BaseDir string\n}\n\n## 8. 确认\n- 包名 seelectx\n- 运行 go build ./context/... 确认编译通过"
+    }
+  ]
+}

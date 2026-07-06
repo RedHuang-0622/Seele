@@ -1,0 +1,27 @@
+{
+  "meta": {
+    "phase": 3,
+    "description": "Phase 3: 删除旧包 + 示例更新 + 全量测试",
+    "parallel": false
+  },
+  "tasks": [
+    {
+      "id": "G",
+      "description": "删除旧包 — core/ + llm/ + history/ + workplan/",
+      "dependencies": ["E", "F"],
+      "prompt": "在 G:/Program/go/Seele/ 删除以下已迁移的旧目录：\n\n## 要删除的目录\n1. core/agent/\n2. core/session/\n3. core/tool/\n4. core/tool_holder/\n5. history/\n6. llm/\n\n## 注意\n- 只删除 core/ 下的子包（core/agent/、core/session/、core/tool/、core/tool_holder/）\n- 保留 core/ 目录本身（如果有其他内容）\n- 确认 provider/account/ 也存在（它是 provider/account/，不是 agent/api/ 的前身吗？\n  provider/account/ 应该保留直到所有引用更新完毕）\n\n## 执行\n\n# 删除 core/ 下的子包\nrm -rf core/agent core/session core/tool core/tool_holder\n\n# 删除 history/\nrm -rf history\n\n# 删除 llm/\nrm -rf llm\n\n用 Bash 执行上述命令。\n\n## 确认\nls core/ 确认子包已删除\nls history/ 应报不存在"
+    },
+    {
+      "id": "H",
+      "description": "示例更新 — example_Implement/ 使用新架构 import",
+      "dependencies": ["G"],
+      "prompt": "更新 G:/Program/go/Seele/example_Implement/ 下的示例文件。\n\n## 需要修改的文件\n所有示例 main.go 文件：\n- example_Implement/01_hello_seele/main.go\n- example_Implement/02_inline_tools/main.go\n- example_Implement/03_workplan/main.go\n- example_Implement/04_mcp/main.go\n\n## 主要变更\n将 import 路径从旧路径更新到新路径：\n- \"github.com/RedHuang-0622/Seele/core/agent\" → \"github.com/RedHuang-0622/Seele/agent\"\n\n注意：由于 agent.New() 接口签名保持不变，代码逻辑本身不需要修改，只需改 import。\n\n## 确认\n- go build ./example_Implement/... 编译通过"
+    },
+    {
+      "id": "I",
+      "description": "全量测试 — 修复所有编译和测试问题",
+      "dependencies": ["H"],
+      "prompt": "在 G:/Program/go/Seele/ 执行全量编译和测试：\n\n## 1. 编译\ncd G:/Program/go/Seele && go build ./... 2>&1\n\n如果编译失败：\n- 修复所有未解决的 import 路径\n- 重点检查 context/ 下的 chat.go 和 dispatch.go 中 context 包引用的歧义\n- 检查是否有残留引用旧包的文件\n\n## 2. 测试\ncd G:/Program/go/Seele && go test ./... -count=1 -timeout 120s 2>&1\n\n如果测试失败：\n- 修复失败的测试用例\n- 主要关注 provider/、test/ 包的测试\n\n## 3. 最终确认\ngo build ./... 成功\ngo test ./... 全部通过"
+    }
+  ]
+}
