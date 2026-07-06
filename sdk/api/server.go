@@ -11,7 +11,7 @@ import (
 	"context"
 	"net"
 
-	"github.com/RedHuang-0622/Seele/core/agent"
+	"github.com/RedHuang-0622/Seele/agent"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

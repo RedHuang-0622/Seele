@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/config"
-	"github.com/RedHuang-0622/Seele/core/agent"
+	"github.com/RedHuang-0622/Seele/agent"
 	types "github.com/RedHuang-0622/Seele/types"
 )
 

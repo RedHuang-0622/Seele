@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/config"
-	"github.com/RedHuang-0622/Seele/core/agent"
 	"github.com/RedHuang-0622/Seele/provider"
 )
 

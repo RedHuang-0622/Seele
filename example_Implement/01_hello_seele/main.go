@@ -16,8 +16,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/config"
-	"github.com/RedHuang-0622/Seele/core/agent"
 	"github.com/RedHuang-0622/Seele/provider"
 )
 
@@ -91,20 +91,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("chat error: %v", err)
 	}
-	fmt.Println("\n🤖 Agent:", reply)
+	fmt.Println("\n\U0001f916 Agent:", reply)
 
 	reply, err = sess.Chat(ctx, "帮我算一下 (15 + 27) * 3 等于多少？")
 	if err != nil {
 		log.Fatalf("chat error: %v", err)
 	}
-	fmt.Println("🤖 Agent:", reply)
+	fmt.Println("\U0001f916 Agent:", reply)
 
 	// ── 5. QuickChat：一次性对话 ────────────────────────────────────
 	reply, err = engine.QuickChat(ctx, "你是一个简洁的助手。", "用一句话介绍 Go 语言。")
 	if err != nil {
 		log.Fatalf("quickchat error: %v", err)
 	}
-	fmt.Println("\n📝 QuickChat:", reply)
+	fmt.Println("\n\U0001f4dd QuickChat:", reply)
 }
 
 func truncate(s string, n int) string {

@@ -14,15 +14,18 @@ import (
 type NodeKind int
 
 const (
-	kindAuto       NodeKind = iota // Agent ReAct 循环，自主执行
-	kindApprove                    // 阻塞等人确认
-	kindIf                         // 二选一条件分支
-	kindSwitch                     // 多路条件分支
-	kindLoop                       // 带 Signal 的循环
-	kindFork                       // 多 Agent 并发，需 Join 汇合
-	kindJoin                       // 汇合 Fork 的结果
-	kindCheckpoint                 // 快照节点，支持回滚
-	kindEmit                       // 把当前结果写入命名变量
+	kindMethod   NodeKind = iota // Go 函数节点（策略模式）
+	kindLLM                      // 纯 LLM 节点（策略模式）
+	kindStrategy                 // 自定义策略节点
+	kindAuto                     // Agent ReAct 循环，自主执行
+	kindApprove                  // 阻塞等人确认
+	kindIf                       // 二选一条件分支
+	kindSwitch                   // 多路条件分支
+	kindLoop                     // 带 Signal 的循环
+	kindFork                     // 多 Agent 并发，需 Join 汇合
+	kindJoin                     // 汇合 Fork 的结果
+	kindCheckpoint               // 快照节点，支持回滚
+	kindEmit                     // 把当前结果写入命名变量
 )
 
 // =============================================================================
@@ -134,6 +137,9 @@ const (
 
 func (k NodeKind) String() string {
 	names := map[NodeKind]string{
+		kindMethod:     "Method",
+		kindLLM:        "LLM",
+		kindStrategy:   "Strategy",
 		kindAuto:       "Auto",
 		kindApprove:    "Approve",
 		kindIf:         "If",
@@ -278,10 +284,11 @@ type node struct {
 	kind NodeKind
 
 	// ── 执行配置 ──────────────────────────────────────────────────
-	systemPrompt string   // 覆盖 WorkPlan 默认 prompt
-	input        string   // 输入模板
-	toolFilter   []string // 工具白名单，空表示不限制
-	next         string   // 默认下一节点 ID
+	systemPrompt string        // 覆盖 WorkPlan 默认 prompt
+	input        string        // 输入模板
+	toolFilter   []string      // 工具白名单，空表示不限制
+	next         string        // 默认下一节点 ID
+	strategy     NodeStrategy  // 策略模式：Method/LLM/Agent/自定义策略节点
 
 	// ── kindApprove ───────────────────────────────────────────────
 	// [workplangate] 从 []string 改为 []ChoiceOption，支持 K-V 模型

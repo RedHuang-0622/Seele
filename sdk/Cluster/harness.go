@@ -28,7 +28,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/RedHuang-0622/Seele/core/agent"
+	"github.com/RedHuang-0622/Seele/agent"
 	types "github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
 	tool "github.com/RedHuang-0622/microHub/root_class/tool"

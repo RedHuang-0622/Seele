@@ -258,3 +258,45 @@ func (wp *WorkPlan) PendingQuestion() Question {
 
 // SetDecision 设置审批结果 V，必须在 Resume 前调用。
 func (wp *WorkPlan) SetDecision(v any) { wp.pauseDecision = v }
+
+// =============================================================================
+// ToTool —— 将 WorkPlan 包装为可调用的工具（v0.5 新增）
+// =============================================================================
+
+// WorkPlanTool 是 WorkPlan 的工具包装。
+// 调用方可将此结构注册到 engine.RegisterInlineTool 或自行处理。
+// workplan 包保持零外部依赖，不引入 core/tool 包。
+type WorkPlanTool struct {
+	Name        string                 // 工具名称
+	Description string                 // 工具描述
+	InputSchema map[string]interface{} // JSON Schema
+	Run         func(ctx context.Context, argsJSON string) (string, error)
+}
+
+// ToTool 将 WorkPlan 包装为可通过 tool_call 调用的工具。
+//   name:  工具名称（LLM 可见）
+//   desc:  工具描述
+//   inputSchema: 工具参数 JSON Schema
+//
+// 示例（在 engine 侧注册）：
+//
+//	wp := workplan.New(factory, nil, "prompt")
+//	wp.Auto("分析", "...").
+//	  Fork("并发", [...]).
+//	  Auto("汇总", "...")
+//	tool := wp.ToTool("workflow_analysis", "执行多步骤分析", schema)
+//	engine.RegisterInlineTool(tool.Name, tool.Description, tool.InputSchema, tool.Run)
+func (wp *WorkPlan) ToTool(name, desc string, inputSchema map[string]interface{}) WorkPlanTool {
+	return WorkPlanTool{
+		Name:        name,
+		Description: desc,
+		InputSchema: inputSchema,
+		Run: func(ctx context.Context, argsJSON string) (string, error) {
+			result, err := wp.Run(ctx)
+			if err != nil {
+				return "", err
+			}
+			return result.FinalOutput(), nil
+		},
+	}
+}

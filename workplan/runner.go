@@ -10,6 +10,28 @@ import (
 )
 
 // =============================================================================
+// strategyRunner —— NodeStrategy → NodeRunner 适配器
+// =============================================================================
+//
+// strategyRunner 桥接 NodeStrategy 和 NodeRunner 接口，
+// 使图引擎（只认识 NodeRunner）可以执行任意策略。
+//
+// 糖方法（Auto / Method / LLM / Strategy）内部统一使用 strategyRunner 注册节点。
+// 流程控制 Runner（controlRunner / loopRunner / forkRunner 等）保留独立实现。
+
+// strategyRunner 把 NodeStrategy 适配为 NodeRunner。
+type strategyRunner struct {
+	id       string
+	strategy NodeStrategy
+}
+
+func (r *strategyRunner) ID() string { return r.id }
+
+func (r *strategyRunner) Run(ctx context.Context, ec *ExecutionContext) (string, error) {
+	return r.strategy.Execute(ctx, r.id, ec)
+}
+
+// =============================================================================
 // autoRunner —— Agent ReAct 循环节点
 // =============================================================================
 

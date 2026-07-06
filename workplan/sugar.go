@@ -1,6 +1,7 @@
 package workplan
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -44,19 +45,82 @@ func applyOpts(n *node, opts []NodeOpt) {
 // 基础节点糖
 // =============================================================================
 
-// Auto 添加一个自动执行节点。
+// Auto 添加一个自动执行节点（完整 Agent ReAct 循环 + 工具调用）。
+//
+// 内部使用 AgentStrategy + strategyRunner，行为与之前完全一致。
+// 保留 autoRunner 的后向兼容路径，确保现有代码不受影响。
 func (wp *WorkPlan) Auto(id, input string, opts ...NodeOpt) *WorkPlan {
 	n := &node{id: wp.resolveID(id, "auto"), kind: kindAuto, input: input}
 	applyOpts(n, opts)
 
-	runner := &autoRunner{
-		id:            n.id,
-		systemPrompt:  n.systemPrompt,
-		input:         n.input,
-		toolFilter:    n.toolFilter,
-		factory:       wp.factory,
-		defaultPrompt: wp.defaultPrompt,
+	runner := &strategyRunner{
+		id: n.id,
+		strategy: NewAgentStrategy(wp.factory, n.systemPrompt, n.toolFilter...),
 	}
+	return wp.registerNode(n, runner)
+}
+
+// =============================================================================
+// 策略模式糖方法（v0.5 新增）
+// =============================================================================
+
+// Method 注册一个 Go 函数节点（纯本地计算，零 LLM 调用）。
+//
+//	fn 接收渲染后的 input 文本，返回任意结果。
+//	适用于数据转换、业务规则校验、条件计算等场景。
+//
+// 示例：
+//
+//	wp.Method("计算", func(ctx context.Context, input string) (string, error) {
+//	    return fmt.Sprintf(`"结果是: %s"`, strings.ToUpper(input)), nil
+//	})
+func (wp *WorkPlan) Method(id string, fn func(ctx context.Context, input string) (string, error), opts ...NodeOpt) *WorkPlan {
+	n := &node{
+		id:       wp.resolveID(id, "method"),
+		kind:     kindMethod,
+		strategy: NewMethodStrategy(fn),
+	}
+	applyOpts(n, opts)
+	runner := &strategyRunner{id: n.id, strategy: n.strategy}
+	return wp.registerNode(n, runner)
+}
+
+// LLM 注册一个纯 LLM 节点（无工具调用，无 ReAct 循环）。
+//
+//	适用于翻译、摘要、分类等不需要工具的纯文本生成任务。
+//
+// 示例：
+//
+//	wp.LLM("翻译", "将以下内容翻译为英文：{{.PrevResult}}")
+func (wp *WorkPlan) LLM(id, input string, opts ...NodeOpt) *WorkPlan {
+	n := &node{id: wp.resolveID(id, "llm"), kind: kindLLM, input: input}
+	applyOpts(n, opts)
+	runner := &strategyRunner{
+		id: n.id,
+		strategy: NewLLMStrategy(wp.factory, n.systemPrompt),
+	}
+	return wp.registerNode(n, runner)
+}
+
+// Strategy 注册一个自定义策略节点。
+//
+//	用户可以自定义实现 NodeStrategy 接口，注入任意执行逻辑。
+//
+// 示例：
+//
+//	type MyStrategy struct{}
+//	func (s *MyStrategy) Execute(ctx context.Context, input string, ec *ExecutionContext) (string, error) {
+//	    return `"custom result"`, nil
+//	}
+//	wp.Strategy("my-node", &MyStrategy{}, workplan.WithPrompt("custom prompt"))
+func (wp *WorkPlan) Strategy(id string, strategy NodeStrategy, opts ...NodeOpt) *WorkPlan {
+	n := &node{
+		id:       wp.resolveID(id, "strategy"),
+		kind:     kindStrategy,
+		strategy: strategy,
+	}
+	applyOpts(n, opts)
+	runner := &strategyRunner{id: n.id, strategy: n.strategy}
 	return wp.registerNode(n, runner)
 }
 
