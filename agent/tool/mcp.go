@@ -1,4 +1,4 @@
-package provider
+package tool
 
 import (
 	"context"
@@ -162,7 +162,7 @@ func (p *MCPProvider) Tools() []ToolEntry {
 				},
 				Handler: &MCPToolHandler{
 					Client:   conn.client,
-					ToolName: t.Function.Name, // 原始工具名，不加前缀
+					ToolName: t.Function.Name,
 				},
 			})
 		}

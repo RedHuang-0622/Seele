@@ -24,7 +24,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/config"
-	"github.com/RedHuang-0622/Seele/provider"
+	"github.com/RedHuang-0622/Seele/agent/tool"
 )
 
 // =============================================================================
@@ -183,26 +183,26 @@ func main() {
 	//   map[string]interface{}{"type":"object","properties":map[string]interface{}{...},"required":[...]}
 	//
 	// 新写法（声明 struct）：
-	//   provider.SchemaOf(WeatherInput{})
+	//   tool.SchemaOf(WeatherInput{})
 
 	engine.RegisterInlineTool(
 		"query_weather",
 		"查询指定城市的天气信息，返回温度、天气状况和湿度",
-		provider.SchemaOf(WeatherInput{}),
+		tool.SchemaOf(WeatherInput{}),
 		weatherHandler,
 	)
 
 	engine.RegisterInlineTool(
 		"process_text",
 		"对文本执行操作：大写(uppercase)、小写(lowercase)、字数统计(count)、反转(reverse)",
-		provider.SchemaOf(TextInput{}),
+		tool.SchemaOf(TextInput{}),
 		textHandler,
 	)
 
 	engine.RegisterInlineTool(
 		"create_team",
 		"创建团队并指定负责人和成员",
-		provider.SchemaOf(TeamInput{}),
+		tool.SchemaOf(TeamInput{}),
 		teamHandler,
 	)
 
@@ -210,7 +210,7 @@ func main() {
 	engine.RegisterInlineTool(
 		"counter",
 		"记录并返回工具被调用的总次数，每次调用计数 +1",
-		provider.SchemaOf(CounterInput{}),
+		tool.SchemaOf(CounterInput{}),
 		counter.handler,
 	)
 

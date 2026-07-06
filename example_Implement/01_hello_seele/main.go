@@ -18,7 +18,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/config"
-	"github.com/RedHuang-0622/Seele/provider"
+	"github.com/RedHuang-0622/Seele/agent/tool"
 )
 
 // =============================================================================
@@ -62,7 +62,7 @@ func main() {
 	engine.RegisterInlineTool(
 		"get_current_time",
 		"获取当前日期和时间，支持指定时区",
-		provider.SchemaOf(TimeInput{}),
+		tool.SchemaOf(TimeInput{}),
 		func(ctx context.Context, argsJSON string) (string, error) {
 			loc, _ := time.LoadLocation("Asia/Shanghai")
 			return fmt.Sprintf(`"当前时间: %s"`, time.Now().In(loc).Format("2006-01-02 15:04:05 MST")), nil
@@ -72,7 +72,7 @@ func main() {
 	engine.RegisterInlineTool(
 		"calculator",
 		"执行基本四则运算",
-		provider.SchemaOf(CalcInput{}),
+		tool.SchemaOf(CalcInput{}),
 		func(ctx context.Context, argsJSON string) (string, error) {
 			return fmt.Sprintf(`"收到表达式: %s（示例：结果=42）"`, argsJSON), nil
 		},

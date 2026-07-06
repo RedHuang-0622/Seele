@@ -1,4 +1,4 @@
-package provider
+package tool
 
 import (
 	"reflect"
@@ -65,13 +65,12 @@ func structToSchema(t reflect.Type) map[string]interface{} {
 			continue
 		}
 
-		// 解析 json tag → 属性名 + omitempty
 		name := f.Name
 		omitempty := false
 		if raw := f.Tag.Get("json"); raw != "" {
 			parts := strings.Split(raw, ",")
 			if parts[0] == "-" {
-				continue // json:"-" 跳过
+				continue
 			}
 			if parts[0] != "" {
 				name = parts[0]
@@ -83,10 +82,9 @@ func structToSchema(t reflect.Type) map[string]interface{} {
 			}
 		}
 
-		// 解析 desc tag → description
 		desc := f.Tag.Get("desc")
 		if desc == "" {
-			desc = f.Tag.Get("description") // 兼容更长的标签名
+			desc = f.Tag.Get("description")
 		}
 
 		prop := typeToSchema(f.Type)
@@ -94,7 +92,6 @@ func structToSchema(t reflect.Type) map[string]interface{} {
 			prop["description"] = desc
 		}
 
-		// 解析 enum tag → enum 约束（仅 string 字段）
 		if enumRaw := f.Tag.Get("enum"); enumRaw != "" {
 			parts := strings.Split(enumRaw, ",")
 			enum := make([]interface{}, 0, len(parts))
@@ -108,7 +105,6 @@ func structToSchema(t reflect.Type) map[string]interface{} {
 			}
 		}
 
-		// 解析 default tag → default 值
 		if def := f.Tag.Get("default"); def != "" {
 			prop["default"] = def
 		}
@@ -132,7 +128,6 @@ func structToSchema(t reflect.Type) map[string]interface{} {
 
 // typeToSchema 将 Go 类型映射为 JSON Schema 类型字典。
 func typeToSchema(t reflect.Type) map[string]interface{} {
-	// 解引用指针
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
@@ -164,25 +159,16 @@ func typeToSchema(t reflect.Type) map[string]interface{} {
 		return structToSchema(t)
 
 	default:
-		// fallback: 未知类型当 string 处理
 		return map[string]interface{}{"type": "string"}
 	}
 }
 
-// basicTypeSchema 为非结构体类型生成基础 schema。
 func basicTypeSchema(t reflect.Type) map[string]interface{} {
 	return typeToSchema(t)
 }
 
-// =============================================================================
-// 枚举支持：EnumOf 快捷构造 {"type":"string","enum":[...]}
-// =============================================================================
-
 // EnumOf 生成带 enum 约束的 string schema。
 //
-// 示例：
-//
-//	SchemaOf(Input{Op: "uppercase"})  → 只是 {"type":"string"}
 //	EnumOf("uppercase", "lowercase")  →  {"type":"string","enum":["uppercase","lowercase"]}
 func EnumOf(values ...string) map[string]interface{} {
 	enum := make([]interface{}, len(values))

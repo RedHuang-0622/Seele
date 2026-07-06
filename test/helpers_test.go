@@ -14,7 +14,7 @@ import (
 	"github.com/RedHuang-0622/Seele/agent/api"
 	"github.com/RedHuang-0622/Seele/agent/tool"
 	seelectx "github.com/RedHuang-0622/Seele/context"
-	prov "github.com/RedHuang-0622/Seele/provider"
+	
 	types "github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
@@ -35,11 +35,11 @@ func newMockProvider(name string) *mockProvider {
 
 func (p *mockProvider) ProviderName() string { return p.name }
 
-func (p *mockProvider) Tools() []prov.ToolEntry {
-	entries := make([]prov.ToolEntry, len(p.tools))
+func (p *mockProvider) Tools() []tool.ToolEntry {
+	entries := make([]tool.ToolEntry, len(p.tools))
 	for i, t := range p.tools {
 		name := t.Function.Name
-		entries[i] = prov.ToolEntry{
+		entries[i] = tool.ToolEntry{
 			Definition: t,
 			Handler:    &mockHandler{toolName: name},
 		}

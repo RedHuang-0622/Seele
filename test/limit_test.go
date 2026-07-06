@@ -15,7 +15,7 @@ import (
 	"github.com/RedHuang-0622/Seele/agent/api"
 	"github.com/RedHuang-0622/Seele/agent/tool"
 	seelectx "github.com/RedHuang-0622/Seele/context"
-	prov "github.com/RedHuang-0622/Seele/provider"
+	
 	types "github.com/RedHuang-0622/Seele/types"
 )
 
@@ -44,10 +44,10 @@ func newControllableProvider(name string) *controllableProvider {
 
 func (p *controllableProvider) ProviderName() string { return p.name }
 
-func (p *controllableProvider) Tools() []prov.ToolEntry {
-	entries := make([]prov.ToolEntry, len(p.tools))
+func (p *controllableProvider) Tools() []tool.ToolEntry {
+	entries := make([]tool.ToolEntry, len(p.tools))
 	for i, t := range p.tools {
-		entries[i] = prov.ToolEntry{
+		entries[i] = tool.ToolEntry{
 			Definition: t,
 			Handler:    &controllableHandler{parent: p},
 		}
@@ -77,7 +77,7 @@ func (h *controllableHandler) Execute(ctx context.Context, argsJSON string) (str
 	if h.parent.failCount > 0 && n <= h.parent.failCount {
 		switch h.parent.failMode {
 		case "unavailable":
-			return "", prov.ErrToolUnavailable
+			return "", tool.ErrToolUnavailable
 		case "error":
 			return "", fmt.Errorf("controllable: forced error on call #%d", n)
 		}
@@ -100,8 +100,8 @@ type errProvider struct {
 }
 
 func (p *errProvider) ProviderName() string { return p.name }
-func (p *errProvider) Tools() []prov.ToolEntry {
-	return []prov.ToolEntry{
+func (p *errProvider) Tools() []tool.ToolEntry {
+	return []tool.ToolEntry{
 		{
 			Definition: types.Tool{
 				Type: "function",

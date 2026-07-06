@@ -1,4 +1,8 @@
-package provider
+// Package hubprov 封装 microHub gRPC 工具提供者。
+//
+// 依赖 microHub 的 gRPC 服务发现与调度能力，将外部 Skill 进程
+// 包装为 agent/tool.ToolProvider 接口。
+package hubprov
 
 import (
 	"encoding/json"
@@ -7,13 +11,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RedHuang-0622/Seele/agent/tool"
 	types "github.com/RedHuang-0622/Seele/types"
 	jsonSchema "github.com/RedHuang-0622/microHub/jsonSchema"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 	registry "github.com/RedHuang-0622/microHub/service_registry"
 )
 
-// HubProvider 将现有 microHub + registry 封装为 ToolProvider。
+// HubProvider 将现有 microHub + registry 封装为 tool.ToolProvider。
 type HubProvider struct {
 	hub             *hubbase.BaseHub
 	mu              sync.RWMutex
@@ -35,7 +40,7 @@ func NewHubProvider(hub *hubbase.BaseHub, timeout time.Duration) (*HubProvider, 
 
 func (p *HubProvider) ProviderName() string { return "microhub" }
 
-// ── Retire / Restore（仅对 Hub 工具生效）────────────────────────
+// ── Retire / Restore ────────────────────────────────────────────
 
 func (p *HubProvider) Retire(name string) {
 	p.mu.Lock()
@@ -53,13 +58,11 @@ func (p *HubProvider) Restore(name string) {
 
 // ── ToolProvider 接口实现 ─────────────────────────────────────────
 
-// Tools 返回所有 Hub 工具的 ToolEntry（含 _ 前缀内部工具）。
-// _ 前缀过滤由 tool_holder.Tools() 统一处理。
-func (p *HubProvider) Tools() []ToolEntry {
+func (p *HubProvider) Tools() []tool.ToolEntry {
 	retired := p.retiredSnapshot()
 	all := registry.GetOnlineTools()
 
-	result := make([]ToolEntry, 0, len(all))
+	result := make([]tool.ToolEntry, 0, len(all))
 	for _, t := range all {
 		if registry.IsOffline(t.Addr) {
 			continue
@@ -67,7 +70,7 @@ func (p *HubProvider) Tools() []ToolEntry {
 		if _, blocked := retired[t.Name]; blocked {
 			continue
 		}
-		result = append(result, ToolEntry{
+		result = append(result, tool.ToolEntry{
 			Definition: types.Tool{
 				Type: "function",
 				Function: types.ToolFunction{
@@ -86,7 +89,7 @@ func (p *HubProvider) Tools() []ToolEntry {
 	return result
 }
 
-// ── Skills 摘要（供 Engine.Skills() 使用）────────────────────────
+// ── Skills 摘要 ──────────────────────────────────────────────────
 
 func (p *HubProvider) Skills() []types.SkillInfo {
 	retired := p.retiredSnapshot()
@@ -109,7 +112,7 @@ func (p *HubProvider) Skills() []types.SkillInfo {
 	return result
 }
 
-// ── 内部工具方法 ───────────────────────────────────────────────────
+// ── 内部辅助 ─────────────────────────────────────────────────────
 
 func (p *HubProvider) retiredSnapshot() map[string]struct{} {
 	p.mu.RLock()
@@ -121,8 +124,7 @@ func (p *HubProvider) retiredSnapshot() map[string]struct{} {
 	return snap
 }
 
-// ── schema 转换（从原 runtime.go 迁移，只服务于 Hub 工具）───────
-
+// buildParameters 将 microHub SchemaNode 转为 OpenAI function calling 格式。
 func buildParameters(inputSchema string) map[string]interface{} {
 	fallback := map[string]interface{}{
 		"type":       "object",

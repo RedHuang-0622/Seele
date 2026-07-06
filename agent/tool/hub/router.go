@@ -1,4 +1,4 @@
-package provider
+package hubprov
 
 import (
 	"fmt"
@@ -10,7 +10,6 @@ import (
 )
 
 // NewHubRouter 创建一个 hubRouter，实现 hubbase.HubHandler 接口。
-// 用于 microHub 的服务发现和请求路由。
 func NewHubRouter() hubbase.HubHandler { return &hubRouter{} }
 
 type hubRouter struct{}

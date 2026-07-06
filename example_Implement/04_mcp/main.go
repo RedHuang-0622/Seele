@@ -24,7 +24,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent"
-	"github.com/RedHuang-0622/Seele/provider"
+	"github.com/RedHuang-0622/Seele/agent/tool"
 )
 
 func main() {
@@ -53,7 +53,7 @@ func main() {
 	// Command 是启动命令，Args 是参数，Env 可注入环境变量
 
 	// filesystem server：读写本地文件
-	err = mcp.Attach(ctx, provider.MCPServerConfig{
+	err = mcp.Attach(ctx, tool.MCPServerConfig{
 		Name:      "filesystem",
 		Transport: "stdio",
 		Command:   "npx",
@@ -67,7 +67,7 @@ func main() {
 	}
 
 	// fetch server：HTTP 请求
-	err = mcp.Attach(ctx, provider.MCPServerConfig{
+	err = mcp.Attach(ctx, tool.MCPServerConfig{
 		Name:      "fetch",
 		Transport: "stdio",
 		Command:   "uvx",
@@ -82,7 +82,7 @@ func main() {
 	// ── 方式 2：SSE 模式（远程服务） ────────────────────────────────
 	//
 	// 适用场景：团队共享的工具服务、第三方 MCP 服务
-	err = mcp.Attach(ctx, provider.MCPServerConfig{
+	err = mcp.Attach(ctx, tool.MCPServerConfig{
 		Name:      "remote-tools",
 		Transport: "sse",
 		URL:       "http://your-mcp-server.example.com/sse",

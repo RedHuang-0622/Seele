@@ -41,7 +41,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent"
-	"github.com/RedHuang-0622/Seele/provider"
+	"github.com/RedHuang-0622/Seele/agent/tool"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
 
@@ -115,7 +115,7 @@ func main() {
 	engine.RegisterInlineTool(
 		"fork_agents",
 		"并发启动多个 Agent 执行不同任务，适合多角色并行分析、多角度调研等场景。每个分支独立执行，结果合并为 JSON。",
-		provider.SchemaOf(ForkInput{}),
+		tool.SchemaOf(ForkInput{}),
 		func(ctx context.Context, argsJSON string) (string, error) {
 			var input ForkInput
 			if err := json.Unmarshal([]byte(argsJSON), &input); err != nil {
@@ -155,7 +155,7 @@ func main() {
 	engine.RegisterInlineTool(
 		"run_pipeline",
 		"按顺序执行多个步骤，后一步接收前一步的输出作为输入。适合需要逐步推进的复杂任务。",
-		provider.SchemaOf(PipelineInput{}),
+		tool.SchemaOf(PipelineInput{}),
 		func(ctx context.Context, argsJSON string) (string, error) {
 			var input PipelineInput
 			if err := json.Unmarshal([]byte(argsJSON), &input); err != nil {
@@ -195,7 +195,7 @@ func main() {
 	engine.RegisterInlineTool(
 		"loop_task",
 		"反复执行一个任务直到满足条件。每次迭代的结果会作为下次的输入。适合迭代优化、渐进式改进等场景。",
-		provider.SchemaOf(LoopInput{}),
+		tool.SchemaOf(LoopInput{}),
 		func(ctx context.Context, argsJSON string) (string, error) {
 			var input LoopInput
 			if err := json.Unmarshal([]byte(argsJSON), &input); err != nil {

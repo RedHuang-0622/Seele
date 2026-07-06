@@ -12,7 +12,7 @@ import (
 	apigw "github.com/RedHuang-0622/Seele/agent/gateway/api"
 	toolgw "github.com/RedHuang-0622/Seele/agent/gateway/tool"
 	"github.com/RedHuang-0622/Seele/agent/tool"
-	"github.com/RedHuang-0622/Seele/provider"
+	hubprov "github.com/RedHuang-0622/Seele/agent/tool/hub"
 	"github.com/RedHuang-0622/Seele/types"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 	registry "github.com/RedHuang-0622/microHub/service_registry"
@@ -80,9 +80,9 @@ type Agent struct {
 	apiGW          apigw.Gateway
 	toolGW         toolgw.Gateway
 	hub            *hubbase.BaseHub
-	hubProvider    *provider.HubProvider
-	mcpProvider    *provider.MCPProvider    // 延迟初始化，mcpMu 保护
-	inlineProvider *provider.InlineProvider // 延迟初始化
+	hubProvider    *hubprov.HubProvider
+	mcpProvider    *tool.MCPProvider    // 延迟初始化，mcpMu 保护
+	inlineProvider *tool.InlineProvider // 延迟初始化
 	mcpMu          sync.Mutex
 	opts           Options
 	shutdown       chan struct{}
@@ -142,8 +142,8 @@ func New(opts Options) (*Agent, error) {
 	llmClient := api.NewChatClient(opts.LLMConfig).WithAccountPool(pool)
 
 	// 7. Hub + HubProvider（构造失败不启动 hub）
-	hub := hubbase.New(provider.NewHubRouter())
-	hubProv, err := provider.NewHubProvider(hub, opts.ToolCallTimeOut)
+	hub := hubbase.New(hubprov.NewHubRouter())
+	hubProv, err := hubprov.NewHubProvider(hub, opts.ToolCallTimeOut)
 	if err != nil {
 		return nil, fmt.Errorf("agent: new hub provider: %w", err)
 	}
@@ -185,11 +185,11 @@ func New(opts Options) (*Agent, error) {
 // ── Provider 访问 ────────────────────────────────────────────────────────────
 
 // Hub 返回 HubProvider，提供 Skills / Retire / Restore 管理。
-func (a *Agent) Hub() *provider.HubProvider { return a.hubProvider }
+func (a *Agent) Hub() *hubprov.HubProvider { return a.hubProvider }
 
 // MCP 返回 MCPProvider（延迟初始化），提供 MCP Server 的 Attach / Detach / Refresh。
 // 首次调用时自动创建并注册到 tool_holder。若 Shutdown 已开始则返回 nil。
-func (a *Agent) MCP() *provider.MCPProvider {
+func (a *Agent) MCP() *tool.MCPProvider {
 	a.mcpMu.Lock()
 	defer a.mcpMu.Unlock()
 
@@ -199,7 +199,7 @@ func (a *Agent) MCP() *provider.MCPProvider {
 			return nil
 		default:
 		}
-		a.mcpProvider = provider.NewMCPProvider()
+		a.mcpProvider = tool.NewMCPProvider()
 		a.tools.Register(a.mcpProvider)
 		a.opts.Logger.Infof("MCP provider initialized")
 	}
@@ -209,7 +209,7 @@ func (a *Agent) MCP() *provider.MCPProvider {
 // RegisterInlineTool 注册一个 Go 函数工具。首次调用时自动创建 InlineProvider。
 func (a *Agent) RegisterInlineTool(name, desc string, inputSchema map[string]interface{}, handler func(ctx context.Context, argsJSON string) (string, error)) {
 	if a.inlineProvider == nil {
-		a.inlineProvider = provider.NewInlineProvider()
+		a.inlineProvider = tool.NewInlineProvider()
 		a.tools.Register(a.inlineProvider)
 		a.opts.Logger.Infof("Inline provider initialized")
 	}
