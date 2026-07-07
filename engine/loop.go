@@ -127,34 +127,46 @@ func (e *Engine) ChatStream(ctx context.Context, userInput string, onChunk func(
 	return reply, err
 }
 
-// restoreFromCache 尝试从缓存恢复对话历史。
-// 命中条件：sessionID 有值、缓存存在、未过期。
+// restoreFromCache 尝试从缓存或持久化存储恢复对话历史。
+// 优先从缓存读取（TTL + 置信度），未命中时尝试从存储恢复。
 func (e *Engine) restoreFromCache() {
-	if e.cache == nil || e.sessionID == "" {
+	if e.sessionID == "" {
 		return
 	}
-	val, ok := e.cache.Get(e.sessionID)
-	if !ok || val == "" {
-		return
+	// 1. 尝试从缓存恢复（TTL + 置信度）
+	if e.cache != nil {
+		val, ok := e.cache.Get(e.sessionID)
+		if ok && val != "" {
+			var cached []types.Message
+			if err := json.Unmarshal([]byte(val), &cached); err == nil && len(cached) > 0 {
+				e.history = cached
+				return
+			}
+		}
 	}
-	var cached []types.Message
-	if err := json.Unmarshal([]byte(val), &cached); err != nil {
-		return
+	// 2. 缓存未命中，尝试从持久化存储恢复
+	if e.store != nil {
+		stored, err := e.store.Load(e.sessionID)
+		if err == nil && len(stored) > 0 {
+			e.history = stored
+		}
 	}
-	if len(cached) == 0 {
-		return
-	}
-	e.history = cached
 }
 
-// saveToCache 将当前对话历史存入缓存。
+// saveToCache 将当前对话历史存入缓存和持久化存储。
 func (e *Engine) saveToCache() {
-	if e.cache == nil || e.sessionID == "" || len(e.history) == 0 {
+	if e.sessionID == "" || len(e.history) == 0 {
 		return
 	}
-	data, err := json.Marshal(e.history)
-	if err != nil {
-		return
+	// 写入缓存
+	if e.cache != nil {
+		data, err := json.Marshal(e.history)
+		if err == nil {
+			e.cache.SetWithTTL(e.sessionID, string(data), 5*time.Minute)
+		}
 	}
-	e.cache.SetWithTTL(e.sessionID, string(data), 5*time.Minute)
+	// 写入持久化存储
+	if e.store != nil {
+		_ = e.store.Save(e.sessionID, e.history)
+	}
 }

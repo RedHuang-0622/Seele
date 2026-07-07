@@ -12,6 +12,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/contexts/cache"
+	"github.com/RedHuang-0622/Seele/contexts/storage"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
@@ -26,6 +27,7 @@ type Engine struct {
 	history []types.Message
 	sessionID string // 缓存键
 	cache     cache.Provider
+	store     *storage.Store
 }
 
 // Option 配置 Engine 的创建参数。
@@ -43,6 +45,14 @@ func WithSessionConfig(cfg SessionConfig) Option {
 func WithCache(c cache.Provider) Option {
 	return func(e *Engine) {
 		e.cache = c
+	}
+}
+
+// WithStore 设置会话持久化存储。当 store 不为 nil 时，Chat/ChatStream 会在
+// 每次循环结束后将历史保存到持久化存储，并在启动时优先从缓存、其次从存储恢复。
+func WithStore(s *storage.Store) Option {
+	return func(e *Engine) {
+		e.store = s
 	}
 }
 

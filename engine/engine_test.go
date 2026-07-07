@@ -118,9 +118,9 @@ func (m *mockLLMServer) handler(w http.ResponseWriter, r *http.Request) {
 							"delta": map[string]interface{}{
 								"tool_calls": []map[string]interface{}{
 									{
-										"index":    i,
-										"id":       tc.ID,
-										"type":     tc.Type,
+										"index": i,
+										"id":    tc.ID,
+										"type":  tc.Type,
 										"function": map[string]interface{}{
 											"name":      tc.Function.Name,
 											"arguments": tc.Function.Arguments,
@@ -277,7 +277,7 @@ func TestEngine_Chat_WithToolCalls(t *testing.T) {
 	defer a.Shutdown()
 
 	// Register a simple inline tool for the ReAct loop to dispatch
-	a.RegisterInlineTool(
+	a.RegisterTool(
 		"echo_tool",
 		"A test tool that echoes input",
 		map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
