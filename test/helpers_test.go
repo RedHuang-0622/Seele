@@ -12,7 +12,8 @@ import (
 	"sync"
 
 	"github.com/RedHuang-0622/Seele/agent/api"
-	"github.com/RedHuang-0622/Seele/agent/tool"
+	holder "github.com/RedHuang-0622/Seele/agent/tool/holder"
+	"github.com/RedHuang-0622/Seele/agent/tool/interfaces"
 	seelectx "github.com/RedHuang-0622/Seele/contexts"
 	
 	types "github.com/RedHuang-0622/Seele/types"
@@ -35,11 +36,11 @@ func newMockProvider(name string) *mockProvider {
 
 func (p *mockProvider) ProviderName() string { return p.name }
 
-func (p *mockProvider) Tools() []tool.ToolEntry {
-	entries := make([]tool.ToolEntry, len(p.tools))
+func (p *mockProvider) Tools() []interfaces.ToolEntry {
+	entries := make([]interfaces.ToolEntry, len(p.tools))
 	for i, t := range p.tools {
 		name := t.Function.Name
-		entries[i] = tool.ToolEntry{
+		entries[i] = interfaces.ToolEntry{
 			Definition: t,
 			Handler:    &mockHandler{toolName: name},
 		}
@@ -269,10 +270,10 @@ func (m *autoMockLLM) handler(w http.ResponseWriter, r *http.Request) {
 // 适配 workplan.AgentFactory 接口。
 type sessionFactory struct {
 	Llm   *api.ChatClient
-	Tools *tool.Holder
+	Tools *holder.Holder
 }
 
-func newSessionFactory(llmClient *api.ChatClient, tools *tool.Holder) *sessionFactory {
+func newSessionFactory(llmClient *api.ChatClient, tools *holder.Holder) *sessionFactory {
 	return &sessionFactory{Llm: llmClient, Tools: tools}
 }
 
@@ -281,11 +282,11 @@ func (f *sessionFactory) NewAgent(systemPrompt string) workplan.Agent {
 }
 
 // newTestTools 快速创建一个带 LLM 的 tool_holder（用于 Fork 等多 Runtime 场景）。
-func newTestTools(baseURL string) (*api.ChatClient, *tool.Holder) {
+func newTestTools(baseURL string) (*api.ChatClient, *holder.Holder) {
 	llmClient := api.NewChatClient(types.LLMConfig{
 		BaseURL: baseURL, APIKey: "x", Model: "x", Timeout: 5,
 	})
-	return llmClient, tool.New()
+	return llmClient, holder.New()
 }
 
 // strPtr 返回字符串指针，用于构造 Message.Content。

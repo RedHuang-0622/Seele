@@ -13,7 +13,8 @@ import (
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/agent/api"
-	"github.com/RedHuang-0622/Seele/agent/tool"
+	"github.com/RedHuang-0622/Seele/agent/tool/interfaces"
+	holder "github.com/RedHuang-0622/Seele/agent/tool/holder"
 	seelectx "github.com/RedHuang-0622/Seele/contexts"
 	
 	types "github.com/RedHuang-0622/Seele/types"
@@ -44,10 +45,10 @@ func newControllableProvider(name string) *controllableProvider {
 
 func (p *controllableProvider) ProviderName() string { return p.name }
 
-func (p *controllableProvider) Tools() []tool.ToolEntry {
-	entries := make([]tool.ToolEntry, len(p.tools))
+func (p *controllableProvider) Tools() []interfaces.ToolEntry {
+	entries := make([]interfaces.ToolEntry, len(p.tools))
 	for i, t := range p.tools {
-		entries[i] = tool.ToolEntry{
+		entries[i] = interfaces.ToolEntry{
 			Definition: t,
 			Handler:    &controllableHandler{parent: p},
 		}
@@ -77,7 +78,7 @@ func (h *controllableHandler) Execute(ctx context.Context, argsJSON string) (str
 	if h.parent.failCount > 0 && n <= h.parent.failCount {
 		switch h.parent.failMode {
 		case "unavailable":
-			return "", tool.ErrToolUnavailable
+			return "", interfaces.ErrToolUnavailable
 		case "error":
 			return "", fmt.Errorf("controllable: forced error on call #%d", n)
 		}
@@ -100,8 +101,8 @@ type errProvider struct {
 }
 
 func (p *errProvider) ProviderName() string { return p.name }
-func (p *errProvider) Tools() []tool.ToolEntry {
-	return []tool.ToolEntry{
+func (p *errProvider) Tools() []interfaces.ToolEntry {
+	return []interfaces.ToolEntry{
 		{
 			Definition: types.Tool{
 				Type: "function",
@@ -123,19 +124,19 @@ func (h *errHandler) Execute(ctx context.Context, argsJSON string) (string, erro
 }
 
 // newTestFixture 创建一套完整的测试夹具。
-func newTestFixture() (*api.ChatClient, *tool.Holder, *mockLLMServer, *controllableProvider) {
+func newTestFixture() (*api.ChatClient, *holder.Holder, *mockLLMServer, *controllableProvider) {
 	mockSrv := newMockLLMServer()
 	llmClient := api.NewChatClient(types.LLMConfig{
 		BaseURL: mockSrv.URL(), APIKey: "test-key", Model: "test-model", Timeout: 5,
 	})
-	tools := tool.New()
+	tools := holder.New()
 	cp := newControllableProvider("test")
 	cp.AddTool("test_tool", "test tool for limit testing")
 	tools.Register(cp)
 	return llmClient, tools, mockSrv, cp
 }
 
-func newTestSession(llmClient *api.ChatClient, tools *tool.Holder, prompt string, loops int) *seelectx.Holder {
+func newTestSession(llmClient *api.ChatClient, tools *holder.Holder, prompt string, loops int) *seelectx.Holder {
 	return seelectx.New(llmClient, tools, prompt, seelectx.SessionConfig{MaxLoops: loops})
 }
 
