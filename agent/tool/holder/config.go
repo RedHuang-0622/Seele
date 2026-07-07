@@ -6,6 +6,7 @@ import "time"
 type HolderConfig struct {
 	DispatchRetries    int
 	DispatchRetryDelay time.Duration
+	ToolCallTimeout    time.Duration // 单次工具调用超时，0=不限制
 }
 
 // DefaultHolderConfig 返回推荐的 Holder 配置。
@@ -13,6 +14,7 @@ func DefaultHolderConfig() HolderConfig {
 	return HolderConfig{
 		DispatchRetries:    3,
 		DispatchRetryDelay: 2 * time.Second,
+		ToolCallTimeout:    30 * time.Second,
 	}
 }
 
@@ -23,6 +25,9 @@ func (c HolderConfig) Effective() HolderConfig {
 	}
 	if c.DispatchRetryDelay <= 0 {
 		c.DispatchRetryDelay = d.DispatchRetryDelay
+	}
+	if c.ToolCallTimeout <= 0 {
+		c.ToolCallTimeout = d.ToolCallTimeout
 	}
 	return c
 }

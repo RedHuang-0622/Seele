@@ -27,6 +27,7 @@ type Holder struct {
 
 	DispatchRetries    int
 	DispatchRetryDelay time.Duration
+	ToolCallTimeout    time.Duration // 单次工具调用超时
 
 	pluginMgr *PluginManager
 }
@@ -43,6 +44,7 @@ func NewWithConfig(cfg HolderConfig) *Holder {
 		providers:          make([]interfaces.ToolProvider, 0),
 		DispatchRetries:    cfg.DispatchRetries,
 		DispatchRetryDelay: cfg.DispatchRetryDelay,
+		ToolCallTimeout:    cfg.ToolCallTimeout,
 	}
 	h.state.Store(&holderState{
 		toolMap:  make(map[string]interfaces.ToolEntry),
@@ -99,6 +101,11 @@ func (h *Holder) Tools() []types.Tool {
 }
 
 // Dispatch 通过 map 查找 handler 并执行。瞬时错误自动重试。
+//
+// 超时策略：
+//   - 若 ctx 已有 Deadline 且早于 ToolCallTimeout，优先使用 ctx 的 Deadline
+//   - 否则用 ToolCallTimeout 派生超时 context
+//   - 各 handler 的 Execute 必须尊重传入 context 的 Deadline（review P0 修复）
 func (h *Holder) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
 	st := h.state.Load()
 	entry, ok := st.toolMap[name]
@@ -106,11 +113,30 @@ func (h *Holder) Dispatch(ctx context.Context, name, argsJSON string) (string, e
 		return "", fmt.Errorf("tool.dispatch: tool %q not found", name)
 	}
 
+	// 派生超时 context：优先用配置的 ToolCallTimeout
+	deadline, hasDeadline := ctx.Deadline()
+	callCtx := ctx
+	if h.DispatchRetries > 0 {
+		timeout := h.DispatchRetryDelay * time.Duration(h.DispatchRetries)
+		if h.ToolCallTimeout > timeout {
+			timeout = h.ToolCallTimeout
+		}
+		if !hasDeadline || time.Until(deadline) > timeout {
+			var cancel context.CancelFunc
+			callCtx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+	}
+
 	var lastErr error
 	for attempt := 0; attempt < h.DispatchRetries; attempt++ {
-		result, err := entry.Handler.Execute(ctx, argsJSON)
+		result, err := entry.Handler.Execute(callCtx, argsJSON)
 		if err == nil {
 			return result, nil
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", fmt.Errorf("tool.dispatch: tool %q timeout after %v: %w",
+				name, h.ToolCallTimeout, err)
 		}
 		if !errors.Is(err, interfaces.ErrToolUnavailable) {
 			return "", err
