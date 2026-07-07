@@ -40,6 +40,13 @@ type CalcInput struct {
 	Expression string `json:"expression" desc:"数学表达式，如 2+3*4"`
 }
 
+// CalcOutput 可选：标注工具返回值的结构，框架自动校验。
+// 不传 outputSchema 时 handler 返回自由文本。
+type CalcOutput struct {
+	Result  float64 `json:"result" desc:"计算结果"`
+	Formula string  `json:"formula" desc:"计算公式"`
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -75,6 +82,7 @@ func main() {
 		func(ctx context.Context, argsJSON string) (string, error) {
 			return fmt.Sprintf(`"收到表达式: %s（示例：结果=42）"`, argsJSON), nil
 		},
+		tool.SchemaOf(CalcOutput{}), // outputSchema：handler 返回结果会按此结构校验
 	)
 
 	// ── 3. 查看已注册的工具 ────────────────────────────────────────

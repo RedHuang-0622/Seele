@@ -22,8 +22,9 @@ type ToolHandler interface {
 
 // ToolEntry 是所有 provider 向 holder 暴露的统一结构。
 type ToolEntry struct {
-	Definition types.Tool
-	Handler    ToolHandler
+	Definition   types.Tool
+	Handler      ToolHandler
+	OutputSchema map[string]interface{} // nil 表示无结构化输出约束
 }
 
 // ToolProvider 是所有工具来源的抽象接口。

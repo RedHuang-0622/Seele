@@ -151,10 +151,11 @@ func (h *Holder) Dispatch(ctx context.Context, name, argsJSON string) (string, e
 }
 
 // RegisterInline 直接注册一个 Go 函数工具。
-func (h *Holder) RegisterInline(name, desc string, inputSchema map[string]interface{}, fn func(ctx context.Context, argsJSON string) (string, error)) {
+// optOutput 可选，指定输出 struct 的 SchemaOf，nil 表示无结构化输出约束。
+func (h *Holder) RegisterInline(name, desc string, inputSchema map[string]interface{}, fn func(ctx context.Context, argsJSON string) (string, error), optOutput ...map[string]interface{}) {
 	ip := h.getOrCreateInline()
 	h.mu.Lock()
-	ip.tools[name] = interfaces.ToolEntry{
+	entry := interfaces.ToolEntry{
 		Definition: types.Tool{
 			Type: "function",
 			Function: types.ToolFunction{
@@ -165,6 +166,10 @@ func (h *Holder) RegisterInline(name, desc string, inputSchema map[string]interf
 		},
 		Handler: &inlineHandler{Fn: fn},
 	}
+	if len(optOutput) > 0 && optOutput[0] != nil {
+		entry.OutputSchema = optOutput[0]
+	}
+	ip.tools[name] = entry
 	h.rebuildLocked()
 	h.mu.Unlock()
 }
