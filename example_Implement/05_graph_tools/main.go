@@ -41,7 +41,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent"
-	"github.com/RedHuang-0622/Seele/agent/tool"
+	"github.com/RedHuang-0622/Seele/agent/core/tool"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
 

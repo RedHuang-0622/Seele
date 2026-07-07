@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  GO_VERSION: '1.25'
+
+jobs:
+  # ── 静态分析 + 编译 ─────────────────────────────────
+  vet:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: go mod verify
+        run: go mod verify
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+  # ── 单元测试 + 竞态检测 ─────────────────────────────
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: go test (race)
+        run: go test -race ./... -count=1 -timeout 180s
+
+      - name: go test (coverage)
+        run: |
+          go test -cover ./agent/core/... ./engine/... ./contexts/... ./test/... -count=1 -timeout 120s
+
+  # ── 冒烟测试（mock LLM，无需真实 API key）────────────
+  smoke-test:
+    name: Smoke Tests (Mock)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: build examples
+        run: go build ./example_Implement/...
+
+      - name: run mock integration tests
+        run: |
+          go test ./test/... -count=1 -timeout 120s -v -run "TestRetry|TestMaxLoops|TestHistory"
+          echo "---"
+          go test ./agent/core/tool/... -count=1 -timeout 60s -v
+
+  # ── 示例编译检查（验证示例可编译但不运行）─────────────
+  examples:
+    name: Example Compilation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: build all examples
+        run: go build ./example_Implement/...
+
+      - name: build sdk
+        run: go build ./sdk/...
