@@ -1,6 +1,6 @@
 // 02_inline_tools/main.go
 //
-// RegisterInlineTool 深度演示：声明 struct → SchemaOf 自动生成 JSON Schema。
+// RegisterTool 深度演示：声明 struct → SchemaOf 自动生成 JSON Schema。
 //
 // v0.3 新增 SchemaOf()：告别手写 map[string]interface{}。
 //   声明一个 struct + json/desc/enum/default 标签 = 同时获得：
@@ -164,21 +164,21 @@ func main() {
 
 	// ── 注册工具 ─────────────────────────────────────────────────────
 
-	agt.RegisterInlineTool(
+	agt.RegisterTool(
 		"query_weather",
 		"查询指定城市的天气信息，返回温度、天气状况和湿度",
 		tool.SchemaOf(WeatherInput{}),
 		weatherHandler,
 	)
 
-	agt.RegisterInlineTool(
+	agt.RegisterTool(
 		"process_text",
 		"对文本执行操作：大写(uppercase)、小写(lowercase)、字数统计(count)、反转(reverse)",
 		tool.SchemaOf(TextInput{}),
 		textHandler,
 	)
 
-	agt.RegisterInlineTool(
+	agt.RegisterTool(
 		"create_team",
 		"创建团队并指定负责人和成员",
 		tool.SchemaOf(TeamInput{}),
@@ -186,7 +186,7 @@ func main() {
 	)
 
 	counter := &counterTool{count: make(map[string]int)}
-	agt.RegisterInlineTool(
+	agt.RegisterTool(
 		"counter",
 		"记录并返回工具被调用的总次数，每次调用计数 +1",
 		tool.SchemaOf(CounterInput{}),

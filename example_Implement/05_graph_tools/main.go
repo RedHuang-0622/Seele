@@ -113,7 +113,7 @@ func main() {
 	// 让 LLM 可以并发调度多个子 Agent。
 	// 每个分支有独立的 SystemPrompt 和任务描述。
 
-	engine.RegisterInlineTool(
+	engine.RegisterTool(
 		"fork_agents",
 		"并发启动多个 Agent 执行不同任务，适合多角色并行分析、多角度调研等场景。每个分支独立执行，结果合并为 JSON。",
 		tool.SchemaOf(ForkInput{}),
@@ -153,7 +153,7 @@ func main() {
 	// 让 LLM 可以编排多步骤流水线。
 	// 每个步骤在前一步的输出基础上继续，支持 {{.PrevResult}} 模板变量。
 
-	engine.RegisterInlineTool(
+	engine.RegisterTool(
 		"run_pipeline",
 		"按顺序执行多个步骤，后一步接收前一步的输出作为输入。适合需要逐步推进的复杂任务。",
 		tool.SchemaOf(PipelineInput{}),
@@ -193,7 +193,7 @@ func main() {
 	// 让 LLM 可以执行迭代改进任务。
 	// 每次迭代在上次结果基础上继续，直到输出包含成功标记或达到最大迭代次数。
 
-	engine.RegisterInlineTool(
+	engine.RegisterTool(
 		"loop_task",
 		"反复执行一个任务直到满足条件。每次迭代的结果会作为下次的输入。适合迭代优化、渐进式改进等场景。",
 		tool.SchemaOf(LoopInput{}),

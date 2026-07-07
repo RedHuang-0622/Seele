@@ -65,7 +65,7 @@ func main() {
 	defer agt.Shutdown()
 
 	// ── 2. 注册内联工具 ────────────────────────────────────────────
-	agt.RegisterInlineTool(
+	agt.RegisterTool(
 		"get_current_time",
 		"获取当前日期和时间，支持指定时区",
 		tool.SchemaOf(TimeInput{}),
@@ -75,7 +75,7 @@ func main() {
 		},
 	)
 
-	agt.RegisterInlineTool(
+	agt.RegisterTool(
 		"calculator",
 		"执行基本四则运算",
 		tool.SchemaOf(CalcInput{}),

@@ -211,9 +211,9 @@ func (a *Agent) MCP() *mcp.Provider {
 	return a.mcpProvider
 }
 
-// RegisterInlineTool 注册一个 Go 函数工具（委托给 Holder.RegisterInline）。
+// RegisterTool 注册一个 Go 函数工具（委托给 Holder.RegisterInline）。
 // outputSchema 可选，指定输出 struct 的 SchemaOf()。
-func (a *Agent) RegisterInlineTool(name, desc string, inputSchema map[string]interface{}, handler func(ctx context.Context, argsJSON string) (string, error), outputSchema ...map[string]interface{}) {
+func (a *Agent) RegisterTool(name, desc string, inputSchema map[string]interface{}, handler func(ctx context.Context, argsJSON string) (string, error), outputSchema ...map[string]interface{}) {
 	a.tools.RegisterInline(name, desc, inputSchema, handler, outputSchema...)
 	a.opts.Logger.Infof("inline tool registered: %s", name)
 }
