@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
 	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent/core/tool"
 )
@@ -85,7 +86,7 @@ func main() {
 	}
 
 	// ── 4. 创建 Session 并对话 ──────────────────────────────────────
-	sess := engine.NewSession("你是一个有用的助手，可以查询时间和进行简单计算。", 8)
+	sess := seelectx.New(engine.LLM(), engine.Tools(), "你是一个有用的助手，可以查询时间和进行简单计算。", seelectx.SessionConfig{MaxLoops: 8})
 
 	reply, err := sess.Chat(ctx, "现在几点了？")
 	if err != nil {
@@ -100,7 +101,7 @@ func main() {
 	fmt.Println("\U0001f916 Agent:", reply)
 
 	// ── 5. QuickChat：一次性对话 ────────────────────────────────────
-	reply, err = engine.QuickChat(ctx, "你是一个简洁的助手。", "用一句话介绍 Go 语言。")
+	reply, err = seelectx.New(engine.LLM(), engine.Tools(), "你是一个简洁的助手。", seelectx.SessionConfig{MaxLoops: 8}).Chat(ctx, "用一句话介绍 Go 语言。")
 	if err != nil {
 		log.Fatalf("quickchat error: %v", err)
 	}

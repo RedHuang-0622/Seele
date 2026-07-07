@@ -11,9 +11,9 @@ import (
 	"net/http/httptest"
 	"sync"
 
-	"github.com/RedHuang-0622/Seele/agent/api"
-	holder "github.com/RedHuang-0622/Seele/agent/tool/holder"
-	"github.com/RedHuang-0622/Seele/agent/tool/interfaces"
+	"github.com/RedHuang-0622/Seele/agent/core/api"
+	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
+	"github.com/RedHuang-0622/Seele/agent/core/tool/interfaces"
 	seelectx "github.com/RedHuang-0622/Seele/contexts"
 	
 	types "github.com/RedHuang-0622/Seele/types"

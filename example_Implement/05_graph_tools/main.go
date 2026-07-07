@@ -41,6 +41,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent"
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
 	"github.com/RedHuang-0622/Seele/agent/core/tool"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
@@ -54,7 +55,7 @@ type EngineFactory struct {
 }
 
 func (f *EngineFactory) NewAgent(systemPrompt string) workplan.Agent {
-	return f.engine.NewSession(systemPrompt, 10)
+	return seelectx.New(f.engine.LLM(), f.engine.Tools(), systemPrompt, seelectx.SessionConfig{MaxLoops: 10})
 }
 
 // =============================================================================
@@ -255,14 +256,14 @@ func main() {
 	fmt.Println(strings.Repeat("═", 60))
 
 	// 创建 Session（注意：SystemPrompt 告知 LLM 有这些工具可用）
-	sess := engine.NewSession(`你是工作流编排专家。
+	sess := seelectx.New(engine.LLM(), engine.Tools(), `你是工作流编排专家。
 你可以使用以下工具来执行复杂任务：
 1. fork_agents — 并发执行多个任务（多角色并行）
 2. run_pipeline — 按顺序执行多步骤流水线
 3. loop_task — 循环执行直到条件满足
 
 对于简单问题直接回答，对于复杂任务选择合适的工具。</`,
-		8)
+		seelectx.SessionConfig{MaxLoops: 8})
 
 	// 演示 1：Fork 并行调研
 	fmt.Println("\n📝 用户: 帮我同时调研 Go 语言的并发模型特点和 Rust 的所有权系统")

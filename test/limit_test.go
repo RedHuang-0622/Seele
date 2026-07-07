@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/RedHuang-0622/Seele/agent/api"
-	"github.com/RedHuang-0622/Seele/agent/tool/interfaces"
-	holder "github.com/RedHuang-0622/Seele/agent/tool/holder"
+	"github.com/RedHuang-0622/Seele/agent/core/api"
+	"github.com/RedHuang-0622/Seele/agent/core/tool/interfaces"
+	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
 	seelectx "github.com/RedHuang-0622/Seele/contexts"
 	
 	types "github.com/RedHuang-0622/Seele/types"

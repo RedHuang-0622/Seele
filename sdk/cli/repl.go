@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/RedHuang-0622/Seele/agent"
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
 )
 
 // REPLOptions 控制 REPL 行为。
@@ -48,7 +49,7 @@ func RunREPL(ctx context.Context, opts REPLOptions) {
 		in = os.Stdin
 	}
 
-	agent := opts.Engine.NewSession(opts.SystemPrompt, 16)
+	agent := seelectx.New(opts.Engine.LLM(), opts.Engine.Tools(), opts.SystemPrompt, seelectx.SessionConfig{MaxLoops: 16})
 
 	// 热加载：若指定了 prompt 文件路径，启动文件监听，修改文件无需重启
 	var loader *PromptLoader
@@ -227,7 +228,7 @@ func parseChoiceIndex(s string) int {
 // OneShot 创建临时 Agent，执行单次对话并返回结果。
 // 适合脚本或管道场景。
 func OneShot(ctx context.Context, engine *agent.Agent, systemPrompt, userInput string) (string, error) {
-	return engine.QuickChat(ctx, systemPrompt, userInput)
+	return seelectx.New(engine.LLM(), engine.Tools(), systemPrompt, seelectx.SessionConfig{MaxLoops: 8}).Chat(ctx, userInput)
 }
 
 // OneShotStream 创建临时 Agent，执行单次流式对话。
@@ -236,5 +237,5 @@ func OneShotStream(ctx context.Context, engine *agent.Agent, systemPrompt, userI
 	if onChunk == nil {
 		onChunk = func(delta string) { fmt.Print(delta) }
 	}
-	return engine.QuickChatStream(ctx, systemPrompt, userInput, onChunk)
+	return seelectx.New(engine.LLM(), engine.Tools(), systemPrompt, seelectx.SessionConfig{MaxLoops: 8}).ChatStream(ctx, userInput, onChunk)
 }

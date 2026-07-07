@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
 	mcpprov "github.com/RedHuang-0622/Seele/agent/core/tool/mcp"
 	"github.com/RedHuang-0622/Seele/config"
 )
@@ -101,7 +102,7 @@ func main() {
 	}
 
 	// ── 使用 Agent 调用 MCP 工具 ────────────────────────────────────
-	sess := engine.NewSession("你是文件管理助手，可以读写文件和发起 HTTP 请求。", 8)
+	sess := seelectx.New(engine.LLM(), engine.Tools(), "你是文件管理助手，可以读写文件和发起 HTTP 请求。", seelectx.SessionConfig{MaxLoops: 8})
 
 	reply, err := sess.Chat(ctx, "帮我读取 /tmp/hello.txt 的内容")
 	if err != nil {

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
 	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent/core/tool"
 )
@@ -222,7 +223,7 @@ func main() {
 	}
 
 	// ── 演示对话 ────────────────────────────────────────────────────
-	sess := engine.NewSession("你是一个全能助手，可以查天气、处理文本、创建团队。", 10)
+	sess := seelectx.New(engine.LLM(), engine.Tools(), "你是一个全能助手，可以查天气、处理文本、创建团队。", seelectx.SessionConfig{MaxLoops: 10})
 
 	reply, _ := sess.Chat(ctx, "北京今天天气怎么样？")
 	fmt.Println("\n🌤 天气:", reply)

@@ -12,6 +12,7 @@ import (
 	"net"
 
 	"github.com/RedHuang-0622/Seele/agent"
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -118,7 +119,7 @@ func (s *AgentServer) chatHandler(_ interface{}, ctx context.Context, dec func(i
 		return nil, status.Errorf(codes.NotFound, "session %q not found", req.SessionID)
 	}
 
-	sess := s.agent.NewSession(ref.prompt, ref.maxLoops)
+	sess := seelectx.New(s.agent.LLM(), s.agent.Tools(), ref.prompt, seelectx.SessionConfig{MaxLoops: ref.maxLoops})
 	reply, err := sess.Chat(ctx, req.Input)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "chat failed: %v", err)
@@ -135,7 +136,7 @@ func (s *AgentServer) newSessionHandler(_ interface{}, ctx context.Context, dec 
 	if maxLoops <= 0 {
 		maxLoops = 8
 	}
-	sess := s.agent.NewSession(req.SystemPrompt, maxLoops)
+	sess := seelectx.New(s.agent.LLM(), s.agent.Tools(), req.SystemPrompt, seelectx.SessionConfig{MaxLoops: maxLoops})
 	sid := sess.SessionID()
 
 	s.sessions[sid] = &sessionRef{prompt: req.SystemPrompt, maxLoops: maxLoops}

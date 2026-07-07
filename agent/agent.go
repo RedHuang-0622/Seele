@@ -235,6 +235,14 @@ func (a *Agent) Dispatch(ctx context.Context, name, argsJSON string) (string, er
 	return a.toolGW.Dispatch(ctx, name, argsJSON)
 }
 
+// DirectDispatch 直接调度工具调用（绕过 LLM 循环）。
+func (a *Agent) DirectDispatch(ctx context.Context, name, argsJSON string) (string, error) {
+	return a.toolGW.Dispatch(ctx, name, argsJSON)
+}
+
+// Tools 暴露底层 Holder，供精细控制使用。
+func (a *Agent) Tools() *holder.Holder { return a.tools }
+
 // Shutdown 关闭 Agent，释放资源。并发安全。
 func (a *Agent) Shutdown() {
 	select {

@@ -26,9 +26,10 @@ func (a *Agent) NewPool() *Pool {
 
 // Add 向池中添加一个新会话，返回其索引。
 func (p *Pool) Add(label, prompt string) int {
+	sess := seelectx.New(p.agent.LLM(), p.agent.Tools(), prompt, seelectx.SessionConfig{MaxLoops: 8})
 	p.sessions = append(p.sessions, &namedSession{
 		label:   label,
-		session: p.agent.NewSession(prompt, 8),
+		session: sess,
 	})
 	return len(p.sessions) - 1
 }
