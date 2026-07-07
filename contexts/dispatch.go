@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RedHuang-0622/Seele/contexts/history"
 	types "github.com/RedHuang-0622/Seele/types"
 )
 
@@ -55,7 +56,7 @@ func (h *Holder) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCa
 			if qID, ok := parseApprovalQuestionID(r.content); ok {
 				final, err := h.resolveApproval(ctx, r.content, qID)
 				if err != nil {
-					content := TruncateToolResult(
+					content := history.TruncateToolResult(
 						fmt.Sprintf(`{"error":%q}`, "approval failed: "+err.Error()),
 						h.cfg.ContextCfg.MaxToolResultChars)
 					h.history = append(h.history, types.Message{
@@ -65,7 +66,7 @@ func (h *Holder) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCa
 						Content:    &content,
 					})
 				} else {
-					content := TruncateToolResult(final, h.cfg.ContextCfg.MaxToolResultChars)
+					content := history.TruncateToolResult(final, h.cfg.ContextCfg.MaxToolResultChars)
 					h.history = append(h.history, types.Message{
 						Role:       "tool",
 						ToolCallID: r.tc.ID,
@@ -77,7 +78,7 @@ func (h *Holder) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCa
 			}
 		}
 
-		content := TruncateToolResult(r.content, h.cfg.ContextCfg.MaxToolResultChars)
+		content := history.TruncateToolResult(r.content, h.cfg.ContextCfg.MaxToolResultChars)
 		h.history = append(h.history, types.Message{
 			Role:       "tool",
 			ToolCallID: r.tc.ID,

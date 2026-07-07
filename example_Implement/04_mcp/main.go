@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
-	"github.com/RedHuang-0622/Seele/agent/tool"
 	mcpprov "github.com/RedHuang-0622/Seele/agent/tool/mcp"
 	"github.com/RedHuang-0622/Seele/config"
 )

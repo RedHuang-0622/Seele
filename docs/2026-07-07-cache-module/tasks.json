@@ -1,0 +1,48 @@
+{
+  "goal": "缓存模块 + context 架构优化（方案 A：全内聚+装饰器）",
+  "workdir": "docs/2026-07-07-cache-module/",
+  "tasks": [
+    {
+      "id": "G2",
+      "name": "config.go 拆分优化：拆为 SessionConfig + ContextConfig + CacheConfig",
+      "deps": [],
+      "files_hint": ["context/config.go"],
+      "prompt": "将 context/config.go 拆分为三个独立文件：session_config.go（SessionConfig）、context_config.go（ContextConfig）、cache_config.go（CacheConfig）。原 config.go 精简为 re-export 或删除。另：在 cache_config.go 中补充 FileCache 所需的 CacheConfig 结构体（Enabled/BaseDir/DefaultTTL/MaxEntries/MaxEntrySize）。保持 DefaultSessionConfig()/DefaultContextConfig()/DefaultCacheConfig() 命名一致。提交 message 标注 [G2]。"
+    },
+    {
+      "id": "G1",
+      "name": "CacheProvider 接口 + FileCache 实现",
+      "deps": ["G2"],
+      "files_hint": ["context/cache.go", "context/cache_config.go"],
+      "prompt": "在 context/cache.go 中实现完整的 CacheProvider 接口和 FileCache 存储引擎：1) CacheProvider 接口（Get/GetEntry/Set/SetWithTTL/Delete/ClearByPrefix/ClearAll/Keys/List/Stats）；2) FileCache 结构体（baseDir 目录存储 + sync.Map 内存索引 + atomic.Int64 统计）；3) CacheEntry 和 CacheStats 数据类型；4) 内容寻址：SHA256(value) 作为文件名，key→hash 索引映射实现去重；5) TTL 过期检查。只依赖标准库（crypto/sha256, os, sync, sync/atomic, time, path/filepath, encoding/json）。提交 message 标注 [G1]。"
+    },
+    {
+      "id": "G3",
+      "name": "Holder 集成缓存 + 公开查看方法",
+      "deps": ["G1"],
+      "files_hint": ["context/holder.go"],
+      "prompt": "在 context/holder.go 的 Holder struct 中添加 CacheProvider 字段。添加 NewWithCache 构造函数。添加公开方法：CacheStats()、CacheList()、CacheClear(prefix string)。注意：cache 为 nil 时所有方法安全返回零值。提交 message 标注 [G3]。"
+    },
+    {
+      "id": "G4",
+      "name": "chatLoop 缓存感知集成",
+      "deps": ["G1"],
+      "files_hint": ["context/chat.go"],
+      "prompt": "在 context/chat.go 的 chatLoop 方法中集成缓存检查逻辑。流程：userInput → buildCacheKey(input) → cache.Get(key) → 命中则直接解析并返回（跳过 LLM 调用），未命中正常执行。注意：仅缓存纯文本回复的最终结果；tool_call 路径不缓存（LLM 的决策可能变化）。缓存键使用 sha256(history+input)。无缓存时（cache==nil）完全退化为原行为。提交 message 标注 [G4]。"
+    },
+    {
+      "id": "G5",
+      "name": "CachedStrategy 图编排缓存适配器",
+      "deps": ["G2"],
+      "files_hint": ["workplan/cache_strategy.go", "workplan/strategy.go"],
+      "prompt": "在 workplan/cache_strategy.go 中实现 CachedStrategy（实现 NodeStrategy 接口）。通过函数注入（cacheGetter/cacheSetter）而非直接引用 CacheProvider 类型，避免循环依赖。提供 CachedStrategyOption 函数式配置。缓存键 = sha256(keyPrefix + input + PrevOutput)。支持 WithCacheTTL / WithCacheKeyPrefix 配置。提交到 workplan/ 包，不引入任何外部 import。提交 message 标注 [G5]。"
+    },
+    {
+      "id": "G6",
+      "name": "Cache 装配件工具注册函数",
+      "deps": ["G3"],
+      "files_hint": ["context/cache_tool.go"],
+      "prompt": "在 context/cache_tool.go 中实现 RegisterCacheTools 函数，将缓存查看/管理方法注册为 LLM 可调用的工具。使用 SchemaOf 自动生成 JSON Schema。注册的工具：_cache_stats（查看命中率/条目/大小）、_cache_list（列出所有条目，可选前缀过滤）、_cache_get（获取指定 key 的内容）、_cache_clear（按前缀清理）。注意：context 包不直接 import provider/schema.go，通过函数参数注入 SchemaOf。提交 message 标注 [G6]。"
+    }
+  ]
+}

@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	seelectx "github.com/RedHuang-0622/Seele/context"
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
 )
 
 // =============================================================================

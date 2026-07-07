@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	seelectx "github.com/RedHuang-0622/Seele/context"
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
 )
 
 // Pool 管理多个对话会话，支持切换当前活跃会话。

@@ -14,12 +14,15 @@ type SessionConfig struct {
 
 	// ContextCfg 上下文管理配置。零值时使用 DefaultContextConfig()。
 	ContextCfg ContextConfig
+
+	// CacheCfg 缓存配置。零值时使用 DefaultCacheConfig()。
+	CacheCfg CacheConfig
 }
 
 // DefaultSessionConfig 返回推荐的会话配置。
 func DefaultSessionConfig() SessionConfig {
 	return SessionConfig{
-		MaxLoops:             4,
+		MaxLoops:               4,
 		MaxConcurrentDispatch: 5,
 		MaxApprovalLoops:      10,
 	}
@@ -38,5 +41,6 @@ func (c SessionConfig) Effective() SessionConfig {
 		c.MaxApprovalLoops = d.MaxApprovalLoops
 	}
 	c.ContextCfg = c.ContextCfg.Effective()
+	c.CacheCfg = c.CacheCfg.Effective()
 	return c
 }

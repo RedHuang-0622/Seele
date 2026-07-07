@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 
-	"github.com/RedHuang-0622/Seele/agent/tool"
-	seelectx "github.com/RedHuang-0622/Seele/context"
+	holder "github.com/RedHuang-0622/Seele/agent/tool/holder"
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
 )
 
 // ── Session 创建 ────────────────────────────────────────────────────────────
@@ -34,5 +34,5 @@ func (a *Agent) DirectDispatch(ctx context.Context, name, argsJSON string) (stri
 	return a.toolGW.Dispatch(ctx, name, argsJSON)
 }
 
-// Tools 暴露底层 tool.Holder，供需要精细控制的场景使用。
-func (a *Agent) Tools() *tool.Holder { return a.tools }
+// Tools 暴露底层 holder.Holder，供需要精细控制的场景使用。
+func (a *Agent) Tools() *holder.Holder { return a.tools }
