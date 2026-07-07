@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/RedHuang-0622/Seele/agent"
-	seelectx "github.com/RedHuang-0622/Seele/contexts"
+	"github.com/RedHuang-0622/Seele/engine"
 )
 
 // REPLOptions 控制 REPL 行为。
@@ -49,8 +49,6 @@ func RunREPL(ctx context.Context, opts REPLOptions) {
 		in = os.Stdin
 	}
 
-	agent := seelectx.New(opts.Engine.LLM(), opts.Engine.Tools(), opts.SystemPrompt, seelectx.SessionConfig{MaxLoops: 16})
-
 	// 热加载：若指定了 prompt 文件路径，启动文件监听，修改文件无需重启
 	var loader *PromptLoader
 	if opts.SystemPromptPath != "" {
@@ -60,16 +58,13 @@ func RunREPL(ctx context.Context, opts REPLOptions) {
 			fmt.Fprintf(out, "[警告] prompt 文件加载失败 (%v)，使用内置默认值\n", err)
 		} else {
 			defer loader.Stop()
-			// 用文件内容替换内置 prompt
-			agent.UpdateSystemPrompt(loader.Get())
 			opts.SystemPrompt = loader.Get()
 		}
 	}
 
-	// 审批回调：LLM 不参与审批流程，REPL 直接处理
-	agent.OnApproval = func(ctx context.Context, approvalJSON string) (string, error) {
-		return handleApproval(out, in, approvalJSON)
-	}
+	session := engine.New(opts.Engine, engine.WithSystemPrompt(opts.SystemPrompt))
+
+	// 审批回调暂不支持 engine 模式（LLM 自行处理工具返回的审批请求）
 
 	scanner := bufio.NewScanner(in)
 
@@ -95,18 +90,20 @@ func RunREPL(ctx context.Context, opts REPLOptions) {
 				fmt.Fprintf(out, "  %-20s %s  [%s]\n", s.Name, s.Description, s.Addr)
 			}
 		case "/clear":
-			agent.ClearHistory()
+			session.ClearHistory()
 			// 热加载模式：重读文件，确保清空后使用最新 prompt
 			if loader != nil {
 				if content, err := loader.Reload(); err == nil {
-					agent.UpdateSystemPrompt(content)
+					session.ClearHistory()
+					session = engine.New(opts.Engine, engine.WithSystemPrompt(content))
 				}
 			}
 			fmt.Fprintln(out, "[历史已清空]")
 		case "/reload":
 			if loader != nil {
 				if content, err := loader.Reload(); err == nil {
-					agent.UpdateSystemPrompt(content)
+					session.ClearHistory()
+					session = engine.New(opts.Engine, engine.WithSystemPrompt(content))
 					fmt.Fprintf(out, "[prompt 已重载] (%d bytes)\n", len(content))
 				} else {
 					fmt.Fprintf(out, "[重载失败] %v\n", err)
@@ -116,13 +113,13 @@ func RunREPL(ctx context.Context, opts REPLOptions) {
 			}
 		default:
 			if opts.Stream {
-				_, err = agent.ChatStream(ctx, line, func(delta string) {
+				_, err = session.ChatStream(ctx, line, func(delta string) {
 					fmt.Fprint(out, delta)
 				})
 				fmt.Fprintln(out) // 流结束后补换行
 			} else {
 				var reply string
-				reply, err = agent.Chat(ctx, line)
+				reply, err = session.Chat(ctx, line)
 				if err == nil {
 					fmt.Fprintln(out, reply)
 				}
@@ -225,17 +222,17 @@ func parseChoiceIndex(s string) int {
 	return 0
 }
 
-// OneShot 创建临时 Agent，执行单次对话并返回结果。
+// OneShot 创建临时会话，执行单次对话并返回结果。
 // 适合脚本或管道场景。
-func OneShot(ctx context.Context, engine *agent.Agent, systemPrompt, userInput string) (string, error) {
-	return seelectx.New(engine.LLM(), engine.Tools(), systemPrompt, seelectx.SessionConfig{MaxLoops: 8}).Chat(ctx, userInput)
+func OneShot(ctx context.Context, agt *agent.Agent, systemPrompt, userInput string) (string, error) {
+	return engine.New(agt, engine.WithSystemPrompt(systemPrompt)).Chat(ctx, userInput)
 }
 
-// OneShotStream 创建临时 Agent，执行单次流式对话。
+// OneShotStream 创建临时会话，执行单次流式对话。
 // onChunk 为 nil 时默认直接打印到 stdout。
-func OneShotStream(ctx context.Context, engine *agent.Agent, systemPrompt, userInput string, onChunk func(string)) (string, error) {
+func OneShotStream(ctx context.Context, agt *agent.Agent, systemPrompt, userInput string, onChunk func(string)) (string, error) {
 	if onChunk == nil {
 		onChunk = func(delta string) { fmt.Print(delta) }
 	}
-	return seelectx.New(engine.LLM(), engine.Tools(), systemPrompt, seelectx.SessionConfig{MaxLoops: 8}).ChatStream(ctx, userInput, onChunk)
+	return engine.New(agt, engine.WithSystemPrompt(systemPrompt)).ChatStream(ctx, userInput, onChunk)
 }

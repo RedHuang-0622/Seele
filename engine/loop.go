@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
@@ -27,6 +28,14 @@ func (e *Engine) chatLoop(ctx context.Context, userInput string, onChunk func(st
 		Role:    "user",
 		Content: &userInput,
 	})
+
+	// 压缩过长的历史，避免超出 LLM 上下文窗口
+	if seelectx.EstimateHistoryTokens(e.history) > 6144 {
+		compressed, err := seelectx.CompressHistory(ctx, e.llm, e.history, 8192)
+		if err == nil {
+			e.history = compressed
+		}
+	}
 
 	for loop := 0; loop < e.cfg.MaxLoops; loop++ {
 		tools := e.agent.VisibleTools(ctx)
