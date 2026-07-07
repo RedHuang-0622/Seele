@@ -2,7 +2,9 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/RedHuang-0622/Seele/types"
 )
@@ -10,6 +12,7 @@ import (
 // chatLoop 是 Chat / ChatStream 的统一 ReAct 循环实现。
 //
 // 循环流程：
+//  0. 检查缓存（如有）：sessionID → 从 cache.Provider 恢复历史
 //  1. 追加 user 消息到 history
 //  2. 通过 Agent.VisibleTools 获取当前可见工具列表
 //  3. 调用 LLM（同步或流式）
@@ -17,6 +20,9 @@ import (
 //  5. 若 LLM 返回 tool_calls → 逐条 dispatch，结果截断后注入 history，回到步骤 2
 //  6. 达到 MaxLoops 仍未获得纯文本回复 → 返回错误
 func (e *Engine) chatLoop(ctx context.Context, userInput string, onChunk func(string)) (string, error) {
+	// 步骤 0：从缓存恢复历史（TTL + 置信度）
+	e.restoreFromCache()
+
 	e.history = append(e.history, types.Message{
 		Role:    "user",
 		Content: &userInput,
@@ -99,11 +105,47 @@ func truncateResult(content string, maxChars int) string {
 
 // Chat 追加用户输入并运行 ReAct 循环，返回最终文本回复。
 func (e *Engine) Chat(ctx context.Context, userInput string) (string, error) {
-	return e.chatLoop(ctx, userInput, nil)
+	reply, err := e.chatLoop(ctx, userInput, nil)
+	e.saveToCache()
+	return reply, err
 }
 
 // ChatStream 追加用户输入并运行流式 ReAct 循环。
 // 文本 token 到达时通过 onChunk 实时推送；tool_call 阶段不会触发 onChunk。
 func (e *Engine) ChatStream(ctx context.Context, userInput string, onChunk func(string)) (string, error) {
-	return e.chatLoop(ctx, userInput, onChunk)
+	reply, err := e.chatLoop(ctx, userInput, onChunk)
+	e.saveToCache()
+	return reply, err
+}
+
+// restoreFromCache 尝试从缓存恢复对话历史。
+// 命中条件：sessionID 有值、缓存存在、未过期。
+func (e *Engine) restoreFromCache() {
+	if e.cache == nil || e.sessionID == "" {
+		return
+	}
+	val, ok := e.cache.Get(e.sessionID)
+	if !ok || val == "" {
+		return
+	}
+	var cached []types.Message
+	if err := json.Unmarshal([]byte(val), &cached); err != nil {
+		return
+	}
+	if len(cached) == 0 {
+		return
+	}
+	e.history = cached
+}
+
+// saveToCache 将当前对话历史存入缓存。
+func (e *Engine) saveToCache() {
+	if e.cache == nil || e.sessionID == "" || len(e.history) == 0 {
+		return
+	}
+	data, err := json.Marshal(e.history)
+	if err != nil {
+		return
+	}
+	e.cache.SetWithTTL(e.sessionID, string(data), 5*time.Minute)
 }

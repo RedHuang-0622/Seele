@@ -7,18 +7,25 @@
 package engine
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/RedHuang-0622/Seele/agent"
+	"github.com/RedHuang-0622/Seele/contexts/cache"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
 // Engine 封装 Agent 与 LLM 客户端，提供便捷的 ReAct 循环。
 //
 // 每个 Engine 实例管理自己的对话历史，支持多轮对话。
+// 可选的 cache.Provider 用于会话历史缓存（JSON 文件，带 TTL + 置信度）。
 type Engine struct {
 	agent   *agent.Agent
 	llm     types.ChatCompleter
 	cfg     SessionConfig
 	history []types.Message
+	sessionID string // 缓存键
+	cache     cache.Provider
 }
 
 // Option 配置 Engine 的创建参数。
@@ -28,6 +35,14 @@ type Option func(*Engine)
 func WithSessionConfig(cfg SessionConfig) Option {
 	return func(e *Engine) {
 		e.cfg = cfg
+	}
+}
+
+// WithCache 设置会话历史缓存（JSON 文件，TTL + 置信度）。
+// Chat/ChatStream 会优先从缓存读取历史，命中且未过期则跳过完整 ReAct 循环。
+func WithCache(c cache.Provider) Option {
+	return func(e *Engine) {
+		e.cache = c
 	}
 }
 
@@ -52,9 +67,10 @@ func WithSystemPrompt(prompt string) Option {
 // 必须传入 *agent.Agent，不传 opts 时使用默认配置。
 func New(a *agent.Agent, opts ...Option) *Engine {
 	e := &Engine{
-		agent: a,
-		llm:   a.LLM(),
-		cfg:   DefaultSessionConfig(),
+		agent:     a,
+		llm:       a.LLM(),
+		cfg:       DefaultSessionConfig(),
+		sessionID: fmt.Sprintf("sess_%d", time.Now().UnixNano()),
 	}
 	for _, opt := range opts {
 		opt(e)
