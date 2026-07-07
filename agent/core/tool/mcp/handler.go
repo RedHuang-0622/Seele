@@ -8,7 +8,7 @@ import (
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/RedHuang-0622/Seele/agent/tool/interfaces"
+	"github.com/RedHuang-0622/Seele/agent/core/tool/interfaces"
 )
 
 // Handler 通过 stdio/SSE 调用 MCP Server 工具。实现 interfaces.ToolHandler 接口。

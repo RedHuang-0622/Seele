@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RedHuang-0622/Seele/agent/tool/interfaces"
+	"github.com/RedHuang-0622/Seele/agent/core/tool/interfaces"
 	"github.com/RedHuang-0622/microHub/pb_api"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 )

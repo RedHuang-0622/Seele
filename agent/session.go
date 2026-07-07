@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 
-	holder "github.com/RedHuang-0622/Seele/agent/tool/holder"
+	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
 	seelectx "github.com/RedHuang-0622/Seele/contexts"
 )
 

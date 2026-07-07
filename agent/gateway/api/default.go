@@ -3,7 +3,7 @@ package apigw
 import (
 	"context"
 
-	"github.com/RedHuang-0622/Seele/agent/api"
+	"github.com/RedHuang-0622/Seele/agent/core/api"
 )
 
 // DefaultGateway 是基于 api.AccountPool 的默认 API 网关实现。

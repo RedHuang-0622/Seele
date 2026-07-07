@@ -12,7 +12,7 @@ import (
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/RedHuang-0622/Seele/agent/tool/interfaces"
+	"github.com/RedHuang-0622/Seele/agent/core/tool/interfaces"
 	types "github.com/RedHuang-0622/Seele/types"
 )
 

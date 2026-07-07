@@ -3,7 +3,7 @@ package toolgw
 import (
 	"context"
 
-	holder "github.com/RedHuang-0622/Seele/agent/tool/holder"
+	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
 	"github.com/RedHuang-0622/Seele/types"
 )
 

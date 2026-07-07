@@ -7,7 +7,7 @@ package apigw
 import (
 	"context"
 
-	"github.com/RedHuang-0622/Seele/agent/api"
+	"github.com/RedHuang-0622/Seele/agent/core/api"
 )
 
 // Gateway 是 API 账号网关的抽象接口。
