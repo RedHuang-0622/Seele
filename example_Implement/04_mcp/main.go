@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
-	seelectx "github.com/RedHuang-0622/Seele/contexts"
+	"github.com/RedHuang-0622/Seele/engine"
 	mcpprov "github.com/RedHuang-0622/Seele/agent/core/tool/mcp"
 	"github.com/RedHuang-0622/Seele/config"
 )
@@ -35,15 +35,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("LLM config load failed: %v", err)
 	}
-	engine, err := agent.New(agent.Options{
+	agt, err := agent.New(agent.Options{
 		LLMConfig: llmCfg,
 	})
 	if err != nil {
 		log.Fatalf("engine init failed: %v", err)
 	}
-	defer engine.Shutdown()
+	defer agt.Shutdown()
 
-	mcp := engine.MCP()
+	mcp := agt.MCP()
 	if mcp == nil {
 		log.Fatal("MCP provider 初始化失败（引擎可能已关闭）")
 	}
@@ -97,14 +97,14 @@ func main() {
 	// 多个 MCP Server 时，工具名自动加前缀：filesystem__read_file
 	// 单个 MCP Server 时，工具名保持原样：read_file
 	fmt.Println("\n=== 所有可用工具（Hub + MCP + Inline） ===")
-	for _, t := range engine.Tools().Tools() {
+	for _, t := range agt.Tools().Tools() {
 		fmt.Printf("  • %-30s — %s\n", t.Function.Name, truncate(t.Function.Description, 50))
 	}
 
 	// ── 使用 Agent 调用 MCP 工具 ────────────────────────────────────
-	sess := seelectx.New(engine.LLM(), engine.Tools(), "你是文件管理助手，可以读写文件和发起 HTTP 请求。", seelectx.SessionConfig{MaxLoops: 8})
+	eng := engine.New(agt, engine.WithSystemPrompt( "你是文件管理助手，可以读写文件和发起 HTTP 请求。"))
 
-	reply, err := sess.Chat(ctx, "帮我读取 /tmp/hello.txt 的内容")
+	reply, err := eng.Chat(ctx, "帮我读取 /tmp/hello.txt 的内容")
 	if err != nil {
 		log.Printf("chat error: %v", err)
 	}

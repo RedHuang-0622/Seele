@@ -1,6 +1,12 @@
 // 01_hello_seele/main.go
 //
-// Seele 框架最简入门：创建 Agent、注册内联工具、发起对话。
+// Seele 框架最简入门：创建 Agent → 注入 Engine → 发起对话。
+//
+// 架构流程：
+//
+//	agent (装配 config + tools)
+//	  └── engine.New(agent) (注入 agent，内部管理 contexts)
+//	        └── eng.Chat(ctx, "hello") (唯一对话入口，内部 ReAct loop)
 //
 // 无需启动任何外部服务 —— 工具是纯 Go 函数，零网络开销。
 //
@@ -17,7 +23,7 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
-	seelectx "github.com/RedHuang-0622/Seele/contexts"
+	"github.com/RedHuang-0622/Seele/engine"
 	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent/core/tool"
 )
@@ -25,13 +31,6 @@ import (
 // =============================================================================
 // 声明工具参数 struct → SchemaOf 自动生成 JSON Schema
 // =============================================================================
-//
-// 标签说明（全部可选）：
-//   json:"name"              → Schema 属性名
-//   json:"name,omitempty"    → 非必填字段
-//   desc:"说明"               → description（LLM 据此决定传参）
-//   enum:"A,B,C"             → 枚举约束（string 字段）
-//   default:"值"             → 默认值
 
 type TimeInput struct {
 	Timezone string `json:"timezone,omitempty" desc:"IANA 时区，如 Asia/Shanghai，默认 Asia/Shanghai" default:"Asia/Shanghai"`
@@ -44,23 +43,22 @@ type CalcInput struct {
 func main() {
 	ctx := context.Background()
 
-	// ── 1. 初始化 Engine ────────────────────────────────────────────
+	// ── 1. Agent：装配 LLM 配置 + 工具 ────────────────────────────
 	llmCfg, err := config.LoadConfig("../config/config.yaml")
 	if err != nil {
 		log.Fatalf("LLM config load failed: %v", err)
 	}
-	engine, err := agent.New(agent.Options{
+	agt, err := agent.New(agent.Options{
 		LLMConfig:       llmCfg,
 		ToolCallTimeOut: 5 * time.Second,
 	})
 	if err != nil {
-		log.Fatalf("engine init failed: %v\n请确认 config/config.yaml 中的 ai_api_key 已正确填写", err)
+		log.Fatalf("agent init failed: %v\n请确认 config/config.yaml 中的 ai_api_key 已正确填写", err)
 	}
-	defer engine.Shutdown()
+	defer agt.Shutdown()
 
-	// ── 2. 注册内联工具：struct → SchemaOf 一行搞定 ────────────────
-
-	engine.RegisterInlineTool(
+	// ── 2. 注册内联工具 ────────────────────────────────────────────
+	agt.RegisterInlineTool(
 		"get_current_time",
 		"获取当前日期和时间，支持指定时区",
 		tool.SchemaOf(TimeInput{}),
@@ -70,7 +68,7 @@ func main() {
 		},
 	)
 
-	engine.RegisterInlineTool(
+	agt.RegisterInlineTool(
 		"calculator",
 		"执行基本四则运算",
 		tool.SchemaOf(CalcInput{}),
@@ -81,31 +79,32 @@ func main() {
 
 	// ── 3. 查看已注册的工具 ────────────────────────────────────────
 	fmt.Println("=== 已注册工具 ===")
-	for _, t := range engine.Tools().Tools() {
+	for _, t := range agt.Tools().Tools() {
 		fmt.Printf("  • %s — %s\n", t.Function.Name, truncate(t.Function.Description, 60))
 	}
 
-	// ── 4. 创建 Session 并对话 ──────────────────────────────────────
-	sess := seelectx.New(engine.LLM(), engine.Tools(), "你是一个有用的助手，可以查询时间和进行简单计算。", seelectx.SessionConfig{MaxLoops: 8})
+	// ── 4. Engine：注入 Agent，内部接管 contexts ───────────────────
+	eng := engine.New(agt, engine.WithSystemPrompt("你是一个有用的助手，可以查询时间和进行简单计算。"))
 
-	reply, err := sess.Chat(ctx, "现在几点了？")
+	// 多轮对话（engine 内部维护 history）
+	reply, err := eng.Chat(ctx, "现在几点了？")
 	if err != nil {
 		log.Fatalf("chat error: %v", err)
 	}
-	fmt.Println("\n\U0001f916 Agent:", reply)
+	fmt.Println("\n🤖 Agent:", reply)
 
-	reply, err = sess.Chat(ctx, "帮我算一下 (15 + 27) * 3 等于多少？")
+	reply, err = eng.Chat(ctx, "帮我算一下 (15 + 27) * 3 等于多少？")
 	if err != nil {
 		log.Fatalf("chat error: %v", err)
 	}
-	fmt.Println("\U0001f916 Agent:", reply)
+	fmt.Println("🤖 Agent:", reply)
 
-	// ── 5. QuickChat：一次性对话 ────────────────────────────────────
-	reply, err = seelectx.New(engine.LLM(), engine.Tools(), "你是一个简洁的助手。", seelectx.SessionConfig{MaxLoops: 8}).Chat(ctx, "用一句话介绍 Go 语言。")
+	// ── 5. 一次性对话：用完即弃 ────────────────────────────────────
+	reply, err = engine.New(agt, engine.WithSystemPrompt("你是一个简洁的助手。")).Chat(ctx, "用一句话介绍 Go 语言。")
 	if err != nil {
 		log.Fatalf("quickchat error: %v", err)
 	}
-	fmt.Println("\n\U0001f4dd QuickChat:", reply)
+	fmt.Println("\n📝 QuickChat:", reply)
 }
 
 func truncate(s string, n int) string {

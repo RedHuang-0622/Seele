@@ -7,6 +7,10 @@
 //     - 编译期类型安全（json.Unmarshal(argsJSON, &input)）
 //     - JSON Schema 自动生成（供 LLM 理解参数）
 //
+// 架构：
+//
+//	agent.New → engine.New → eng.Chat()
+//
 // 运行前：
 //   1. 编辑 ../config/config.yaml，填入你的 LLM API Key
 //   2. go run .
@@ -23,7 +27,7 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
-	seelectx "github.com/RedHuang-0622/Seele/contexts"
+	"github.com/RedHuang-0622/Seele/engine"
 	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent/core/tool"
 )
@@ -31,19 +35,6 @@ import (
 // =============================================================================
 // 工具 1：天气查询
 // =============================================================================
-//
-// 只需声明一个 struct + 标签，SchemaOf 自动生成 JSON Schema：
-//
-//	{
-//	  "type": "object",
-//	  "properties": {
-//	    "city": {"type": "string", "description": "城市名称，如 北京、上海、Tokyo"},
-//	    "date": {"type": "string", "description": "日期，格式 YYYY-MM-DD"}
-//	  },
-//	  "required": ["city"]
-//	}
-//
-// 注意：Date 的 json tag 含 omitempty → 不会出现在 required 列表。
 
 type WeatherInput struct {
 	City string `json:"city" desc:"城市名称，如 北京、上海、Tokyo"`
@@ -73,10 +64,6 @@ func weatherHandler(ctx context.Context, argsJSON string) (string, error) {
 // =============================================================================
 // 工具 2：文本处理
 // =============================================================================
-//
-// 使用 enum tag 限制 operation 的取值：
-//
-//	"operation": {"type": "string", "enum": ["uppercase","lowercase","count","reverse"], ...}
 
 type TextInput struct {
 	Text      string `json:"text" desc:"要处理的文本"`
@@ -112,8 +99,6 @@ func textHandler(ctx context.Context, argsJSON string) (string, error) {
 // =============================================================================
 // 工具 3：嵌套结构体
 // =============================================================================
-//
-// SchemaOf 递归展开嵌套 struct，自动生成嵌套 JSON Schema。
 
 type Person struct {
 	Name string `json:"name" desc:"姓名"`
@@ -148,7 +133,6 @@ type counterTool struct {
 	count map[string]int
 }
 
-// CounterInput 无字段 → SchemaOf 生成 {"type":"object","properties":{}}
 type CounterInput struct{}
 
 func (c *counterTool) handler(ctx context.Context, argsJSON string) (string, error) {
@@ -170,37 +154,31 @@ func main() {
 	if err != nil {
 		log.Fatalf("LLM config load failed: %v", err)
 	}
-	engine, err := agent.New(agent.Options{
+	agt, err := agent.New(agent.Options{
 		LLMConfig: llmCfg,
 	})
 	if err != nil {
-		log.Fatalf("engine init failed: %v", err)
+		log.Fatalf("agent init failed: %v", err)
 	}
-	defer engine.Shutdown()
+	defer agt.Shutdown()
 
-	// ── 注册工具：struct → SchemaOf 一行搞定 ───────────────────────
+	// ── 注册工具 ─────────────────────────────────────────────────────
 
-	// 旧写法（手写 map）：
-	//   map[string]interface{}{"type":"object","properties":map[string]interface{}{...},"required":[...]}
-	//
-	// 新写法（声明 struct）：
-	//   tool.SchemaOf(WeatherInput{})
-
-	engine.RegisterInlineTool(
+	agt.RegisterInlineTool(
 		"query_weather",
 		"查询指定城市的天气信息，返回温度、天气状况和湿度",
 		tool.SchemaOf(WeatherInput{}),
 		weatherHandler,
 	)
 
-	engine.RegisterInlineTool(
+	agt.RegisterInlineTool(
 		"process_text",
 		"对文本执行操作：大写(uppercase)、小写(lowercase)、字数统计(count)、反转(reverse)",
 		tool.SchemaOf(TextInput{}),
 		textHandler,
 	)
 
-	engine.RegisterInlineTool(
+	agt.RegisterInlineTool(
 		"create_team",
 		"创建团队并指定负责人和成员",
 		tool.SchemaOf(TeamInput{}),
@@ -208,34 +186,35 @@ func main() {
 	)
 
 	counter := &counterTool{count: make(map[string]int)}
-	engine.RegisterInlineTool(
+	agt.RegisterInlineTool(
 		"counter",
 		"记录并返回工具被调用的总次数，每次调用计数 +1",
 		tool.SchemaOf(CounterInput{}),
 		counter.handler,
 	)
 
-	// ── 打印已注册工具的 Schema（验证自动生成结果） ────────────────
+	// ── 打印工具 Schema ──────────────────────────────────────────────
 	fmt.Println("=== 自动生成的 JSON Schema ===")
-	for _, t := range engine.Tools().Tools() {
+	for _, t := range agt.Tools().Tools() {
 		schemaJSON, _ := json.MarshalIndent(t.Function.Parameters, "", "  ")
 		fmt.Printf("\n--- %s ---\n%s\n", t.Function.Name, string(schemaJSON))
 	}
 
-	// ── 演示对话 ────────────────────────────────────────────────────
-	sess := seelectx.New(engine.LLM(), engine.Tools(), "你是一个全能助手，可以查天气、处理文本、创建团队。", seelectx.SessionConfig{MaxLoops: 10})
+	// ── Engine：注入 Agent，内部接管 contexts ────────────────────────
+	eng := engine.New(agt, engine.WithSystemPrompt("你是一个全能助手，可以查天气、处理文本、创建团队。"))
 
-	reply, _ := sess.Chat(ctx, "北京今天天气怎么样？")
+	// 多轮对话（engine 内部维护 history）
+	reply, _ := eng.Chat(ctx, "北京今天天气怎么样？")
 	fmt.Println("\n🌤 天气:", reply)
 
-	reply, _ = sess.Chat(ctx, "把 Shanghai 的天气用大写字母写出来")
+	reply, _ = eng.Chat(ctx, "把 Shanghai 的天气用大写字母写出来")
 	fmt.Println("📝 文本:", reply)
 
-	reply, _ = sess.Chat(ctx, "创建一个名为 Avengers 的团队，Leader 是 Tony 40岁，成员有 Steve 100岁 和 Thor 1500岁")
+	reply, _ = eng.Chat(ctx, "创建一个名为 Avengers 的团队，Leader 是 Tony 40岁，成员有 Steve 100岁 和 Thor 1500岁")
 	fmt.Println("👥 团队:", reply)
 
 	for i := 0; i < 3; i++ {
-		reply, _ = sess.Chat(ctx, "调用一次计数器")
+		reply, _ = eng.Chat(ctx, "调用一次计数器")
 	}
 	fmt.Println("🔢 计数器:", reply)
 
