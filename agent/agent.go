@@ -71,15 +71,18 @@ func (l *stdLogger) Errorf(f string, a ...interface{}) { log.Printf("[agent] ERR
 //	  ├── tools     *holder.Holder      ← 持有工具注册中心
 //	  ├── apiGW     apigw.Gateway     ← API 账号网关
 //	  ├── toolGW    toolgw.Gateway    ← 工具网关（含插件过滤）
+//	  ├── pool      *api.AccountPool  ← 账号池
 //	  │
 //	  ├── NewSession() *seelectx.Holder
 //	  ├── QuickChat()
-//	  └── Shutdown()
+//	  ├── Shutdown()
+//	  └── ...
 type Agent struct {
 	llmClient      *api.ChatClient
 	tools          *holder.Holder
 	apiGW          apigw.Gateway
 	toolGW         toolgw.Gateway
+	pool           *api.AccountPool
 	hub            *hubbase.BaseHub
 	hubProvider    *hubprov.HubProvider
 	mcpProvider    *mcp.Provider    // 延迟初始化，mcpMu 保护
@@ -172,6 +175,7 @@ func New(opts Options) (*Agent, error) {
 		tools:        tools,
 		apiGW:        apiGW,
 		toolGW:       toolGW,
+		pool:         pool,
 		hub:          hub,
 		hubProvider:  hubProv,
 		opts:         opts,
@@ -211,6 +215,24 @@ func (a *Agent) MCP() *mcp.Provider {
 func (a *Agent) RegisterInlineTool(name, desc string, inputSchema map[string]interface{}, handler func(ctx context.Context, argsJSON string) (string, error)) {
 	a.tools.RegisterInline(name, desc, inputSchema, handler)
 	a.opts.Logger.Infof("inline tool registered: %s", name)
+}
+
+// ── 新增访问器 ──────────────────────────────────────────────────────────
+
+// AccountPool 返回账号池。
+func (a *Agent) AccountPool() *api.AccountPool { return a.pool }
+
+// LLM 返回 LLM 客户端（实现 types.ChatCompleter 接口）。
+func (a *Agent) LLM() types.ChatCompleter { return a.llmClient }
+
+// VisibleTools 返回当前对 LLM 可见的工具列表。
+func (a *Agent) VisibleTools(ctx context.Context) []types.Tool {
+	return a.toolGW.VisibleTools(ctx)
+}
+
+// Dispatch 委托工具网关执行工具调用。
+func (a *Agent) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
+	return a.toolGW.Dispatch(ctx, name, argsJSON)
 }
 
 // Shutdown 关闭 Agent，释放资源。并发安全。
