@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/RedHuang-0622/Seele/contexts/history"
 	"github.com/RedHuang-0622/Seele/contexts/react"
@@ -43,7 +43,7 @@ func (h *Holder) chatLoop(ctx context.Context, userInput string, strategy react.
 			if history.NeedCompression(h.history, cfg.CompressThreshold) {
 				compressed, err := history.CompressHistory(ctx, h.llm, h.history, cfg.MaxTokens)
 				if err != nil {
-					log.Printf("[seelectx.chatLoop] %s compression failed: %v, using hard trim", h.sessionID, err)
+					slog.Default().Info("compression failed, using hard trim", "session_id", h.sessionID, "error", err)
 					h.history = history.TrimHistory(h.history, cfg.MaxTokens)
 				} else {
 					h.history = compressed
@@ -99,6 +99,13 @@ func (h *Holder) Chat(ctx context.Context, userInput string) (string, error) {
 // 方便前端将其渲染为独立的"思考"模块。
 func (h *Holder) ChatStream(ctx context.Context, userInput string, onChunk func(delta string)) (string, error) {
 	return h.chatLoop(ctx, userInput, &react.StreamStrategy{OnChunk: onChunk})
+}
+
+// ChatStreamEvents 与 ChatStream 功能相同，但通过 onEvent 传递结构化事件。
+// 事件类型包括文本 delta、推理内容、工具调用、错误和完成信号，
+// 方便前端渲染更丰富的流式交互体验。
+func (h *Holder) ChatStreamEvents(ctx context.Context, userInput string, onEvent func(types.StreamEvent)) (string, error) {
+	return h.chatLoop(ctx, userInput, &react.StreamEventStrategy{OnEvent: onEvent})
 }
 
 // buildChatCacheKey 构建聊天缓存键。
