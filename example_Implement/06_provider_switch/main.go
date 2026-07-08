@@ -1,242 +1,212 @@
 // 06_provider_switch/main.go
 //
-// Seele 号池多 Provider 切换演示：
-//   1. OpenAI -> "你好，请记住我的名字：小明"
-//   2. Anthropic -> "刚才我说了什么？"（需历史上下文）
-//   3. OpenAI -> "你上次回复了什么？"（追忆对话）
+// Seele 号池多 Provider 切换演示（真实 API）：
 //
-// 核心机制：ChatClient.SetProviderFilter(ProviderType) 切换号池，
-// 对话历史跨 Provider 共享。
+//	1. /switch openai     -> "你好，请记住我的名字：小明"
+//	2. /switch anthropic  -> "刚才我说了什么？"（需历史上下文）
+//	3. /switch openai     -> "刚刚你回复了什么内容？"（追忆对话）
 //
-// 运行：go run .
+// 运行前：
+//   1. 编辑 ../config/config.yaml，填入你的 LLM API Key
+//   2. 创建 ../config/accounts.yaml（可选，多 Provider 切换用，见末尾格式）
+//   3. go run .
+//
+// 无 accounts.yaml 时不执行切换演示，只展示单 Provider 基础对话。
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"log"
+	"os"
+	"time"
 
+	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/types"
+	"github.com/RedHuang-0622/Seele/config"
+	"github.com/RedHuang-0622/Seele/engine"
 )
 
 func main() {
-	// ===================================================================
-	// 1. Mock 服务
-	// ===================================================================
-	mkOpenAI := func(req mockReq) mockResp {
-		msg := fmt.Sprintf(`"【OpenAI回复】你说的是: %s。我是GPT-4！"`, lastUserMsg(req.Messages))
-		return mockResp{Content: msg}
-	}
-	openaiSrv := newMockProvider("openai", "/chat/completions", mkOpenAI)
-	defer openaiSrv.Close()
+	ctx := context.Background()
 
-	mkAnthropic := func(req mockReq) mockResp {
-		var history string
-		for _, m := range req.Messages {
-			if m.Content != nil {
-				history += "[" + m.Role + "] " + *m.Content + " "
-			}
-		}
-		msg := fmt.Sprintf(`"【Anthropic回复】历史: %s。Claude说: 我记住了！"`, history)
-		return mockResp{Content: msg}
+	// ── 1. 加载 LLM 配置 ────────────────────────────────────────────
+	llmCfg, err := config.LoadConfig("../config/config.yaml")
+	if err != nil {
+		log.Fatalf("config load failed: %v\n请编辑 ../config/config.yaml 填入 API Key", err)
 	}
-	anthropicSrv := newMockProvider("anthropic", "/v1/messages", mkAnthropic)
-	defer anthropicSrv.Close()
+	if llmCfg.APIKey == "" || llmCfg.APIKey == "sk-your-key-here" {
+		log.Fatalf("config.yaml 中 ai_api_key 未配置，请先填入你的 API Key")
+	}
 
+	// ── 2. 加载号池配置（可选）──────────────────────────────────────
+	accountPath := "../config/accounts.yaml"
+	accountsExist := fileExists(accountPath)
+
+	opts := agent.Options{
+		LLMConfig:       llmCfg,
+		ToolCallTimeOut: 15 * time.Second,
+		HubStartupDelay: 10,
+	}
+	if accountsExist {
+		opts.ProviderAccountPath = accountPath
+	}
+
+	// ── 3. 创建 Agent ──────────────────────────────────────────────
+	agt, err := agent.New(opts)
+	if err != nil {
+		log.Fatalf("agent init failed: %v", err)
+	}
+	defer agt.Shutdown()
+
+	// ── 4. 获取 ChatClient，注入号池 ──────────────────────────────
+	chatClient := agt.LLM().(*api.ChatClient)
+	pool := chatClient.AccountPool()
+
+	// ── 5. Engine ──────────────────────────────────────────────────
+	eng := engine.New(agt, engine.WithSystemPrompt(
+		"你是一个多 Provider 助手，会记住对话历史。当前回答中请标明你的身份（如 GPT 或 Claude）。",
+	))
+
+	// ── 6. 注册工具 ────────────────────────────────────────────────
+	agt.RegisterTool(
+		"get_time",
+		"获取当前时间",
+		map[string]any{"type": "object", "properties": map[string]any{}},
+		func(_ context.Context, _ string) (string, error) {
+			return fmt.Sprintf(`"当前时间: %s"`, time.Now().Format("2006-01-02 15:04:05")), nil
+		},
+	)
+
+	// ── 7. 显示号池信息 ──────────────────────────────────────────
 	fmt.Println("=== Seele 多 Provider 切换演示 ===")
 	fmt.Println()
 
-	// ===================================================================
-	// 2. 号池
-	// ===================================================================
-	pool := api.NewAccountPool(
-		&api.Account{Name: "openai-main", Provider: api.ProviderOpenAI, BaseURL: openaiSrv.URL, APIKey: "sk-1", Model: "gpt-4", Priority: 1},
-		&api.Account{Name: "anthropic-main", Provider: api.ProviderAnthropic, BaseURL: anthropicSrv.URL, APIKey: "sk-2", Model: "claude-3-5", Priority: 2},
-	)
+	if pool != nil {
+		fmt.Printf("📡 号池: %d 个账号\n", len(pool.All()))
+		for _, a := range pool.All() {
+			s := "●"
+			if a.Disabled {
+				s = "○"
+			}
+			url := shorten(a.BaseURL, 40)
+			fmt.Printf("   %s [%s] %s → %s\n", s, a.Provider, a.Name, url)
+		}
+	} else {
+		fmt.Printf("📡 单账号: %s\n", llmCfg.BaseURL)
+	}
 
-	// ===================================================================
-	// 3. 装配
-	// ===================================================================
-	llmClient := api.NewChatClient(types.LLMConfig{Model: "gpt-4"}).WithAccountPool(pool)
-	session := newSession(llmClient, "你是一个多 Provider 助手，会记住对话历史。")
+	// 检测是否有多个 Provider
+	hasOpenAI := false
+	hasAnthropic := false
+	if pool != nil {
+		for _, a := range pool.All() {
+			if a.Provider == api.ProviderOpenAI && !a.Disabled {
+				hasOpenAI = true
+			}
+			if a.Provider == api.ProviderAnthropic && !a.Disabled {
+				hasAnthropic = true
+			}
+		}
+	}
+	canSwitch := hasOpenAI && hasAnthropic
 
-	// ---- Step 1: OpenAI ----
-	fmt.Println("--- Step 1: /switch openai ---")
-	llmClient.SetProviderFilter(api.ProviderOpenAI)
-	r1 := chat(session, "你好，请记住我的名字：小明")
-	fmt.Println("  OpenAI:", r1)
+	if !canSwitch {
+		fmt.Println()
+		fmt.Println("⚠️  未检测到多 Provider 配置，仅演示单 Provider 基础对话。")
+		fmt.Println("   要实现多 Provider 切换，请创建 ../config/accounts.yaml，格式：")
+		fmt.Println(`
+  accounts:
+    - name: openai-main
+      provider: openai
+      base_url: https://api.openai.com/v1
+      api_key: sk-xxx
+      model: gpt-4
+      priority: 1
+    - name: anthropic-main
+      provider: anthropic
+      base_url: https://api.anthropic.com
+      api_key: sk-ant-xxx
+      model: claude-3-5-sonnet-20241022
+      priority: 2`)
+		fmt.Println()
+		// 单 Provider 演示
+		demoSimpleChat(eng)
+		return
+	}
+
+	// ── 8. 多 Provider 切换演示 ─────────────────────────────────
+	fmt.Println()
+	fmt.Println("✅ 检测到多 Provider 号池，开始切换演示")
 	fmt.Println()
 
-	// ---- Step 2: Anthropic ----
-	fmt.Println("--- Step 2: /switch anthropic ---")
-	llmClient.SetProviderFilter(api.ProviderAnthropic)
-	r2 := chat(session, "刚才我说了什么？我的名字是什么？")
-	fmt.Println("  Anthropic:", r2)
-	fmt.Println()
+	// Step 1: OpenAI
+	fmt.Println("─── Step 1: /switch openai ───")
+	chatClient.SetProviderFilter(api.ProviderOpenAI)
+	r1, err := eng.Chat(ctx, "你好，请记住我的名字：小明")
+	printReply("OpenAI", r1, err)
 
-	// ---- Step 3: OpenAI 追问 ----
-	fmt.Println("--- Step 3: /switch openai ---")
-	llmClient.SetProviderFilter(api.ProviderOpenAI)
-	r3 := chat(session, "刚才 Anthropic 回复了什么内容？总结一下。")
-	fmt.Println("  OpenAI:", r3)
-	fmt.Println()
+	// Step 2: Anthropic
+	fmt.Println("─── Step 2: /switch anthropic ───")
+	chatClient.SetProviderFilter(api.ProviderAnthropic)
+	r2, err := eng.Chat(ctx, "刚才我说了什么？我的名字是什么？")
+	printReply("Anthropic", r2, err)
 
-	// ---- 历史 ----
-	fmt.Println("--- 完整对话历史 ---")
-	for i, m := range session.msgs {
+	// Step 3: 回到 OpenAI 追问
+	fmt.Println("─── Step 3: /switch openai（追忆）───")
+	chatClient.SetProviderFilter(api.ProviderOpenAI)
+	r3, err := eng.Chat(ctx, "刚刚 Anthropic 回复了什么内容？把整个对话总结一下。")
+	printReply("OpenAI", r3, err)
+
+	// 历史
+	fmt.Println("─── 完整对话历史 ───")
+	for i, m := range eng.History() {
 		c := ""
 		if m.Content != nil {
 			c = *m.Content
 		}
-		if len(c) > 100 {
-			c = c[:100] + "..."
+		if len(c) > 120 {
+			c = c[:120] + "..."
+		}
+		if len(m.ToolCalls) > 0 {
+			c = "[tool_call: " + m.ToolCalls[0].Function.Name + "]"
 		}
 		fmt.Printf("  [%d] %-9s %s\n", i, m.Role, c)
 	}
 	fmt.Println()
-	fmt.Println("要点：对话历史跨 Provider 共享，/switch 只切换号池，不丢上下文。")
+	fmt.Println("✅ 要点：对话历史跨 Provider 完全共享，/switch 只切换 API 路由，不丢上下文。")
 }
 
-// =====================================================================
-// 最小 AnthropicStrategy（演示扩展）
-// =====================================================================
-func init() {
-	api.RegisterProviderStrategy(&exampleAnthropicStrategy{})
+func demoSimpleChat(eng *engine.Engine) {
+	ctx := context.Background()
+
+	fmt.Println("─── 基础对话 ───")
+	r1, err := eng.Chat(ctx, "你好！请简单介绍一下你自己。")
+	printReply("Agent", r1, err)
+
+	r2, err := eng.Chat(ctx, "现在几点了？")
+	printReply("Agent", r2, err)
 }
 
-type exampleAnthropicStrategy struct{}
-
-func (s *exampleAnthropicStrategy) Name() string                         { return "anthropic" }
-func (s *exampleAnthropicStrategy) Endpoint() string                      { return "/v1/messages" }
-func (s *exampleAnthropicStrategy) AuthHeader(apiKey string) (string, string) { return "x-api-key", apiKey }
-func (s *exampleAnthropicStrategy) SSEHeaders() map[string]string {
-	return map[string]string{"Accept": "text/event-stream", "anthropic-version": "2023-06-01"}
-}
-func (s *exampleAnthropicStrategy) ParseSSEEvent(_, _ string) ([]api.SSEEvent, error) { return nil, nil }
-
-func (s *exampleAnthropicStrategy) BuildRequest(model string, messages []types.Message, _ []types.Tool, stream bool) ([]byte, error) {
-	type aMsg struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-	type aReq struct {
-		Model     string `json:"model"`
-		Messages  []aMsg `json:"messages"`
-		MaxTokens int    `json:"max_tokens"`
-		System    string `json:"system,omitempty"`
-		Stream    bool   `json:"stream,omitempty"`
-	}
-	var sys string
-	var msgs []aMsg
-	for _, m := range messages {
-		c := ""
-		if m.Content != nil {
-			c = *m.Content
-		}
-		if m.Role == "system" {
-			sys = c
-		} else {
-			msgs = append(msgs, aMsg{Role: m.Role, Content: c})
-		}
-	}
-	req := aReq{Model: model, Messages: msgs, MaxTokens: 4096, Stream: stream}
-	if sys != "" {
-		req.System = sys
-	}
-	return json.Marshal(req)
-}
-
-func (s *exampleAnthropicStrategy) ParseResponse(body []byte) (types.Message, error) {
-	var raw struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return types.Message{}, fmt.Errorf("Anthropic parse: %w", err)
-	}
-	var full string
-	for _, c := range raw.Content {
-		full += c.Text
-	}
-	return types.Message{Role: "assistant", Content: &full}, nil
-}
-
-var _ api.ProviderStrategy = (*exampleAnthropicStrategy)(nil)
-
-// =====================================================================
-// session
-// =====================================================================
-type session struct {
-	llm  types.ChatCompleter
-	msgs []types.Message
-}
-
-func newSession(llm types.ChatCompleter, sysPrompt string) *session {
-	return &session{llm: llm, msgs: []types.Message{{Role: "system", Content: &sysPrompt}}}
-}
-
-func (s *session) chat(ctx context.Context, input string) string {
-	s.msgs = append(s.msgs, types.Message{Role: "user", Content: &input})
-	msg, err := s.llm.Complete(ctx, s.msgs, nil)
+func printReply(label string, content string, err error) {
 	if err != nil {
-		return fmt.Sprintf("[error: %v]", err)
+		fmt.Printf("  ❌ [%s] %v\n\n", label, err)
+	} else {
+		fmt.Printf("  🤖 [%s] %s\n\n", label, content)
 	}
-	if msg.Content != nil {
-		s.msgs = append(s.msgs, msg)
-		return *msg.Content
+}
+
+// ── 辅助 ──────────────────────────────────────────────────────────
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func shorten(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return ""
+	return s[:n] + "..."
 }
 
-func chat(s *session, input string) string {
-	return s.chat(context.Background(), input)
-}
-
-// =====================================================================
-// Mock
-// =====================================================================
-type mockReq struct {
-	Messages []types.Message `json:"messages"`
-}
-type mockResp struct{ Content string }
-type mockHandler func(mockReq) mockResp
-
-func newMockProvider(name, ep string, h mockHandler) *httptest.Server {
-	mux := http.NewServeMux()
-	mux.HandleFunc(ep, func(w http.ResponseWriter, r *http.Request) {
-		var req mockReq
-		json.NewDecoder(r.Body).Decode(&req)
-		resp := h(req)
-		switch name {
-		case "openai":
-			json.NewEncoder(w).Encode(map[string]any{
-				"id": "mock-o",
-				"choices": []map[string]any{{
-					"index": 0,
-					"message":       map[string]any{"role": "assistant", "content": resp.Content},
-					"finish_reason": "stop",
-				}},
-			})
-		case "anthropic":
-			json.NewEncoder(w).Encode(map[string]any{
-				"id": "mock-a",
-				"content": []map[string]any{{"type": "text", "text": resp.Content}},
-				"role":    "assistant",
-			})
-		}
-	})
-	return httptest.NewServer(mux)
-}
-
-func lastUserMsg(msgs []types.Message) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "user" && msgs[i].Content != nil {
-			return *msgs[i].Content
-		}
-	}
-	return ""
-}
