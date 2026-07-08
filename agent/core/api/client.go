@@ -26,6 +26,7 @@ type ChatClient struct {
 	Client *http.Client
 	pool            *AccountPool     // 账号池，非必填
 	strategy        ProviderStrategy // 传输层策略，nil 时通过 effectiveStrategy 自动选择
+	provider        ProviderType     // llm_config.provider: 锁死本轮消息格式，优先于 account.Provider
 	providerFilter  ProviderType     // 非空时只从 pool 获取该 provider 的账号
 }
 
@@ -42,8 +43,20 @@ func (c *ChatClient) WithStrategy(s ProviderStrategy) *ChatClient {
 	return c
 }
 
-// SetProviderFilter 设置 provider 筛选器，后续 Get 只返回该 provider 的账号。
-// 空值清除筛选，恢复 round-robin。
+// SetProvider 设置会话级 provider，决定消息格式（策略选择依据）。
+// 应在首次请求前调用，调用后不可更改（历史格式一致性）。
+func (c *ChatClient) SetProvider(p ProviderType) *ChatClient {
+	c.provider = p
+	return c
+}
+
+// Provider 返回当前会话级 provider，空值表示默认 "openai" 格式。
+func (c *ChatClient) Provider() ProviderType {
+	return c.provider
+}
+
+// SetProviderFilter 设置账号筛选器，后续 Get 只返回该 provider 的账号。
+// 空值清除筛选，恢复 round-robin。不影响消息格式（格式由 SetProvider 决定）。
 func (c *ChatClient) SetProviderFilter(p ProviderType) *ChatClient {
 	c.providerFilter = p
 	return c
@@ -86,18 +99,24 @@ func (c *ChatClient) effectiveAccount() *Account {
 	return nil
 }
 
-// effectiveStrategy 根据当前设置或账号 provider 选择传输层策略。
+// effectiveStrategy 根据会话级 provider（由 llm_config.provider 设置）选择传输层策略。
 //
 // 优先级：
-//  1. ChatClient 上显式设置的 strategy
-//  2. Account.Provider 对应的已注册策略
-//  3. 默认 "openai"
+//  1. ChatClient 上显式设置的 strategy（WithStrategy）
+//  2. c.provider（llm_config.provider 设定，推荐）
+//  3. acct.Provider（账号级 provider，兼容旧格式）
+//  4. 默认 "openai"
+//
+// 注意：llm_config.provider 优先于 acct.Provider，确保同一 session 内消息格式一致。
 func (c *ChatClient) effectiveStrategy(acct *Account) ProviderStrategy {
 	if c.strategy != nil {
 		return c.strategy
 	}
 	name := "openai"
-	if acct != nil && acct.Provider != "" {
+	switch {
+	case c.provider != "":
+		name = string(c.provider)
+	case acct != nil && acct.Provider != "":
 		name = string(acct.Provider)
 	}
 	if s := GetProviderStrategy(name); s != nil {
@@ -123,7 +142,7 @@ func (c *ChatClient) Complete(ctx context.Context, messages []types.Message, too
 		apiKey = acct.APIKey
 	}
 
-	raw, err := strategy.BuildRequest(c.Cfg.Model, messages, tools, false)
+	raw, err := strategy.BuildRequest(effectiveModel(c.Cfg, acct), messages, tools, false, requestOpts(c.Cfg, acct))
 	if err != nil {
 		return types.Message{}, fmt.Errorf("ChatClient: build request: %w", err)
 	}
@@ -233,7 +252,7 @@ func (c *ChatClient) doStreamRequest(ctx context.Context, messages []types.Messa
 		apiKey = acct.APIKey
 	}
 
-	raw, err := strategy.BuildRequest(c.Cfg.Model, messages, tools, true)
+	raw, err := strategy.BuildRequest(effectiveModel(c.Cfg, acct), messages, tools, true, requestOpts(c.Cfg, acct))
 	if err != nil {
 		return nil, fmt.Errorf("marshal stream request: %w", err)
 	}
@@ -341,4 +360,31 @@ func (c *ChatClient) completeStreamInternal(
 		return state.sb.String(), state.reasoningSB.String(), buildToolCalls(state.tcMap), nil
 	}
 	return state.sb.String(), state.reasoningSB.String(), nil, nil
+}
+
+// requestOpts 从 ChatClient 配置和 Account 合并出请求级参数。
+// Account 级设置优先于全局配置。
+func requestOpts(cfg types.LLMConfig, acct *Account) RequestOptions {
+	opts := RequestOptions{
+		MaxTokens:   cfg.MaxTokens,
+		Temperature: cfg.Temperature,
+	}
+	if acct != nil {
+		if acct.MaxTokens > 0 {
+			opts.MaxTokens = acct.MaxTokens
+		}
+		if acct.Temperature > 0 {
+			opts.Temperature = acct.Temperature
+		}
+	}
+	return opts
+}
+
+// effectiveModel 返回当前请求使用的模型名。
+// Account 级 model 优先于 ChatClient 全局配置。
+func effectiveModel(cfg types.LLMConfig, acct *Account) string {
+	if acct != nil && acct.Model != "" {
+		return acct.Model
+	}
+	return cfg.Model
 }

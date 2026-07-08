@@ -81,7 +81,7 @@ func (s *OpenAIStrategy) Name() string { return "openai" }
 
 func (s *OpenAIStrategy) Endpoint() string { return "/chat/completions" }
 
-func (s *OpenAIStrategy) BuildRequest(model string, messages []types.Message, tools []types.Tool, stream bool) ([]byte, error) {
+func (s *OpenAIStrategy) BuildRequest(model string, messages []types.Message, tools []types.Tool, stream bool, opts RequestOptions) ([]byte, error) {
 	if stream {
 		req := openaiStreamRequest{
 			Model:    model,

@@ -34,15 +34,17 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
-	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent"
-	seelectx "github.com/RedHuang-0622/Seele/contexts"
+	"github.com/RedHuang-0622/Seele/agent/core/api"
 	"github.com/RedHuang-0622/Seele/agent/core/tool"
+	seelectx "github.com/RedHuang-0622/Seele/contexts"
+	"github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
 
@@ -89,22 +91,44 @@ type LoopInput struct {
 // main
 // =============================================================================
 
+var configPath = flag.String("c", "../../config/account-anthropic.yaml", "config path")
+
 func main() {
+	flag.Parse()
 	ctx := context.Background()
 
 	// ── 1. 初始化 Engine ──────────────────────────────────────────────
-	llmCfg, err := config.LoadConfig("../config/config.yaml")
+	result, err := api.LoadFullAccountsConfig(*configPath)
 	if err != nil {
-		log.Fatalf("LLM config load failed: %v", err)
+		log.Fatalf("load %s: %v", *configPath, err)
+	}
+	ls := result.LLMDefaults
+	pool := result.Pool
+	first := pool.All()[0]
+
+	llmCfg := types.LLMConfig{
+		BaseURL:     first.BaseURL,
+		APIKey:      first.APIKey,
+		Model:       first.Model,
+		MaxTokens:   ls.MaxTokens,
+		Timeout:     ls.Timeout,
+		Temperature: ls.Temperature,
 	}
 	engine, err := agent.New(agent.Options{
 		LLMConfig:       llmCfg,
 		ToolCallTimeOut: 120 * time.Second,
+		HubStartupDelay: 10,
 	})
 	if err != nil {
 		log.Fatalf("engine init failed: %v", err)
 	}
 	defer engine.Shutdown()
+
+	chatClient := engine.LLM().(*api.ChatClient)
+	chatClient.WithAccountPool(pool)
+	if ls.Provider != "" {
+		chatClient.SetProvider(ls.Provider)
+	}
 
 	factory := &EngineFactory{engine: engine}
 

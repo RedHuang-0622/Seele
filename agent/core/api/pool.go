@@ -15,14 +15,17 @@ const (
 
 // Account 单个 API 账号
 type Account struct {
-	Name     string       // 账号名称，唯一标识
-	Provider ProviderType // 供应商
-	BaseURL  string       // API 地址
-	APIKey   string       // API 密钥
-	Model    string       // 默认模型
-	Priority int          // 优先级（数字越小优先级越高）
-	MaxRPM   int          // 每分钟最大请求数
-	Disabled bool         // 是否禁用
+	Name        string       // 账号名称，唯一标识
+	Provider    ProviderType // 供应商
+	BaseURL     string       // API 地址
+	APIKey      string       // API 密钥
+	Model       string       // 默认模型
+	Priority    int          // 优先级（数字越小优先级越高）
+	MaxRPM      int          // 每分钟最大请求数
+	Disabled    bool         // 是否禁用
+	MaxTokens   int          // 覆盖全局 llm_config.max_tokens（0=使用全局）
+	Timeout     int          // 覆盖全局 llm_config.timeout（0=使用全局）
+	Temperature float64      // 覆盖全局 llm_config.temperature（0=使用全局）
 }
 
 // AccountPool 账号池

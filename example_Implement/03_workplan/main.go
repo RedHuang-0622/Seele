@@ -17,14 +17,16 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
-	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent"
+	"github.com/RedHuang-0622/Seele/agent/core/api"
 	seelectx "github.com/RedHuang-0622/Seele/contexts"
+	"github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
 
@@ -365,28 +367,46 @@ func ExampleGraphInspection(factory workplan.AgentFactory) {
 
 // =============================================================================
 // main
-// =============================================================================
+
+var configPath = flag.String("c", "../../config/account-anthropic.yaml", "config path")
 
 func main() {
-	llmCfg, err := config.LoadConfig("../config/config.yaml")
+	flag.Parse()
+
+	result, err := api.LoadFullAccountsConfig(*configPath)
 	if err != nil {
-		log.Fatalf("LLM config load failed: %v", err)
+		log.Fatalf("load config %s: %v", *configPath, err)
 	}
+	ls := result.LLMDefaults
+	pool := result.Pool
+	first := pool.All()[0]
+	llmCfg := types.LLMConfig{
+		BaseURL:     first.BaseURL,
+		APIKey:      first.APIKey,
+		Model:       first.Model,
+		MaxTokens:   ls.MaxTokens,
+		Timeout:     ls.Timeout,
+		Temperature: ls.Temperature,
+	}
+
 	engine, err := agent.New(agent.Options{
-		LLMConfig: llmCfg,
+		LLMConfig:       llmCfg,
+		HubStartupDelay: 10,
 	})
 	if err != nil {
 		log.Fatalf("engine init failed: %v", err)
 	}
 	defer engine.Shutdown()
 
-	factory := &EngineFactory{engine: engine}
+	chatClient := engine.LLM().(*api.ChatClient)
+	chatClient.WithAccountPool(pool)
+	if ls.Provider != "" {
 
-	fmt.Println("╔══════════════════════════════════════════╗")
-	fmt.Println("║   Seele WorkPlan 工作流引擎演示          ║")
-	fmt.Println("╚══════════════════════════════════════════╝")
+		chatClient.SetProvider(ls.Provider)
+	}
 
 	// 选择要运行的示例（取消注释即可）：
+factory := &EngineFactory{engine: engine}
 	ExampleLinear(factory)
 	// ExampleBranching(factory)
 	// ExampleLoop(factory)

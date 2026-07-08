@@ -18,14 +18,16 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
-	"github.com/RedHuang-0622/Seele/engine"
-	"github.com/RedHuang-0622/Seele/config"
+	"github.com/RedHuang-0622/Seele/agent/core/api"
 	"github.com/RedHuang-0622/Seele/agent/core/tool"
+	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/types"
 )
 
 // =============================================================================
@@ -47,22 +49,44 @@ type CalcOutput struct {
 	Formula string  `json:"formula" desc:"计算公式"`
 }
 
+var configPath = flag.String("c", "../../config/account-anthropic.yaml", "config path (account-anthropic.yaml / account-anthropic.yaml)")
+
 func main() {
 	ctx := context.Background()
+	flag.Parse()
 
 	// ── 1. Agent：装配 LLM 配置 + 工具 ────────────────────────────
-	llmCfg, err := config.LoadConfig("../config/config.yaml")
+	result, err := api.LoadFullAccountsConfig(*configPath)
 	if err != nil {
-		log.Fatalf("LLM config load failed: %v", err)
+		log.Fatalf("load config %s: %v", *configPath, err)
+	}
+	ls := result.LLMDefaults
+	pool := result.Pool
+	first := pool.All()[0]
+
+	llmCfg := types.LLMConfig{
+		BaseURL:     first.BaseURL,
+		APIKey:      first.APIKey,
+		Model:       first.Model,
+		MaxTokens:   ls.MaxTokens,
+		Timeout:     ls.Timeout,
+		Temperature: ls.Temperature,
 	}
 	agt, err := agent.New(agent.Options{
 		LLMConfig:       llmCfg,
 		ToolCallTimeOut: 5 * time.Second,
+		HubStartupDelay: 10,
 	})
 	if err != nil {
-		log.Fatalf("agent init failed: %v\n请确认 config/config.yaml 中的 ai_api_key 已正确填写", err)
+		log.Fatalf("agent init failed: %v", err)
 	}
 	defer agt.Shutdown()
+
+	chatClient := agt.LLM().(*api.ChatClient)
+	chatClient.WithAccountPool(pool)
+	if ls.Provider != "" {
+		chatClient.SetProvider(ls.Provider)
+	}
 
 	// ── 2. 注册内联工具 ────────────────────────────────────────────
 	agt.RegisterTool(

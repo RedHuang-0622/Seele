@@ -1,7 +1,0 @@
-# Seele 框架示例 — LLM 配置
-# 复制此文件，填入你自己的 API 信息
-llm:
-  ai_url: "https://api.deepseek.com"
-  ai_name: "deepseek-v4-flash"
-  ai_api_key: "your-api-key-here"
-  timeout: 300
