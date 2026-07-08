@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -39,12 +39,17 @@ func (h *Holder) dispatchToolCalls(ctx context.Context, toolCalls []types.ToolCa
 			elapsed := time.Since(start).Milliseconds()
 
 			if dispErr != nil {
-				log.Printf("[seelectx.dispatch] %s tool_call %s FAILED (%dms): %v",
-					h.sessionID, tc.Function.Name, elapsed, dispErr)
+				slog.Default().Info("tool_call failed",
+					"session_id", h.sessionID,
+					"tool", tc.Function.Name,
+					"elapsed_ms", elapsed,
+					"error", dispErr)
 				results[i] = dispatchResult{tc: tc, content: jsonError(dispErr.Error())}
 			} else {
-				log.Printf("[seelectx.dispatch] %s tool_call %s OK (%dms)",
-					h.sessionID, tc.Function.Name, elapsed)
+				slog.Default().Info("tool_call succeeded",
+					"session_id", h.sessionID,
+					"tool", tc.Function.Name,
+					"elapsed_ms", elapsed)
 				results[i] = dispatchResult{tc: tc, content: result}
 			}
 		}(i, tc)

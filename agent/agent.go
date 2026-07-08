@@ -4,7 +4,7 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -49,16 +49,16 @@ func (o *Options) withDefaults() {
 
 // ── Logger ───────────────────────────────────────────────────────────────────
 
-// Logger 是 Agent 内部使用的日志接口。
+// Logger 是 Agent 内部使用的日志接口，与 log/slog 签名兼容。
 type Logger interface {
-	Infof(format string, args ...interface{})
-	Errorf(format string, args ...interface{})
+	Info(msg string, args ...any)
+	Error(msg string, args ...any)
 }
 
 type stdLogger struct{}
 
-func (l *stdLogger) Infof(f string, a ...interface{})  { log.Printf("[agent] "+f, a...) }
-func (l *stdLogger) Errorf(f string, a ...interface{}) { log.Printf("[agent] ERROR "+f, a...) }
+func (l *stdLogger) Info(msg string, args ...any)  { slog.Default().Info(msg, args...) }
+func (l *stdLogger) Error(msg string, args ...any) { slog.Default().Error(msg, args...) }
 
 // ── Agent ────────────────────────────────────────────────────────────────────
 
@@ -156,11 +156,11 @@ func New(opts Options) (*Agent, error) {
 	// 8. 所有验证通过，启动 Hub
 	go func() {
 		if err := hub.ServeAsync(opts.HubAddr, 5); err != nil {
-			opts.Logger.Errorf("hub exited: %v", err)
+			opts.Logger.Error("hub exited", "error", err)
 		}
 	}()
 	time.Sleep(opts.HubStartupDelay)
-	opts.Logger.Infof("hub listening on %s", opts.HubAddr)
+	opts.Logger.Info("hub listening", "addr", opts.HubAddr)
 
 	// 9. Health probe
 	var healthCancel context.CancelFunc
@@ -183,7 +183,7 @@ func New(opts Options) (*Agent, error) {
 		healthCancel: healthCancel,
 	}
 
-	opts.Logger.Infof("ready, %d hub skill(s) loaded", len(hubProv.Skills()))
+	opts.Logger.Info("ready, hub skills loaded", "count", len(hubProv.Skills()))
 	return a, nil
 }
 
@@ -206,7 +206,7 @@ func (a *Agent) MCP() *mcp.Provider {
 		}
 		a.mcpProvider = mcp.NewProvider()
 		a.tools.Register(a.mcpProvider)
-		a.opts.Logger.Infof("MCP provider initialized")
+		a.opts.Logger.Info("MCP provider initialized")
 	}
 	return a.mcpProvider
 }
@@ -215,7 +215,7 @@ func (a *Agent) MCP() *mcp.Provider {
 // outputSchema 可选，指定输出 struct 的 SchemaOf()。
 func (a *Agent) RegisterTool(name, desc string, inputSchema map[string]interface{}, handler func(ctx context.Context, argsJSON string) (string, error), outputSchema ...map[string]interface{}) {
 	a.tools.RegisterInline(name, desc, inputSchema, handler, outputSchema...)
-	a.opts.Logger.Infof("inline tool registered: %s", name)
+	a.opts.Logger.Info("inline tool registered", "name", name)
 }
 
 // ── 新增访问器 ──────────────────────────────────────────────────────────
@@ -262,5 +262,5 @@ func (a *Agent) Shutdown() {
 		}
 	}
 	a.mcpMu.Unlock()
-	a.opts.Logger.Infof("shutdown")
+	a.opts.Logger.Info("shutdown")
 }

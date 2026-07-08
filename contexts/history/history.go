@@ -3,7 +3,7 @@ package history
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	types "github.com/RedHuang-0622/Seele/types"
@@ -159,7 +159,7 @@ func CompressHistory(ctx context.Context, client types.ChatCompleter, history []
 	compressInput := buildCompressInput(compressible)
 	summary, err := callCompressLLM(ctx, client, compressInput)
 	if err != nil {
-		log.Printf("[history] compression LLM call failed: %v, falling back to hard trim", err)
+		slog.Default().Warn("compression LLM call failed, falling back to hard trim", "error", err)
 		return TrimHistory(history, maxTokens), nil
 	}
 	compressed := make([]types.Message, 0, len(sys)+1+len(keep))
@@ -171,12 +171,15 @@ func CompressHistory(ctx context.Context, client types.ChatCompleter, history []
 	})
 	compressed = append(compressed, keep...)
 	if EstimateHistoryTokens(compressed) > maxTokens {
-		log.Printf("[history] compression still over budget, applying hard trim")
+		slog.Default().Warn("compression still over budget, applying hard trim")
 		return TrimHistory(compressed, maxTokens), nil
 	}
 	beforeTokens := EstimateHistoryTokens(history)
 	afterTokens := EstimateHistoryTokens(compressed)
-	log.Printf("[history] compressed history: %d → %d tokens (saved %d)", beforeTokens, afterTokens, beforeTokens-afterTokens)
+	slog.Default().Info("compressed history",
+		"before_tokens", beforeTokens,
+		"after_tokens", afterTokens,
+		"saved_tokens", beforeTokens-afterTokens)
 	return compressed, nil
 }
 

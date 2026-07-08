@@ -2,7 +2,7 @@ package hubprov
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	pb "github.com/RedHuang-0622/microHub/proto/gen/proto"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
@@ -33,14 +33,14 @@ func (r *hubRouter) Execute(req *pb.ToolRequest) ([]hubbase.DispatchTarget, erro
 func (r *hubRouter) OnResults(results []hubbase.DispatchResult) {
 	for _, ri := range results {
 		if ri.Err != nil {
-			log.Printf("[hubRouter] addr=%s connection error, marking offline: %v",
-				ri.Target.Addr, ri.Err)
+			slog.Default().Warn("hub addr connection error, marking offline",
+					"addr", ri.Target.Addr, "error", ri.Err)
 			registry.MarkOffline(ri.Target.Addr)
 			continue
 		}
 		for _, resp := range ri.Responses {
 			if resp.Status != "ok" && resp.Status != "partial" {
-				log.Printf("[hubRouter] tool=%s business error: %s", resp.ToolName, resp.Status)
+				slog.Default().Warn("hub tool business error", "tool", resp.ToolName, "status", resp.Status)
 			}
 		}
 	}

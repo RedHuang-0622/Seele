@@ -7,7 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
@@ -101,7 +101,7 @@ func (p *Provider) Attach(ctx context.Context, cfg ServerConfig) error {
 	}
 	p.mu.Unlock()
 
-	log.Printf("[mcp] attached server=%q tools=%d", cfg.Name, len(tools))
+	slog.Default().Info("mcp server attached", "server", cfg.Name, "tools", len(tools))
 	return nil
 }
 
@@ -113,7 +113,7 @@ func (p *Provider) Detach(name string) {
 		delete(p.servers, name)
 	}
 	p.mu.Unlock()
-	log.Printf("[mcp] detached server=%q", name)
+	slog.Default().Info("mcp server detached", "server", name)
 }
 
 // RefreshTools 重新拉取指定 MCP Server 的工具列表。
@@ -134,7 +134,7 @@ func (p *Provider) RefreshTools(ctx context.Context, serverName string) error {
 	conn.tools = tools
 	p.mu.Unlock()
 
-	log.Printf("[mcp] refreshed server=%q tools=%d", serverName, len(tools))
+	slog.Default().Info("mcp server refreshed", "server", serverName, "tools", len(tools))
 	return nil
 }
 
@@ -181,7 +181,7 @@ func (p *Provider) fetchTools(ctx context.Context, c *mcpclient.Client) ([]types
 	for _, mt := range resp.Tools {
 		params, err := marshalSchema(mt.InputSchema)
 		if err != nil {
-			log.Printf("[mcp] fetchTools: serialize schema for %q failed: %v, using empty", mt.Name, err)
+			slog.Default().Warn("mcp fetchTools: serialize schema failed, using empty", "tool", mt.Name, "error", err)
 			params = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
 		}
 		tools = append(tools, types.Tool{

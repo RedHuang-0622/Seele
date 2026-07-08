@@ -7,7 +7,7 @@ package hubprov
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -46,14 +46,14 @@ func (p *HubProvider) Retire(name string) {
 	p.mu.Lock()
 	p.retired[name] = struct{}{}
 	p.mu.Unlock()
-	log.Printf("[HubProvider] retired skill=%q", name)
+	slog.Default().Info("hub skill retired", "skill", name)
 }
 
 func (p *HubProvider) Restore(name string) {
 	p.mu.Lock()
 	delete(p.retired, name)
 	p.mu.Unlock()
-	log.Printf("[HubProvider] restored skill=%q", name)
+	slog.Default().Info("hub skill restored", "skill", name)
 }
 
 // ── ToolProvider 接口实现 ─────────────────────────────────────────
@@ -135,7 +135,7 @@ func buildParameters(inputSchema string) map[string]interface{} {
 	}
 	var node jsonSchema.SchemaNode
 	if err := json.Unmarshal([]byte(inputSchema), &node); err != nil {
-		log.Printf("[HubProvider] buildParameters: parse input_schema failed: %v", err)
+		slog.Default().Warn("hub buildParameters: parse input_schema failed", "error", err)
 		return fallback
 	}
 	if node.Type != jsonSchema.TypeObject {

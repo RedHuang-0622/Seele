@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -68,7 +68,9 @@ func (h *HubToolHandler) Execute(ctx context.Context, argsJSON string) (string, 
 		return "", fmt.Errorf("HubToolHandler: method=%s failed: %s", h.Method, strings.Join(errs, "; "))
 	}
 
-	log.Printf("[HubToolHandler] method=%s latency=%dms", h.Method, time.Since(start).Milliseconds())
+	slog.Default().Info("hub tool handler executed",
+		"method", h.Method,
+		"latency_ms", time.Since(start).Milliseconds())
 	return strings.Join(parts, "\n"), nil
 }
 
