@@ -24,8 +24,9 @@ import (
 type ChatClient struct {
 	Cfg    types.LLMConfig
 	Client *http.Client
-	pool    *AccountPool     // 账号池，非必填
-	strategy ProviderStrategy // 传输层策略，nil 时通过 effectiveStrategy 自动选择
+	pool            *AccountPool     // 账号池，非必填
+	strategy        ProviderStrategy // 传输层策略，nil 时通过 effectiveStrategy 自动选择
+	providerFilter  ProviderType     // 非空时只从 pool 获取该 provider 的账号
 }
 
 // WithAccountPool 设置账号池，返回自身以便链式调用。
@@ -41,6 +42,23 @@ func (c *ChatClient) WithStrategy(s ProviderStrategy) *ChatClient {
 	return c
 }
 
+// SetProviderFilter 设置 provider 筛选器，后续 Get 只返回该 provider 的账号。
+// 空值清除筛选，恢复 round-robin。
+func (c *ChatClient) SetProviderFilter(p ProviderType) *ChatClient {
+	c.providerFilter = p
+	return c
+}
+
+// ProviderFilter 返回当前的 provider 筛选器。空值表示 round-robin 模式。
+func (c *ChatClient) ProviderFilter() ProviderType {
+	return c.providerFilter
+}
+
+// AccountPool 返回关联的账号池，可能为 nil。
+func (c *ChatClient) AccountPool() *AccountPool {
+	return c.pool
+}
+
 func NewChatClient(cfg types.LLMConfig) *ChatClient {
 	timeout := cfg.Timeout
 	if timeout <= 0 {
@@ -54,10 +72,15 @@ func NewChatClient(cfg types.LLMConfig) *ChatClient {
 
 // ── 策略选择 ──────────────────────────────────────────────────────
 
-// effectiveAccount 从 pool 获取一个可用账号（每次调用独立 round-robin）。
+// effectiveAccount 从 pool 获取一个可用账号。
+// 当 providerFilter 非空时只返回该 provider 的账号（用 GetByProvider），
+// 否则 round-robin（Get）。
 // 没有 pool 或没有可用账号时返回 nil。
 func (c *ChatClient) effectiveAccount() *Account {
 	if c.pool != nil {
+		if c.providerFilter != "" {
+			return c.pool.GetByProvider(c.providerFilter)
+		}
 		return c.pool.Get()
 	}
 	return nil
