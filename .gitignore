@@ -13,3 +13,6 @@ makefile
 *.log
 *.png
 *.csv
+
+# 配置文件（含 API Key，不提交）
+config/*.yaml
