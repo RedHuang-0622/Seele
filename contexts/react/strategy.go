@@ -80,3 +80,30 @@ func ContentPtr(content string, toolCalls []types.ToolCall) *string {
 	}
 	return &content
 }
+
+// StreamEventStrategy：SSE 流式 LLM 调用，通过结构化事件暴露流数据。
+// 每个事件携带类型信息，调用方可感知文本、推理、工具调用等不同阶段。
+type StreamEventStrategy struct {
+	OnEvent func(types.StreamEvent)
+}
+
+func (s *StreamEventStrategy) Execute(ctx context.Context, client types.ChatCompleter, messages []types.Message, tools []types.Tool) (*CompletionResult, error) {
+	var chunks []string
+	content, reasoningContent, toolCalls, err := client.CompleteStreamEvents(
+		ctx, messages, tools,
+		func(ev types.StreamEvent) {
+			if ev.Type == types.StreamEventText {
+				chunks = append(chunks, ev.Content)
+			}
+			s.OnEvent(ev)
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &CompletionResult{
+		Content:          content,
+		ReasoningContent: reasoningContent,
+		ToolCalls:        toolCalls,
+	}, nil
+}

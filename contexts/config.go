@@ -69,6 +69,9 @@ type SyncStrategy = react.SyncStrategy
 // StreamStrategy 委托到 react.StreamStrategy
 type StreamStrategy = react.StreamStrategy
 
+// StreamEventStrategy 委托到 react.StreamEventStrategy
+type StreamEventStrategy = react.StreamEventStrategy
+
 // ── 历史函数委托（保持向后兼容）─────────────────────────────────
 
 var (

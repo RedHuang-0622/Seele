@@ -11,6 +11,32 @@ import "context"
 type ChatCompleter interface {
 	Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error)
 	CompleteStream(ctx context.Context, messages []Message, tools []Tool, onChunk func(delta string)) (content string, reasoningContent string, toolCalls []ToolCall, err error)
+	// CompleteStreamEvents 与 CompleteStream 功能相同，但通过 onEvent 传递结构化事件。
+	CompleteStreamEvents(ctx context.Context, messages []Message, tools []Tool, onEvent func(StreamEvent)) (content string, reasoningContent string, toolCalls []ToolCall, err error)
+}
+
+// ─────────────────────────────────────────────
+// 流式事件
+// ─────────────────────────────────────────────
+
+// StreamEventType 流式事件类型
+type StreamEventType int
+
+const (
+	StreamEventText      StreamEventType = iota // 文本 delta
+	StreamEventToolCall                          // 工具调用（start + delta + end）
+	StreamEventToolResult                        // 工具返回结果
+	StreamEventReasoning                         // 推理内容（reasoning_content）
+	StreamEventError                             // 错误
+	StreamEventDone                              // 完成
+)
+
+// StreamEvent 流式事件，封装 LLM 推送的各类增量数据。
+type StreamEvent struct {
+	Type    StreamEventType
+	Content string          // text delta / tool name / error string
+	Index   int             // tool_call index（多 tool call 并发时区分）
+	Meta    map[string]any  // 扩展信息
 }
 
 // Message 是 LLM 对话历史中的一条记录。
