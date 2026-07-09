@@ -166,6 +166,7 @@ accounts:
 | 04_mcp | MCP 协议集成（stdio / sse） | 同上（需安装 MCP Server） |
 | 05_graph_tools | 图结构工具（子图→Tool） | 同上 |
 | 06_provider_switch | 号池账号切换演示 | 同上 |
+| 07_tracer | Trace Tree 可观测性追踪树 | 同上 |
 
 所有示例均支持 `-c` 指定配置文件，OpenAI 和 Anthropic 格式通用。
 
