@@ -27,6 +27,9 @@ Seele 是一个 Go 语言 AI Agent 框架，以 **Engine → Agent → Contexts*
 │  ├── ChatClient: HTTP 生命周期 + ProviderStrategy       │
 │  │     ├── ProviderStrategy("openai")  ← 传输层格式    │
 │  │     └── function.Strategy("openai") ← 工具编码格式   │
+│  ├── tracer: Trace Tree 全链路追踪（可选注入）           │
+│  │     ├── Tracer 接口 + NoopTracer(零开销)              │
+│  │     └── SimpleTracer(内存树 + JSON 导出)              │
 │  ├── cache: TTL + 内容寻址缓存                          │
 │  └── storage: JSON 分片持久化                           │
 ├───────────────────────────────────────────────────────┤
@@ -86,6 +89,7 @@ import (
     "flag"
     "github.com/RedHuang-0622/Seele/agent"
     "github.com/RedHuang-0622/Seele/agent/core/api"
+    "github.com/RedHuang-0622/Seele/contexts/tracer"
     "github.com/RedHuang-0622/Seele/engine"
     "github.com/RedHuang-0622/Seele/types"
 )
@@ -122,10 +126,18 @@ func main() {
             return `{"reply":"hello"}`, nil
         })
 
-    // 5. 对话（ReAct 循环自动进行）
-    eng := engine.New(agt, engine.WithSystemPrompt("You are helpful."))
+    // 5. 创建 Engine（可选注入 tracer）
+    tr := tracer.NewSimpleTracer()
+    eng := engine.New(agt,
+        engine.WithTracer(tr),
+        engine.WithSystemPrompt("You are helpful."))
+
+    // 6. 对话 + 导出追踪树
     reply, _ := eng.Chat(context.Background(), "Hello!")
     println(reply)
+
+    tree := eng.ExportTrace()
+    println(tree.String()) // JSON 追踪树
 }
 ```
 
@@ -190,6 +202,7 @@ agent/                          Agent 编排层
 ├── gateway/                    工具/API 网关（可见性+过滤）
 engine/                          ReAct 循环引擎
 contexts/                        LLM 会话上下文
+├── tracer/                     追踪树（Tracer 接口 + SimpleTracer）
 ├── cache/                      缓存（TTL + 内容寻址）
 ├── storage/                    持久化（JSON 分片）
 └── react/                      CompletionStrategy
@@ -209,3 +222,4 @@ test/                           测试
 3. **Strategy > Factory** — 协议差异用策略模式封装，不复制 HTTP 编排逻辑
 4. **Session 级格式锁定** — `llm_config.provider` 一经设定不可变，保证历史消息格式一致
 5. **号池轻量** — Account 只做路由，不携带协议信息（从 `llm_config` 继承）
+6. **可观测性** — Engine 层埋点 + Tracer 接口注入（默认 NoopTracer 零开销），ExportTrace() 导出 JSON 追踪树
