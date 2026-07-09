@@ -28,36 +28,40 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/contexts/tracer"
 	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/types"
 )
 
-var (
-	configPath  = flag.String("c", "config/account-openai.yaml", "LLM 配置（相对运行目录）")
-	accountPath = flag.String("a", "", "号池账号 YAML（可选，多 Provider 用）")
-)
+var configPath = flag.String("c", "config/account-openai.yaml", "LLM 配置（相对运行目录）")
 
 func main() {
 	flag.Parse()
 	ctx := context.Background()
 
-	llmCfg, err := config.LoadConfig(*configPath)
+	result, err := api.LoadFullAccountsConfig(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
 		os.Exit(1)
 	}
+	ls := result.LLMDefaults
+	pool := result.Pool
+	first := pool.All()[0]
 
-	opts := agent.Options{
+	llmCfg := types.LLMConfig{
+		BaseURL:     first.BaseURL,
+		APIKey:      first.APIKey,
+		Model:       first.Model,
+		MaxTokens:   ls.MaxTokens,
+		Timeout:     ls.Timeout,
+		Temperature: ls.Temperature,
+	}
+
+	agt, err := agent.New(agent.Options{
 		LLMConfig:       llmCfg,
 		ToolCallTimeOut: 10 * time.Second,
 		HubStartupDelay: 10,
-	}
-	if *accountPath != "" {
-		opts.ProviderAccountPath = *accountPath
-	}
-
-	agt, err := agent.New(opts)
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Agent 初始化失败: %v\n", err)
 		os.Exit(1)
@@ -66,7 +70,10 @@ func main() {
 
 	// ChatClient 和号池
 	chatClient := agt.LLM().(*api.ChatClient)
-	pool := chatClient.AccountPool()
+	chatClient.WithAccountPool(pool)
+	if ls.Provider != "" {
+		chatClient.SetProvider(ls.Provider)
+	}
 
 	// 可观测性追踪器（默认开启，每次 Chat 后可通过 /trace 查看）
 	tr := tracer.NewSimpleTracer()
@@ -104,11 +111,8 @@ func main() {
 
 	// ── 主循环 ────────────────────────────────────────────────────
 	scanner := bufio.NewScanner(os.Stdin)
-	for {
+	for scanner.Scan() {
 		fmt.Print("  🗣  > ")
-		if !scanner.Scan() {
-			break
-		}
 		input := strings.TrimSpace(scanner.Text())
 		if input == "" {
 			continue
@@ -141,6 +145,10 @@ func main() {
 		}
 		pf := chatClient.ProviderFilter()
 		fmt.Printf("  🤖 [%s %s %.1fs] %s\n", providerLabel(pf), totalTokens+"tok", elapsed, reply)
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "  ❌ 读取输入错误: %v
+", err)
 	}
 }
 

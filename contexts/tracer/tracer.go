@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -341,7 +342,7 @@ func (t *SimpleTracer) Export(_ context.Context) *Tree {
 }
 
 // buildChildren 递归构建 Node.Children 切片。
-// 遍历所有 span，将 ParentID 匹配的 span 加入 Children 列表。
+// 遍历所有 span，将 ParentID 匹配的 span 加入 Children 列表，按创建顺序排序。
 func (t *SimpleTracer) buildChildren(parent *Node) {
 	parent.Children = nil // 重置，避免多次 Export 累积
 	for _, span := range t.spans {
@@ -354,6 +355,11 @@ func (t *SimpleTracer) buildChildren(parent *Node) {
 			parent.Children = append(parent.Children, span)
 		}
 	}
+	// 按 span ID 排序（ID 后缀是递增 seq，保证创建顺序）
+	// 使用 stable sort 保持同 seq 前缀的相对顺序
+	sort.SliceStable(parent.Children, func(i, j int) bool {
+		return parent.Children[i].ID < parent.Children[j].ID
+	})
 	for _, child := range parent.Children {
 		t.buildChildren(child)
 	}
