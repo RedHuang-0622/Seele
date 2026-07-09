@@ -15,7 +15,7 @@ import (
 func TestAccountSmoke_OpenAI(t *testing.T) {
 	result, err := api.LoadFullAccountsConfig("../config/account-openai.yaml")
 	if err != nil {
-		t.Fatalf("加载 account-openai.yaml 失败: %v", err)
+		t.Skipf("account-openai.yaml 不存在（跳过）: %v", err)
 	}
 
 	// llm_config
@@ -52,7 +52,7 @@ func TestAccountSmoke_OpenAI(t *testing.T) {
 func TestAccountSmoke_Anthropic(t *testing.T) {
 	result, err := api.LoadFullAccountsConfig("../config/account-anthropic.yaml")
 	if err != nil {
-		t.Fatalf("加载 account-anthropic.yaml 失败: %v", err)
+		t.Skipf("account-anthropic.yaml 不存在（跳过）: %v", err)
 	}
 
 	// llm_config

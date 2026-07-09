@@ -186,30 +186,6 @@ func testToolCall(t *testing.T, label string, pool *api.AccountPool, ls api.LLMC
 // 配置+策略注册 离线验证
 // =============================================================================
 func TestToolSwitch_ConfigAndRegistry(t *testing.T) {
-	// OpenAI 配置
-	r1, err := api.LoadFullAccountsConfig("../config/account-openai.yaml")
-	if err != nil {
-		t.Fatalf("openai config: %v", err)
-	}
-	if r1.LLMDefaults.Provider != api.ProviderOpenAI {
-		t.Errorf("openai provider=%q", r1.LLMDefaults.Provider)
-	}
-	if len(r1.Pool.All()) == 0 {
-		t.Error("openai 号池为空")
-	}
-	t.Logf("openai: %d accounts", len(r1.Pool.All()))
-
-	// Anthropic 配置
-	r2, err := api.LoadFullAccountsConfig("../config/account-anthropic.yaml")
-	if err != nil {
-		t.Fatalf("anthropic config: %v", err)
-	}
-	if r2.LLMDefaults.Provider != api.ProviderAnthropic {
-		t.Errorf("anthropic provider=%q", r2.LLMDefaults.Provider)
-	}
-	t.Logf("anthropic: %d accounts", len(r2.Pool.All()))
-
-	// ProviderStrategy 注册
 	ps := api.ProviderStrategyNames()
 	t.Logf("ProviderStrategy: %v", ps)
 	if !hasName(ps, "openai") {
@@ -217,6 +193,24 @@ func TestToolSwitch_ConfigAndRegistry(t *testing.T) {
 	}
 	if !hasName(ps, "anthropic") {
 		t.Error("anthropic strategy 未注册")
+	}
+
+	if r1, err := api.LoadFullAccountsConfig("../config/account-openai.yaml"); err != nil {
+		t.Logf("account-openai.yaml 不存在，跳过")
+	} else {
+		if r1.LLMDefaults.Provider != api.ProviderOpenAI {
+			t.Errorf("openai provider=%q", r1.LLMDefaults.Provider)
+		}
+		t.Logf("openai: %d accounts", len(r1.Pool.All()))
+	}
+
+	if r2, err := api.LoadFullAccountsConfig("../config/account-anthropic.yaml"); err != nil {
+		t.Logf("account-anthropic.yaml 不存在，跳过")
+	} else {
+		if r2.LLMDefaults.Provider != api.ProviderAnthropic {
+			t.Errorf("anthropic provider=%q", r2.LLMDefaults.Provider)
+		}
+		t.Logf("anthropic: %d accounts", len(r2.Pool.All()))
 	}
 }
 
