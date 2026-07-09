@@ -147,8 +147,7 @@ func main() {
 		fmt.Printf("  🤖 [%s %s %.1fs] %s\n", providerLabel(pf), totalTokens+"tok", elapsed, reply)
 	}
 	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "  ❌ 读取输入错误: %v
-", err)
+		fmt.Fprintf(os.Stderr, "  ❌ 读取输入错误: %v", err)
 	}
 }
 
