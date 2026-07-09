@@ -6,7 +6,7 @@
 [![Go Version](https://img.shields.io/badge/go-1.25.5-blue)](./go.mod)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
-Seele 是一个 Go 语言 AI Agent 框架，以 **Engine → Agent → Contexts** 三层架构组织能力，配合 **两层策略模式** 适配不同 LLM Provider 的协议差异。
+Seele 是一个 Go AI Agent 框架，核心差异化是 **WorkPlan 图编排 + 三态 NodeStrategy**——你可以在同一个工作流里混合执行全量 Agent、纯 LLM 调用和本地函数，精准控制 token 消耗。不是 LangChainGo 的 Go 移植，是一个从头设计的 Go 原生框架。
 
 ## 架构
 
@@ -15,7 +15,8 @@ Seele 是一个 Go 语言 AI Agent 框架，以 **Engine → Agent → Contexts*
 │  Engine (ReAct 循环)                                   │
 │  ├── Chat / ChatStream                               │
 │  ├── loop: LLM → tool_calls → dispatch → repeat      │
-│  └── history: session 级对话历史管理                    │
+│  ├── history: session 级对话历史管理                    │
+│  └── tracer: 全链路追踪（可选注入，默认零开销）           │
 ├───────────────────────────────────────────────────────┤
 │  Agent (工具路由层)                                    │
 │  ├── tool.Holder: 工具注册中心                          │
@@ -23,20 +24,19 @@ Seele 是一个 Go 语言 AI Agent 框架，以 **Engine → Agent → Contexts*
 │  ├── MCP / Hub: 外部工具协议接入                        │
 │  └── InlineTool: Go 函数工具                            │
 ├───────────────────────────────────────────────────────┤
+│  WorkPlan (图编排 — 核心差异化)                         │
+│  │  Method / LLM / Auto / If / Switch / Loop           │
+│  │  Fork / Join / Approve / Checkpoint / Emit          │
+│  │  三态 NodeStrategy：Method(零token) / LLM(纯文本) /  │
+│  │  Agent(全量 ReAct + 工具) 混合编排                    │
+│  └── ToTool: 子图包装为工具                             │
+├───────────────────────────────────────────────────────┤
 │  Contexts (LLM 会话层)                                 │
 │  ├── ChatClient: HTTP 生命周期 + ProviderStrategy       │
 │  │     ├── ProviderStrategy("openai")  ← 传输层格式    │
 │  │     └── function.Strategy("openai") ← 工具编码格式   │
-│  ├── tracer: Trace Tree 全链路追踪（可选注入）           │
-│  │     ├── Tracer 接口 + NoopTracer(零开销)              │
-│  │     └── SimpleTracer(内存树 + JSON 导出)              │
 │  ├── cache: TTL + 内容寻址缓存                          │
 │  └── storage: JSON 分片持久化                           │
-├───────────────────────────────────────────────────────┤
-│  WorkPlan (图编排)                                     │
-│  │  Auto / If / Switch / Loop / Fork / Approve         │
-│  │  有向图引擎 + Edge 条件路由                          │
-│  └── ToTool: 子图包装为工具                             │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -53,16 +53,36 @@ llm_config.provider = "openai"     ← 锁死消息格式
         EncodeTools / DecodeToolCall
 ```
 
-Provider 决定同一 session 内的所有消息格式，session 内不可切换。
-账号池中的多个账号共享同一个 provider 格式，只做路由。
+### 三态 NodeStrategy（WorkPlan 核心差异化）
 
-### 支持的 Provider
+```
+MethodStrategy — 纯 Go 函数，零 LLM 调用，零 token
+LLMStrategy    — 只调 LLM，不挂工具，轻量生成
+AgentStrategy  — 完整 ReAct 循环 + 工具调用，全量能力
+```
+
+你可以在同一个 WorkPlan 里混合使用：
+
+```go
+wp := workplan.New(factory, gate, prompt)
+wp.Method("validate", validateFunc).        // 0 token：本地校验输入
+  LLM("rewrite", "改写为搜索关键词").         // N token：纯 LLM，不给工具
+  Auto("search", "搜索文档").                // N+M token：全量 Agent
+  Method("format", formatFunc).             // 0 token：本地格式化
+  Auto("answer", "生成最终回答")              // N+M token：全量 Agent
+```
+
+Go 生态里**没有其他框架提供这个粒度**的节点类型——LangChainGo 的 Chain、Eino 的 Graph 节点、Galdor 的 Node 都是全量 Agent，你无法在一个工作流里混合零 token 和全量节点来控制成本。
+
+## 支持的 Provider
 
 | Provider | 端点 | 认证 | 工具格式 | 状态 |
 |----------|------|------|----------|------|
 | OpenAI | `/chat/completions` | `Authorization: Bearer` | `{type,function}` | ✅ 正式 |
 | Anthropic | `/v1/messages` | `x-api-key` | `{name,input_schema}` | ✅ 正式 |
 | 自定义 | 任意 | 任意 | 任意 | 实现 6 个方法即可 |
+
+Provider 数量不是 Seele 的目标——专注把 Go 原生框架的架构和编排做到最好。需要更多 Provider？两行代码实现一个 Strategy。
 
 ## 快速开始
 
@@ -74,10 +94,10 @@ cp config/account-openai.yaml config/account-openai.yaml
 # 2. 运行示例
 cd example_Implement
 
-go run ./01_hello_seele/ -c ../config/account-openai.yaml   # OpenAI 格式
+go run ./01_hello_seele/ -c ../config/account-openai.yaml    # OpenAI 格式
 go run ./01_hello_seele/ -c ../config/account-anthropic.yaml # Anthropic 格式
-
-go run ./06_provider_switch/ -c ../config/account-openai.yaml # 号池切换
+go run ./03_workplan/ -c ../config/account-openai.yaml       # WorkPlan 编排
+go run ./07_tracer/ -c ../config/account-openai.yaml         # 全链路追踪
 ```
 
 ### 在你的代码中使用
@@ -86,6 +106,7 @@ go run ./06_provider_switch/ -c ../config/account-openai.yaml # 号池切换
 package main
 
 import (
+    "context"
     "flag"
     "github.com/RedHuang-0622/Seele/agent"
     "github.com/RedHuang-0622/Seele/agent/core/api"
@@ -201,25 +222,44 @@ agent/                          Agent 编排层
 │   └── tool/                   工具注册/调度/MCP/Hub
 ├── gateway/                    工具/API 网关（可见性+过滤）
 engine/                          ReAct 循环引擎
+├── engine.go                    Engine 核心 + Tracer 集成
+├── loop.go                      chatLoop 埋点
 contexts/                        LLM 会话上下文
-├── tracer/                     追踪树（Tracer 接口 + SimpleTracer）
-├── cache/                      缓存（TTL + 内容寻址）
-├── storage/                    持久化（JSON 分片）
-└── react/                      CompletionStrategy
-workplan/                       图编排引擎
-config/                         配置文件
-├── account-openai.yaml         OpenAI 格式
-├── account-anthropic.yaml      Anthropic 格式
-└── loader.go                   配置加载器
-docs/                           文档
-test/                           测试
+├── tracer/                      Trace Tree 追踪（NoopTracer 默认零开销）
+├── cache/                       TTL + 内容寻址缓存
+├── storage/                     JSON 分片持久化
+└── react/                       CompletionStrategy
+workplan/                        图编排引擎（核心差异化）
+├── graph.go                     有向图引擎 + Edge 条件路由
+├── node.go                      节点类型 + 执行状态机
+├── strategy.go                  NodeStrategy 接口 + 三态实现
+├── runner.go                    各 runner 适配器
+├── sugar.go                     声明式构建 API
+└── plan.go                      编排引擎 + 序列化支持
+config/                          配置文件
+├── account-openai.yaml
+├── account-anthropic.yaml
+└── loader.go
+docs/                            文档
+test/                            测试
 ```
 
 ## 设计原则
 
 1. **零循环依赖** — Engine → Agent → Contexts 单向依赖
-2. **Go 标准库** — net/http、log/slog、sync、atomic，无第三方 LLM SDK
+2. **Go 标准库** — net/http、log/slog、sync、atomic，零第三方 LLM SDK
 3. **Strategy > Factory** — 协议差异用策略模式封装，不复制 HTTP 编排逻辑
-4. **Session 级格式锁定** — `llm_config.provider` 一经设定不可变，保证历史消息格式一致
+4. **WorkPlan 三态节点** — Method(零token) / LLM(纯文本) / Agent(全量) 混合编排，精准控费
 5. **号池轻量** — Account 只做路由，不携带协议信息（从 `llm_config` 继承）
-6. **可观测性** — Engine 层埋点 + Tracer 接口注入（默认 NoopTracer 零开销），ExportTrace() 导出 JSON 追踪树
+6. **可观测性可选** — Tracer 接口 + NoopTracer 默认零开销，注入即开启
+7. **可读性优先** — ~76 个文件，~13.7k 行，无泛型过度使用，一个下午读完
+
+## 定位
+
+Seele 不是 LangChainGo 的 Go 移植。不追求 Provider 数量最多、不追求社区最大。核心差异化是：
+
+- **Go 原生** — 不是 Python 框架的翻译，从头设计，零循环依赖
+- **WorkPlan 图编排** — 三态 NodeStrategy，唯一支持在同一个工作流里混合零 token / 轻量 / 全量节点的 Go 框架
+- **可读** — 零第三方 LLM SDK，纯 net/http，~13.7k 行，一个人能读完的代码库
+
+适合的场景：想用 Go 写 Agent，需要 WorkPlan 级别的编排控制，认可「读得懂的代码比功能多更重要」的团队。
