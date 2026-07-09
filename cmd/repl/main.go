@@ -29,6 +29,7 @@ import (
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
 	"github.com/RedHuang-0622/Seele/config"
+	"github.com/RedHuang-0622/Seele/contexts/tracer"
 	"github.com/RedHuang-0622/Seele/engine"
 )
 
@@ -67,7 +68,12 @@ func main() {
 	chatClient := agt.LLM().(*api.ChatClient)
 	pool := chatClient.AccountPool()
 
-	eng := engine.New(agt, engine.WithSystemPrompt("你是一个有用的 AI 助手，支持多 Provider 切换。"))
+	// 可观测性追踪器（默认开启，每次 Chat 后可通过 /trace 查看）
+	tr := tracer.NewSimpleTracer()
+
+	eng := engine.New(agt,
+		engine.WithTracer(tr),
+		engine.WithSystemPrompt("你是一个有用的 AI 助手，支持多 Provider 切换。"))
 
 	// 注册一个简单的工具
 	agt.RegisterTool(
@@ -120,8 +126,21 @@ func main() {
 			fmt.Printf("  ❌ %v\n", err)
 			continue
 		}
+
+		// 统计 token（从追踪树提取）
+		totalTokens := "?"
+		if tree := eng.ExportTrace(); tree != nil && tree.Root != nil {
+			for _, c := range tree.Root.Children {
+				if c.Kind == tracer.SpanLLMCall {
+					if t, ok := c.Attrs["total_tokens"]; ok {
+						totalTokens = t
+						break
+					}
+				}
+			}
+		}
 		pf := chatClient.ProviderFilter()
-		fmt.Printf("  🤖 [%s %.1fs] %s\n", providerLabel(pf), elapsed, reply)
+		fmt.Printf("  🤖 [%s %s %.1fs] %s\n", providerLabel(pf), totalTokens+"tok", elapsed, reply)
 	}
 }
 
@@ -138,6 +157,7 @@ func doCommand(cmd string, cc *api.ChatClient, eng *engine.Engine) {
 		fmt.Println("  /switch           查看当前 Provider")
 		fmt.Println("  /switch openai    切换到 OpenAI")
 		fmt.Println("  /switch anthropic 切换到 Anthropic")
+		fmt.Println("  /trace            显示上次对话的追踪树（token 明细、耗时、调用链）")
 		fmt.Println("  /history          查看历史")
 		fmt.Println("  /clear            清空历史")
 		fmt.Println("  /pool             号池状态")
@@ -159,6 +179,17 @@ func doCommand(cmd string, cc *api.ChatClient, eng *engine.Engine) {
 			fmt.Println("  🔄 → Anthropic")
 		default:
 			fmt.Printf("  ❌ 不支持的 Provider: %s\n", target)
+		}
+
+	case "/trace":
+		tree := eng.ExportTrace()
+		if tree == nil || tree.Root == nil {
+			fmt.Println("  📊 暂无追踪数据（先发一条消息）")
+			return
+		}
+		fmt.Println("  📊 追踪树:")
+		for _, line := range strings.Split(tree.String(), "\n") {
+			fmt.Println("  " + line)
 		}
 
 	case "/history":
