@@ -13,6 +13,7 @@ import (
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/contexts/cache"
 	"github.com/RedHuang-0622/Seele/contexts/storage"
+	"github.com/RedHuang-0622/Seele/contexts/tracer"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
@@ -20,14 +21,18 @@ import (
 //
 // 每个 Engine 实例管理自己的对话历史，支持多轮对话。
 // 可选的 cache.Provider 用于会话历史缓存（JSON 文件，带 TTL + 置信度）。
+// 可选的 tracer.Tracer 用于全链路追踪（默认 NoopTracer 零开销）。
 type Engine struct {
-	agent   *agent.Agent
-	llm     types.ChatCompleter
-	cfg     SessionConfig
-	history []types.Message
-	sessionID string // 缓存键
+	agent     *agent.Agent
+	llm       types.ChatCompleter
+	cfg       SessionConfig
+	history   []types.Message
+	sessionID string         // 缓存键
 	cache     cache.Provider
 	store     *storage.Store
+	modelName string         // 供 tracer 使用
+	tracer    tracer.Tracer  // 可观测性追踪器
+	lastTrace *tracer.Tree   // 上次 Chat/ChatStream 的追踪树
 }
 
 // Option 配置 Engine 的创建参数。
@@ -56,6 +61,15 @@ func WithStore(s *storage.Store) Option {
 	}
 }
 
+// WithTracer 设置全链路追踪器。不调用此方法时使用 NoopTracer（零开销）。
+// 传入 tracer.NewSimpleTracer() 可在 Chat/ChatStream 结束后通过
+// History() 或 ExportTrace 获取完整追踪树。
+func WithTracer(t tracer.Tracer) Option {
+	return func(e *Engine) {
+		e.tracer = t
+	}
+}
+
 // WithSystemPrompt 设置 system 消息（替换已有 system 消息或插入首条）。
 func WithSystemPrompt(prompt string) Option {
 	return func(e *Engine) {
@@ -76,11 +90,21 @@ func WithSystemPrompt(prompt string) Option {
 //
 // 必须传入 *agent.Agent，不传 opts 时使用默认配置。
 func New(a *agent.Agent, opts ...Option) *Engine {
+	// 尝试获取模型名（从账号池）
+	modelName := ""
+	if pool := a.AccountPool(); pool != nil {
+		if accts := pool.All(); len(accts) > 0 {
+			modelName = accts[0].Model
+		}
+	}
+
 	e := &Engine{
 		agent:     a,
 		llm:       a.LLM(),
 		cfg:       DefaultSessionConfig(),
 		sessionID: fmt.Sprintf("sess_%d", time.Now().UnixNano()),
+		modelName: modelName,
+		tracer:    &tracer.NoopTracer{},
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -108,4 +132,14 @@ func (e *Engine) ClearHistory() {
 		}
 	}
 	e.history = sys
+}
+
+// Tracer 返回当前追踪器。可为 nil（未调用 WithTracer 时返回 NoopTracer）。
+func (e *Engine) Tracer() tracer.Tracer { return e.tracer }
+
+// ExportTrace 返回上一次 Chat/ChatStream 的完整追踪树。
+// 每次 Chat/ChatStream 结束后自动导出并存储，之后追踪器内部状态自动重置。
+// 返回 nil 表示尚未执行过 Chat/ChatStream，或上次未产生追踪数据。
+func (e *Engine) ExportTrace() *tracer.Tree {
+	return e.lastTrace
 }

@@ -29,6 +29,12 @@ type openaiStreamRequest struct {
 	Stream      bool            `json:"stream"`
 }
 
+type openaiUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 // openaiCompletionResponse 对应同步响应的 JSON body。
 type openaiCompletionResponse struct {
 	ID      string `json:"id"`
@@ -41,6 +47,7 @@ type openaiCompletionResponse struct {
 		Type    string `json:"type"`
 		Code    string `json:"code"`
 	} `json:"error"`
+	Usage *openaiUsage `json:"usage,omitempty"`
 }
 
 // openaiStreamDelta 对应 SSE data 帧中 choices[0].delta 的字段。
@@ -115,7 +122,15 @@ func (s *OpenAIStrategy) ParseResponse(body []byte) (types.Message, error) {
 	if len(cr.Choices) == 0 {
 		return types.Message{}, fmt.Errorf("OpenAI empty choices\nraw: %.512s", body)
 	}
-	return cr.Choices[0].Message, nil
+	msg := cr.Choices[0].Message
+	if cr.Usage != nil {
+		msg.Usage = &types.Usage{
+			PromptTokens:     cr.Usage.PromptTokens,
+			CompletionTokens: cr.Usage.CompletionTokens,
+			TotalTokens:      cr.Usage.TotalTokens,
+		}
+	}
+	return msg, nil
 }
 
 func (s *OpenAIStrategy) SSEHeaders() map[string]string {

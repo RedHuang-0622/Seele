@@ -32,11 +32,17 @@ type anthropicContentBlock struct {
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 }
 
+type anthropicUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
 type anthropicResponse struct {
 	ID      string                   `json:"id"`
 	Type    string                   `json:"type"`
 	Role    string                   `json:"role"`
 	Content []anthropicContentBlock  `json:"content"`
+	Usage   *anthropicUsage          `json:"usage,omitempty"`
 	Error   *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
@@ -177,6 +183,13 @@ func (s *AnthropicStrategy) ParseResponse(body []byte) (types.Message, error) {
 		msg.ToolCalls = toolCalls
 	} else {
 		msg.Content = &textContent
+	}
+	if resp.Usage != nil {
+		msg.Usage = &types.Usage{
+			PromptTokens:     resp.Usage.InputTokens,
+			CompletionTokens: resp.Usage.OutputTokens,
+			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
+		}
 	}
 	return msg, nil
 }

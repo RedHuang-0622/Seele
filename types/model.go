@@ -39,6 +39,19 @@ type StreamEvent struct {
 	Meta    map[string]any  // 扩展信息
 }
 
+// ─────────────────────────────────────────────
+// Token 用量统计
+// ─────────────────────────────────────────────
+
+// Usage 记录一次 LLM 调用的 token 消耗。
+// ProviderStrategy.ParseResponse 中填充此结构。
+// 序列化时忽略（json:"-"），仅内部传递。
+type Usage struct {
+	PromptTokens     int `json:"input_tokens"`
+	CompletionTokens int `json:"output_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 // Message 是 LLM 对话历史中的一条记录。
 // Role: "system" | "user" | "assistant" | "tool"
 type Message struct {
@@ -48,6 +61,7 @@ type Message struct {
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string     `json:"tool_call_id,omitempty"` // role="tool" 时使用
 	Name             string     `json:"name,omitempty"`         // role="tool" 时填工具名
+	Usage            *Usage     `json:"-"`                      // 不序列化，仅内部传递
 }
 
 // ToolCall 是 LLM assistant 消息中发起的工具调用。

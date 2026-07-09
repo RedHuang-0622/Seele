@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/agent"
+	"github.com/RedHuang-0622/Seele/contexts/tracer"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
@@ -376,5 +377,143 @@ func TestEngine_ClearHistory(t *testing.T) {
 	}
 	if histAfter[0].Role != "system" {
 		t.Fatalf("expected remaining entry to be system role, got %q", histAfter[0].Role)
+	}
+}
+
+// =============================================================================
+// Engine + Tracer 集成测试
+// =============================================================================
+
+// TestEngine_Tracer_SimpleText 验证简单的文本回复生成完整 Trace Tree。
+func TestEngine_Tracer_SimpleText(t *testing.T) {
+	mockSrv := newMockLLMServer()
+	defer mockSrv.Close()
+
+	a, err := newTestAgent(mockSrv.URL())
+	if err != nil {
+		t.Fatalf("agent.New() failed: %v", err)
+	}
+	defer a.Shutdown()
+
+	mockSrv.EnqueueText("Hello from mock.")
+	tr := tracer.NewSimpleTracer()
+
+	eng := New(a, WithTracer(tr), WithSystemPrompt("You are helpful."))
+
+	reply, err := eng.Chat(context.Background(), "Say hello")
+	if err != nil {
+		t.Fatalf("Chat() failed: %v", err)
+	}
+	if reply == "" {
+		t.Fatal("Chat() returned empty reply")
+	}
+
+	// Verify the tracer works via ExportTrace
+	tree := eng.ExportTrace()
+	if tree == nil {
+		t.Fatal("ExportTrace returned nil")
+	}
+	if tree.Root == nil {
+		t.Fatal("Trace tree has nil root")
+	}
+	t.Logf("Trace tree: %s", tree.String())
+
+	if tree.TraceID == "" {
+		t.Error("TraceID should be non-empty")
+	}
+	if tree.Root.Kind != tracer.SpanReActLoop {
+		t.Errorf("Root kind should be %s, got %s", tracer.SpanReActLoop, tree.Root.Kind)
+	}
+	if tree.Root.Duration <= 0 {
+		t.Errorf("Root Duration should be positive, got %v", tree.Root.Duration)
+	}
+	if len(tree.Root.Children) < 1 {
+		t.Errorf("Root should have at least 1 child, got %d", len(tree.Root.Children))
+	}
+}
+
+// TestEngine_Tracer_WithToolCalls 验证工具调度场景的 Trace Tree。
+func TestEngine_Tracer_WithToolCalls(t *testing.T) {
+	mockSrv := newMockLLMServer()
+	defer mockSrv.Close()
+
+	a, err := newTestAgent(mockSrv.URL())
+	if err != nil {
+		t.Fatalf("agent.New() failed: %v", err)
+	}
+	defer a.Shutdown()
+
+	a.RegisterTool(
+		"echo_tool", "A test tool that echoes input",
+		map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		func(ctx context.Context, argsJSON string) (string, error) {
+			return `{"status":"ok","echo":` + argsJSON + `}`, nil
+		},
+	)
+
+	mockSrv.EnqueueToolCalls([]types.ToolCall{
+		{ID: "call_echo_1", Type: "function",
+			Function: types.ToolCallFunction{Name: "echo_tool", Arguments: `{"input":"hello"}`}},
+	})
+	mockSrv.EnqueueText("Tool call completed successfully.")
+
+	tr := tracer.NewSimpleTracer()
+	eng := New(a, WithTracer(tr), WithSystemPrompt("You are helpful."))
+
+	reply, err := eng.Chat(context.Background(), "Use echo tool")
+	if err != nil {
+		t.Fatalf("Chat() failed: %v", err)
+	}
+	if reply == "" {
+		t.Fatal("empty reply")
+	}
+
+	tree := eng.ExportTrace()
+	if tree.Root == nil {
+		t.Fatal("nil root in tool call test")
+	}
+	if len(tree.Root.Children) < 2 {
+		t.Fatalf("expected >=2 children (1 LLM + 1 tool), got %d", len(tree.Root.Children))
+	}
+
+	// Verify tool dispatch span
+	hasToolSpan := false
+	for _, c := range tree.Root.Children {
+		if c.Kind == tracer.SpanToolDispatch && c.Attrs["tool"] == "echo_tool" {
+			hasToolSpan = true
+			break
+		}
+	}
+	if !hasToolSpan {
+		t.Error("No tool_dispatch span for echo_tool")
+	}
+
+	t.Logf("Trace tree:\n%s", tree.String())
+}
+
+// TestEngine_Tracer_NoopIsDefault 验证默认 NoopTracer 不产生追踪数据。
+func TestEngine_Tracer_NoopIsDefault(t *testing.T) {
+	mockSrv := newMockLLMServer()
+	defer mockSrv.Close()
+
+	a, err := newTestAgent(mockSrv.URL())
+	if err != nil {
+		t.Fatalf("agent.New() failed: %v", err)
+	}
+	defer a.Shutdown()
+
+	mockSrv.EnqueueText("Noop test")
+
+	// 不传 WithTracer = NoopTracer
+	eng := New(a, WithSystemPrompt("You are helpful."))
+	_, err = eng.Chat(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("Chat() failed: %v", err)
+	}
+
+	tree := eng.ExportTrace()
+	// NoopTracer 返回空的 Tree
+	if tree.Root != nil {
+		t.Error("NoopTracer should return nil Root")
 	}
 }
