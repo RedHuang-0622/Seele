@@ -34,7 +34,7 @@ import (
 )
 
 var (
-	configPath  = flag.String("c", "../config/config.yaml", "LLM 配置")
+	configPath  = flag.String("c", "config/account-openai.yaml", "LLM 配置（相对运行目录）")
 	accountPath = flag.String("a", "", "号池账号 YAML（可选，多 Provider 用）")
 )
 
