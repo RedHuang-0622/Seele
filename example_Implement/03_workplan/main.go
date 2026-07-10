@@ -25,7 +25,8 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	seelectx "github.com/RedHuang-0622/Seele/contexts"
+	"github.com/RedHuang-0622/Seele/engine"
+
 	"github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
@@ -42,7 +43,7 @@ type EngineFactory struct {
 }
 
 func (f *EngineFactory) NewAgent(systemPrompt string) workplan.Agent {
-	return seelectx.New(f.engine.LLM(), f.engine.Tools(), systemPrompt, seelectx.SessionConfig{MaxLoops: 10})
+	return engine.New(f.engine, engine.WithSystemPrompt(systemPrompt))
 }
 
 // =============================================================================
