@@ -1,0 +1,63 @@
+{
+  "goal": "Seele v0.6 架构重构：5 项重构（NodeStrategy清理/Plan声明式/糖→工具/Loop解耦/Tracer OTel化），sugar API 零改动，每Phase独立可验证",
+  "workdir": "docs/2026-07-10-arch-refactor/",
+  "tasks": [
+    {
+      "id": "P1",
+      "name": "NodeStrategy 接口清理",
+      "deps": [],
+      "files_hint": [
+        "workplan/strategy.go",
+        "workplan/runner.go",
+        "workplan/cache_strategy.go",
+        "workplan/strategy_test.go"
+      ],
+      "prompt": "执行 Phase 1：NodeStrategy 接口清理。\n\n要求：\n1. NodeStrategy 接口去掉 input 参数：`Execute(ctx context.Context, ec *ExecutionContext) (string, error)`\n2. MethodStrategy/LLMStrategy/AgentStrategy 改为接收 ec.PrevOutput（已渲染的模板文本）\n3. strategyRunner.Run 接管模板渲染：`rendered := renderTemplate(r.input, ec)`，然后 `ec.PrevOutput = rendered`，再调用 strategy.Execute(ctx, ec)\n4. CachedStrategy 适配新接口\n5. 提供 DeprecatedNodeStrategy 桥接接口兼容旧自定义策略\n6. 更新 strategy_test.go 中所有测试\n7. 旧 MethodStrategy fn 签名 `func(ctx, input string)` 改为 `func(ctx, rendered string)`——实际上 rendering 移到了 strategyRunner，所以 fn 接收已有 renderTemplate 预处理过的 input\n8. 运行测试确认通过：`go test ./workplan/... -v -count=1`\n\n测试：go vet ./workplan/... | go test -race -count=3 ./workplan/... | go test -cover ./workplan/...\n\n上下文见 docs/2026-07-10-arch-refactor/plan.md。完成后写入产物到 docs/2026-07-10-arch-refactor/agent-logs/P1/output.md，并在 commit message 中标注 [P1] [NodeStrategy]。"
+    },
+    {
+      "id": "P2",
+      "name": "WorkPlan 声明式 Plan",
+      "deps": [],
+      "files_hint": [
+        "workplan/plan.go",
+        "workplan/graph.go",
+        "workplan/node.go",
+        "workplan/sugar.go"
+      ],
+      "prompt": "执行 Phase 2：WorkPlan 声明式 Plan。\n\n要求：\n1. 在 workplan/plan.go 中新增 JSON 可序列化的 Plan 结构体（Plan, PlanNodeSpec, PlanEdgeSpec）\n2. 新增 Plan.Add(id, kind string) *Plan 和 Plan.Edge(from, to string) *Plan 构建 API\n3. WorkPlan 新增 ToPlan() *Plan 和 LoadPlan(plan *Plan) error 方法\n4. 新增 ConditionRegistry 管理条件标签→条件函数的映射\n5. PlanNodeSpec 包含所有节点类型配置（但不含 Go 函数引用）\n6. PlanEdgeSpec.Condition 用字符串标签\n7. Edge 结构体加上 json tag\n8. sugar.go 完全不动（保留为 node/edge 封装）\n9. Edge.Condition 在 Plan 中使用字符串标签，通过 ConditionRegistry 在 LoadPlan 时解析\n\n关键：\n- PlanNodeSpec 的 Kind 用字符串（\"auto\"|\"method\"|\"llm\"|\"strategy\"|\"approve\"|\"if\"|\"switch\"|\"loop\"|\"fork\"|\"checkpoint\"|\"emit\"|\"join\"）\n- 不需要序列化 NodeStrategy 本身，PlanNodeSpec 中存 kind + config，LoadPlan 时通过 factory 重建策略\n- Edge 结构体确保 json tag 一致性\n\n测试：go vet ./workplan/... | go test -race -count=3 ./workplan/... | go test -cover ./workplan/...\n\n上下文见 docs/2026-07-10-arch-refactor/plan.md。完成后写入产物到 docs/2026-07-10-arch-refactor/agent-logs/P2/output.md，并在 commit message 中标注 [P2] [Plan] [声明式]。"
+    },
+    {
+      "id": "P3",
+      "name": "WorkPlan 糖→Agent 工具",
+      "deps": ["P2"],
+      "files_hint": [
+        "workplan/plan.go",
+        "agent/agent.go"
+      ],
+      "prompt": "执行 Phase 3：WorkPlan 糖→Agent 工具。\n\n要求：\n1. 增强 WorkPlanTool 结构体，增加 PlanRef *Plan 字段（绑定 Plan 快照）\n2. WorkPlan.ToTool 方法增强：绑定额外的 Plan 元信息\n3. agent.Agent 新增 RegisterWorkPlanTool(wpTool workplan.WorkPlanTool) error 方法\n4. 工具 Run 方法支持参数覆盖 Vars（argsJSON 中的参数注入 ec.Vars）\n5. 注意 workplan 包不直接 import agent 包——Agent.RegisterWorkPlanTool 接收 workplan.WorkPlanTool（依赖方向 agent → workplan）\n6. 确保 WorkPlanTool.Run 内部处理上下文传递\n\n测试：go vet ./workplan/... ./agent/... | go test -race -count=3 ./workplan/... ./agent/...\n\n上下文见 docs/2026-07-10-arch-refactor/plan.md。依赖 P2 先完成。完成后写入产物到 docs/2026-07-10-arch-refactor/agent-logs/P3/output.md，并在 commit message 中标注 [P3] [Tool] [Agent]。"
+    },
+    {
+      "id": "P4",
+      "name": "Engine chatLoop 解耦",
+      "deps": [],
+      "files_hint": [
+        "engine/loop.go",
+        "engine/engine.go",
+        "engine/engine_test.go",
+        "engine/config.go"
+      ],
+      "prompt": "执行 Phase 4：Engine chatLoop 解耦。\n\n要求：\n1. 在 engine/loop.go 中定义 Loop 接口：Run(ctx, userInput, onChunk)(string,error) + History() []types.Message + ClearHistory()\n2. 将现有 chatLoop 逻辑原封不动移入 ReActLoop 结构体\n3. ReActLoop 持有 agent/llm/history/cache/store/tracer/sessionID/modelName/cfg\n4. Engine 结构体持有 Loop 接口（字段名 loop）代替内联 chatLoop\n5. Engine.New 默认创建 ReActLoop 作为 loop 实现\n6. 新增 WithLoop(Loop) Option 允许注入自定义 Loop\n7. Engine.Chat/ChatStream 委托给 e.loop.Run\n8. Engine.History()/ClearHistory() 委托给 e.loop.History/ ClearHistory\n9. Engine.restoreFromCache/saveToCache 移入 ReActLoop\n10. Engine.ExportTrace() 仍返回 e.lastTrace\n11. 确保 engine_test.go 中存量测试全部通过无行为退化\n12. 注意 seelectx 包也有一个 chatLoop—本次不重构 seelectx 的 chatLoop，只重构 engine 的\n\n特别注意：\n- ReActLoop 需要独立于 Engine 被创建，所以它的 NewReActLoop 构造函数接受独立的参数\n- 当前 engine_test.go 中的测试通过 Engine.Chat/ChatStream 调用，无需改\n- 确保 tracer 的 ExportTrace() 函数在 Chat 后仍正常工作\n\n测试：go vet ./engine/... | go test -race -count=3 ./engine/... | go test -cover ./engine/...\n\n上下文见 docs/2026-07-10-arch-refactor/plan.md。完成后写入产物到 docs/2026-07-10-arch-refactor/agent-logs/P4/output.md，并在 commit message 中标注 [P4] [Loop] [解耦]。"
+    },
+    {
+      "id": "P5",
+      "name": "Tracer OTel 化",
+      "deps": [],
+      "files_hint": [
+        "contexts/tracer/tracer.go",
+        "contexts/tracer/tracer_test.go",
+        "go.mod"
+      ],
+      "prompt": "执行 Phase 5：Tracer OTel 化。\n\n要求：\n1. SimpleTracer 新增可选的 otelProvider trace.TracerProvider 字段（nil=不发射 OTel）\n2. simpleSpan.End() 在更新完本地 Node 后，检查 otelProvider，非 nil 时发射 OTel span\n3. 新增 WithOTelTracerProvider(provider trace.TracerProvider) 方法\n4. export 方法保留 JSON Tree 向后兼容\n5. NoopTracer 完全不引用 OTel 包\n6. 支持将 Node 的 Attrs 映射为 OTel 的 attributes\n7. 支持将 Event 映射为 OTel span event\n8. SpanKind 映射到 OTel semconv\n\nOTel 依赖（go.mod 新增）：\n- go.opentelemetry.io/otel\n- go.opentelemetry.io/otel/trace\n- go.opentelemetry.io/otel/sdk （仅用于测试）\n\n注意：\n- otelProvider 字段为 nil 时 SimpleTracer 行为与之前完全相同（零侵入）\n- 只在创建 SimpleTracer 后调用 WithOTelTracerProvider 才激活 OTel 发射\n- Export() 仍返回 Tree 用于 JSON 兼容\n\n测试：go vet ./contexts/tracer/... | go test -race -count=3 ./contexts/tracer/... | go test -cover ./contexts/tracer/...\n\n上下文见 docs/2026-07-10-arch-refactor/plan.md。完成后写入产物到 docs/2026-07-10-arch-refactor/agent-logs/P5/output.md，并在 commit message 中标注 [P5] [Tracer] [OTel]。"
+    }
+  ]
+}
