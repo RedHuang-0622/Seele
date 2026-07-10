@@ -48,7 +48,8 @@ type autoRunner struct {
 	input         string
 	toolFilter    []string
 	factory       AgentFactory
-	defaultPrompt string // 从 WorkPlan 继承的默认 prompt，systemPrompt 为空时使用
+	defaultPrompt string   // 从 WorkPlan 继承的默认 prompt，systemPrompt 为空时使用
+	onChunk       func(string) // 流式输出回调，nil = 不流式
 }
 
 func (r *autoRunner) ID() string { return r.id }
@@ -63,7 +64,13 @@ func (r *autoRunner) Run(ctx context.Context, ec *ExecutionContext) (string, err
 	if f, ok := agent.(interface{ SetToolFilter([]string) }); ok && len(r.toolFilter) > 0 {
 		f.SetToolFilter(r.toolFilter)
 	}
-	out, err := agent.Chat(ctx, input)
+	var out string
+	var err error
+	if sa, ok := agent.(StreamAgent); ok && r.onChunk != nil {
+		out, err = sa.ChatStream(ctx, input, r.onChunk)
+	} else {
+		out, err = agent.Chat(ctx, input)
+	}
 	if err != nil {
 		return "", err
 	}

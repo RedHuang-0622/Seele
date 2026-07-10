@@ -97,6 +97,12 @@ func (wp *WorkPlan) Resume(ctx context.Context) (*WorkPlanResult, error) {
 	wp.pauseSnapshot = nil
 	wp.execState = StateExecuting
 
+	// ── Tracer：创建根 span ───────────────────────────────────────
+	var rootSpan Span
+	if wp.tracer != nil {
+		ctx, rootSpan = wp.tracer.NewTrace(ctx, wp.execID)
+	}
+
 	// 执行暂停的 approve 节点
 	n, ok := wp.nodeIndex[snap.currentID]
 	if !ok {
@@ -205,5 +211,8 @@ func (wp *WorkPlan) Resume(ctx context.Context) (*WorkPlanResult, error) {
 
 	wp.execState = StateCompleted
 	snap.result.TotalElapsed = time.Since(snap.startedAt)
+	if rootSpan != nil {
+		rootSpan.End()
+	}
 	return snap.result, nil
 }

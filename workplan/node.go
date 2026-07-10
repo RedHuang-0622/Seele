@@ -322,6 +322,8 @@ type node struct {
 	// ── kindEmit ──────────────────────────────────────────────────
 	emitKey string // 写入 WorkPlan.vars 的 key
 
+	// ── 流式输出 ─────────────────────────────────────────────────
+	onChunk func(string) // 节点执行时的流式输出回调
 	// ── 运行时状态 ────────────────────────────────────────────────
 	checkpoint *checkpointState // kindCheckpoint 时填充
 }

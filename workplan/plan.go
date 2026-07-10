@@ -16,6 +16,14 @@ type Agent interface {
 	Chat(ctx context.Context, input string) (string, error)
 }
 
+// StreamAgent 是可选的 Agent 扩展接口。
+// 实现了此接口的 Agent 可以在 Chat 时通过 onChunk 回调逐块输出流式结果。
+// WorkPlan 在执行 Auto/LLM 节点时，如果 Agent 实现了 StreamAgent 且
+// 节点配置了 onChunk 回调，则会调用 ChatStream 替代 Chat。
+type StreamAgent interface {
+	ChatStream(ctx context.Context, input string, onChunk func(string)) (string, error)
+}
+
 // AgentFactory 由上层（Engine / Runtime）注入，WorkPlan 用它创建 Agent。
 type AgentFactory interface {
 	NewAgent(systemPrompt string) Agent
@@ -31,6 +39,12 @@ type WorkPlanOption func(*WorkPlan)
 // nil 表示不限制并发。
 func WithSemaphore(sem chan struct{}) WorkPlanOption {
 	return func(wp *WorkPlan) { wp.sem = sem }
+}
+
+// WithTracer 设置 WorkPlan 的可观测性追踪器。
+// tracer 为 nil 时不追踪（默认行为）。
+func WithTracer(tracer Tracer) WorkPlanOption {
+	return func(wp *WorkPlan) { wp.tracer = tracer }
 }
 
 // WithMaxForkConcurrency 设置 Fork 节点的最大并发分支数。默认 3。
@@ -89,6 +103,9 @@ type WorkPlan struct {
 	gate               ApprovalGate
 	sem                chan struct{} // 可选的并发信号量，nil = 不限
 	maxForkConcurrency int           // Fork 最大并发分支数，默认 3
+
+	// ── 可观测性 ──────────────────────────────────────────────────
+	tracer Tracer // 可选追踪，nil = 不追踪
 
 	// ── 执行期（Run 时初始化）────────────────────────────────────
 	vars map[string]string // Emit 写入的命名变量
@@ -155,6 +172,13 @@ func (wp *WorkPlan) Run(ctx context.Context) (*WorkPlanResult, error) {
 	}
 	start := time.Now()
 
+	// ── Tracer：创建根 span ───────────────────────────────────────
+	var rootSpan Span
+	if wp.tracer != nil {
+		ctx, rootSpan = wp.tracer.NewTrace(ctx, wp.execID)
+		rootSpan.SetAttr("entry_node", wp.entryID)
+	}
+
 	// 构建执行上下文（v0.2：图引擎通过 ec 传递状态）
 	ec := &ExecutionContext{
 		Vars:       wp.vars,
@@ -205,11 +229,32 @@ func (wp *WorkPlan) Run(ctx context.Context) (*WorkPlanResult, error) {
 		runner := wp.graph.GetNode(currentID)
 		if runner == nil {
 			result.TotalElapsed = time.Since(start)
+			if rootSpan != nil {
+				rootSpan.SetAttr("error", fmt.Sprintf("runner for node %q not found", currentID))
+				rootSpan.End()
+			}
 			return result, fmt.Errorf("WorkPlan.Run: runner for node %q not found in graph", currentID)
+		}
+
+		// ── Tracer：创建节点 span ──────────────────────────────────
+		var nodeSpan Span
+		if wp.tracer != nil {
+			ctx, nodeSpan = wp.tracer.StartSpan(ctx, "node:"+currentID, SpanNode, map[string]string{
+				"node_id":   currentID,
+				"node_kind": n.kind.String(),
+			})
 		}
 
 		nodeStart := time.Now()
 		output, err := runner.Run(ctx, ec)
+
+		if nodeSpan != nil {
+			if err != nil {
+				nodeSpan.End(WithSpanError(err))
+			} else {
+				nodeSpan.End()
+			}
+		}
 
 		nr := &NodeResult{
 			NodeID:    currentID,
@@ -236,6 +281,9 @@ func (wp *WorkPlan) Run(ctx context.Context) (*WorkPlanResult, error) {
 
 	wp.execState = StateCompleted
 	result.TotalElapsed = time.Since(start)
+	if rootSpan != nil {
+		rootSpan.End()
+	}
 	return result, nil
 }
 

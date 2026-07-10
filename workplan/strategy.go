@@ -77,6 +77,7 @@ func (s *MethodStrategy) Execute(ctx context.Context, ec *ExecutionContext) (str
 type LLMStrategy struct {
 	systemPrompt string
 	factory      AgentFactory
+	onChunk      func(string) // 流式输出回调，nil = 不流式
 }
 
 // NewLLMStrategy 创建 LLMStrategy。
@@ -90,7 +91,13 @@ func (s *LLMStrategy) Execute(ctx context.Context, ec *ExecutionContext) (string
 		prompt = "You are a helpful assistant."
 	}
 	agent := s.factory.NewAgent(prompt)
-	out, err := agent.Chat(ctx, ec.PrevOutput)
+	var out string
+	var err error
+	if sa, ok := agent.(StreamAgent); ok && s.onChunk != nil {
+		out, err = sa.ChatStream(ctx, ec.PrevOutput, s.onChunk)
+	} else {
+		out, err = agent.Chat(ctx, ec.PrevOutput)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -107,6 +114,7 @@ type AgentStrategy struct {
 	systemPrompt string
 	toolFilter   []string
 	factory      AgentFactory
+	onChunk      func(string) // 流式输出回调，nil = 不流式
 }
 
 // NewAgentStrategy 创建 AgentStrategy。
@@ -124,7 +132,13 @@ func (s *AgentStrategy) Execute(ctx context.Context, ec *ExecutionContext) (stri
 	if f, ok := agent.(interface{ SetToolFilter([]string) }); ok && len(s.toolFilter) > 0 {
 		f.SetToolFilter(s.toolFilter)
 	}
-	out, err := agent.Chat(ctx, ec.PrevOutput)
+	var out string
+	var err error
+	if sa, ok := agent.(StreamAgent); ok && s.onChunk != nil {
+		out, err = sa.ChatStream(ctx, ec.PrevOutput, s.onChunk)
+	} else {
+		out, err = agent.Chat(ctx, ec.PrevOutput)
+	}
 	if err != nil {
 		return "", err
 	}
