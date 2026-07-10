@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -48,6 +49,16 @@ func (c *ChatClient) WithStrategy(s ProviderStrategy) *ChatClient {
 func (c *ChatClient) SetProvider(p ProviderType) *ChatClient {
 	c.provider = p
 	return c
+}
+
+// SelectAccount 按名称切换到号池内的指定账号。
+// 找到账号时将后续请求定位到该账号，返回 true。
+// 账号不存在或已禁用时不做任何切换，返回 false。
+func (c *ChatClient) SelectAccount(name string) bool {
+	if c.pool == nil {
+		return false
+	}
+	return c.pool.Select(name) != nil
 }
 
 // Provider 返回当前会话级 provider，空值表示默认 "openai" 格式。
@@ -108,6 +119,8 @@ func (c *ChatClient) effectiveAccount() *Account {
 //  4. 默认 "openai"
 //
 // 注意：llm_config.provider 优先于 acct.Provider，确保同一 session 内消息格式一致。
+//
+// 当指定名称的策略未注册时，回退到 "openai" 并记录警告日志。
 func (c *ChatClient) effectiveStrategy(acct *Account) ProviderStrategy {
 	if c.strategy != nil {
 		return c.strategy
@@ -122,6 +135,9 @@ func (c *ChatClient) effectiveStrategy(acct *Account) ProviderStrategy {
 	if s := GetProviderStrategy(name); s != nil {
 		return s
 	}
+	slog.Warn("provider strategy not found, falling back to openai",
+		"requested", name,
+	)
 	return GetProviderStrategy("openai")
 }
 
@@ -133,6 +149,9 @@ func (c *ChatClient) effectiveStrategy(acct *Account) ProviderStrategy {
 //   - 若模型直接回复，Message.Content 为文本，Message.ToolCalls 为空。
 func (c *ChatClient) Complete(ctx context.Context, messages []types.Message, tools []types.Tool) (types.Message, error) {
 	acct := c.effectiveAccount()
+	if acct == nil && c.pool != nil {
+		return types.Message{}, fmt.Errorf("ChatClient: all accounts rate-limited or disabled")
+	}
 	strategy := c.effectiveStrategy(acct)
 
 	baseURL := c.Cfg.BaseURL
@@ -243,6 +262,9 @@ func buildToolCalls(tcMap map[int]*types.ToolCall) []types.ToolCall {
 // 调用方负责关闭 body。
 func (c *ChatClient) doStreamRequest(ctx context.Context, messages []types.Message, tools []types.Tool) (io.ReadCloser, error) {
 	acct := c.effectiveAccount()
+	if acct == nil && c.pool != nil {
+		return nil, fmt.Errorf("ChatClient: all accounts rate-limited or disabled")
+	}
 	strategy := c.effectiveStrategy(acct)
 
 	baseURL := c.Cfg.BaseURL
@@ -332,6 +354,7 @@ func (c *ChatClient) completeStreamInternal(
 	state := newSSEState()
 	reader := bufio.NewReader(body)
 
+	currentEventType := "" // track event: lines (Anthropic SSE format)
 	for {
 		line, readErr := reader.ReadString('\n')
 		line = strings.TrimRight(line, "\r\n")
@@ -340,8 +363,14 @@ func (c *ChatClient) completeStreamInternal(
 			break
 		}
 
+		if eventVal, ok := strings.CutPrefix(line, "event: "); ok {
+			currentEventType = eventVal
+			continue
+		}
+
 		if payload, ok := strings.CutPrefix(line, "data: "); ok && payload != "" {
-			events, parseErr := strategy.ParseSSEEvent("data", payload)
+			events, parseErr := strategy.ParseSSEEvent(currentEventType, payload)
+			currentEventType = ""
 			if parseErr != nil {
 				return "", "", nil, fmt.Errorf("ChatClient stream: %w", parseErr)
 			}
