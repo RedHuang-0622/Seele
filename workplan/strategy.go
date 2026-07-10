@@ -16,7 +16,7 @@ import "context"
 // 用户自定义策略：
 //
 //	type MyStrategy struct{}
-//	func (s *MyStrategy) Execute(ctx context.Context, input string, ec *ExecutionContext) (string, error) {
+//	func (s *MyStrategy) Execute(ctx context.Context, ec *ExecutionContext) (string, error) {
 //	    return `"custom result"`, nil
 //	}
 //	wp := workplan.New(factory, nil, "prompt")
@@ -30,10 +30,16 @@ import "context"
 // NodeStrategy 是图节点的执行策略接口。
 type NodeStrategy interface {
 	// Execute 执行策略逻辑。
-	//   ctx:   上下文（取消/超时）
-	//   input: 构建节点时传入的模板文本（已通过 renderTemplate 渲染）
-	//   ec:    图执行上下文（含 PrevOutput、Vars 等运行时状态）
+	//   ctx: 上下文（取消/超时）
+	//   ec:  图执行上下文（含 PrevOutput、Vars 等运行时状态）
 	// 返回: JSON 字符串
+	Execute(ctx context.Context, ec *ExecutionContext) (string, error)
+}
+
+// DeprecatedNodeStrategy 是旧版 NodeStrategy 的桥接接口。
+// 用于兼容外部还在使用旧签名 `Execute(ctx, input, ec)` 的自定义策略。
+// 适配器见 AdapterDeprecatedStrategy。
+type DeprecatedNodeStrategy interface {
 	Execute(ctx context.Context, input string, ec *ExecutionContext) (string, error)
 }
 
@@ -53,9 +59,9 @@ func NewMethodStrategy(fn func(ctx context.Context, input string) (string, error
 	return &MethodStrategy{fn: fn}
 }
 
-func (s *MethodStrategy) Execute(ctx context.Context, input string, ec *ExecutionContext) (string, error) {
-	rendered := renderTemplate(input, ec)
-	out, err := s.fn(ctx, rendered)
+func (s *MethodStrategy) Execute(ctx context.Context, ec *ExecutionContext) (string, error) {
+	// ec.PrevOutput 已经是渲染好的文本（模板渲染在 strategyRunner 完成）
+	out, err := s.fn(ctx, ec.PrevOutput)
 	if err != nil {
 		return "", err
 	}
@@ -78,14 +84,13 @@ func NewLLMStrategy(factory AgentFactory, systemPrompt string) *LLMStrategy {
 	return &LLMStrategy{factory: factory, systemPrompt: systemPrompt}
 }
 
-func (s *LLMStrategy) Execute(ctx context.Context, input string, ec *ExecutionContext) (string, error) {
+func (s *LLMStrategy) Execute(ctx context.Context, ec *ExecutionContext) (string, error) {
 	prompt := s.systemPrompt
 	if prompt == "" {
 		prompt = "You are a helpful assistant."
 	}
 	agent := s.factory.NewAgent(prompt)
-	rendered := renderTemplate(input, ec)
-	out, err := agent.Chat(ctx, rendered)
+	out, err := agent.Chat(ctx, ec.PrevOutput)
 	if err != nil {
 		return "", err
 	}
@@ -110,7 +115,7 @@ func NewAgentStrategy(factory AgentFactory, systemPrompt string, toolFilter ...s
 	return &AgentStrategy{factory: factory, systemPrompt: systemPrompt, toolFilter: toolFilter}
 }
 
-func (s *AgentStrategy) Execute(ctx context.Context, input string, ec *ExecutionContext) (string, error) {
+func (s *AgentStrategy) Execute(ctx context.Context, ec *ExecutionContext) (string, error) {
 	prompt := s.systemPrompt
 	if prompt == "" {
 		prompt = "You are a helpful assistant."
@@ -119,8 +124,7 @@ func (s *AgentStrategy) Execute(ctx context.Context, input string, ec *Execution
 	if f, ok := agent.(interface{ SetToolFilter([]string) }); ok && len(s.toolFilter) > 0 {
 		f.SetToolFilter(s.toolFilter)
 	}
-	rendered := renderTemplate(input, ec)
-	out, err := agent.Chat(ctx, rendered)
+	out, err := agent.Chat(ctx, ec.PrevOutput)
 	if err != nil {
 		return "", err
 	}

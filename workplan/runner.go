@@ -22,13 +22,20 @@ import (
 // strategyRunner 把 NodeStrategy 适配为 NodeRunner。
 type strategyRunner struct {
 	id       string
+	input    string  // 原始输入模板，Run 方法渲染后写入 ec.PrevOutput
 	strategy NodeStrategy
 }
 
 func (r *strategyRunner) ID() string { return r.id }
 
 func (r *strategyRunner) Run(ctx context.Context, ec *ExecutionContext) (string, error) {
-	return r.strategy.Execute(ctx, r.id, ec)
+	// 框架层统一渲染：strategyRunner 接管模板渲染，策略只关心 ec.PrevOutput
+	input := r.input
+	if input != "" {
+		rendered := renderTemplate(input, ec)
+		ec.PrevOutput = rendered
+	}
+	return r.strategy.Execute(ctx, ec)
 }
 
 // =============================================================================

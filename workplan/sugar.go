@@ -54,7 +54,8 @@ func (wp *WorkPlan) Auto(id, input string, opts ...NodeOpt) *WorkPlan {
 	applyOpts(n, opts)
 
 	runner := &strategyRunner{
-		id: n.id,
+		id:    n.id,
+		input: n.input,
 		strategy: NewAgentStrategy(wp.factory, n.systemPrompt, n.toolFilter...),
 	}
 	return wp.registerNode(n, runner)
@@ -81,7 +82,7 @@ func (wp *WorkPlan) Method(id string, fn func(ctx context.Context, input string)
 		strategy: NewMethodStrategy(fn),
 	}
 	applyOpts(n, opts)
-	runner := &strategyRunner{id: n.id, strategy: n.strategy}
+	runner := &strategyRunner{id: n.id, input: n.input, strategy: n.strategy}
 	return wp.registerNode(n, runner)
 }
 
@@ -96,7 +97,8 @@ func (wp *WorkPlan) LLM(id, input string, opts ...NodeOpt) *WorkPlan {
 	n := &node{id: wp.resolveID(id, "llm"), kind: kindLLM, input: input}
 	applyOpts(n, opts)
 	runner := &strategyRunner{
-		id: n.id,
+		id:    n.id,
+		input: n.input,
 		strategy: NewLLMStrategy(wp.factory, n.systemPrompt),
 	}
 	return wp.registerNode(n, runner)
@@ -109,7 +111,7 @@ func (wp *WorkPlan) LLM(id, input string, opts ...NodeOpt) *WorkPlan {
 // 示例：
 //
 //	type MyStrategy struct{}
-//	func (s *MyStrategy) Execute(ctx context.Context, input string, ec *ExecutionContext) (string, error) {
+//	func (s *MyStrategy) Execute(ctx context.Context, ec *ExecutionContext) (string, error) {
 //	    return `"custom result"`, nil
 //	}
 //	wp.Strategy("my-node", &MyStrategy{}, workplan.WithPrompt("custom prompt"))
@@ -120,7 +122,7 @@ func (wp *WorkPlan) Strategy(id string, strategy NodeStrategy, opts ...NodeOpt) 
 		strategy: strategy,
 	}
 	applyOpts(n, opts)
-	runner := &strategyRunner{id: n.id, strategy: n.strategy}
+	runner := &strategyRunner{id: n.id, input: n.input, strategy: n.strategy}
 	return wp.registerNode(n, runner)
 }
 

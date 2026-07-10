@@ -92,8 +92,8 @@ func NewCachedStrategy(inner NodeStrategy, opts ...CachedStrategyOption) *Cached
 }
 
 // Execute 执行包装后的策略：查缓存 → 命中则返回 → 否则执行内层策略并缓存。
-func (s *CachedStrategy) Execute(ctx context.Context, input string, ec *ExecutionContext) (string, error) {
-	key := s.buildKey(input, ec)
+func (s *CachedStrategy) Execute(ctx context.Context, ec *ExecutionContext) (string, error) {
+	key := s.buildKey(ec)
 
 	// 缓存命中
 	if s.cacheGetter != nil {
@@ -103,7 +103,7 @@ func (s *CachedStrategy) Execute(ctx context.Context, input string, ec *Executio
 	}
 
 	// 未命中：执行内层策略
-	result, err := s.inner.Execute(ctx, input, ec)
+	result, err := s.inner.Execute(ctx, ec)
 	if err != nil {
 		return "", err
 	}
@@ -116,13 +116,11 @@ func (s *CachedStrategy) Execute(ctx context.Context, input string, ec *Executio
 	return result, nil
 }
 
-// buildKey 构建缓存键：SHA256(keyPrefix + input + prevOutput)。
-func (s *CachedStrategy) buildKey(input string, ec *ExecutionContext) string {
+// buildKey 构建缓存键：SHA256(keyPrefix + prevOutput)。
+func (s *CachedStrategy) buildKey(ec *ExecutionContext) string {
 	h := sha256.New()
 	h.Write([]byte(s.keyPrefix))
 	h.Write([]byte{0}) // 分隔符
-	h.Write([]byte(input))
-	h.Write([]byte{0})
 	if ec != nil {
 		h.Write([]byte(ec.PrevOutput))
 	}
