@@ -57,7 +57,156 @@ func (s *AnthropicStrategy) AuthHeader(apiKey string) (string, string) { return 
 func (s *AnthropicStrategy) SSEHeaders() map[string]string {
 	return map[string]string{"Accept": "text/event-stream", "anthropic-version": "2023-06-01"}
 }
-func (s *AnthropicStrategy) ParseSSEEvent(_, _ string) ([]SSEEvent, error) { return nil, nil }
+
+// ── SSE 解析 ───────────────────────────────────────────────────
+
+// ParseSSEEvent 解析 Anthropic SSE 帧。
+//
+// Anthropic SSE 使用 event: 行标记事件类型，data: 行包含 JSON 负载。
+// eventType 由 client.go 从 event: 行提取传入；若为空（兼容旧格式），
+// 则尝试从 data JSON 的 "type" 字段推断。
+//
+// 返回的事件：
+//   - SSEEventText       — text_delta / message_start 中的文本
+//   - SSEEventToolCall   — content_block_start (tool_use) +
+//     content_block_delta (input_json_delta)
+//   - SSEEventError      — error 帧
+//   - 空切片             — ping/content_block_stop/message_delta/message_stop
+func (s *AnthropicStrategy) ParseSSEEvent(eventType string, payload string) ([]SSEEvent, error) {
+	// Fallback: 从 data JSON 推断事件类型（无 event: 行时）
+	if eventType == "" {
+		var raw struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(payload), &raw); err != nil {
+			return nil, nil
+		}
+		eventType = raw.Type
+	}
+
+	switch eventType {
+	case "ping":
+		return nil, nil
+
+	case "message_start":
+		var msg struct {
+			Type    string `json:"type"`
+			Message struct {
+				ID      string                  `json:"id"`
+				Content []anthropicContentBlock `json:"content"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(payload), &msg); err != nil {
+			return nil, fmt.Errorf("anthropic SSE message_start: %w", err)
+		}
+		// 短响应可能直接在 message_start 中包含内容块
+		events := make([]SSEEvent, 0, len(msg.Message.Content))
+		for i, block := range msg.Message.Content {
+			switch block.Type {
+			case "text":
+				if block.Text != "" {
+					events = append(events, SSEEvent{
+						Type:    SSEEventText,
+						Content: block.Text,
+					})
+				}
+			case "tool_use":
+				events = append(events, SSEEvent{
+					Type:          SSEEventToolCall,
+					ToolCallIndex: i,
+					Meta: map[string]any{
+						"id":   block.ID,
+						"name": block.Name,
+					},
+				})
+			}
+		}
+		return events, nil
+
+	case "content_block_start":
+		var block struct {
+			Type         string                `json:"type"`
+			Index        int                   `json:"index"`
+			ContentBlock anthropicContentBlock `json:"content_block"`
+		}
+		if err := json.Unmarshal([]byte(payload), &block); err != nil {
+			return nil, fmt.Errorf("anthropic SSE content_block_start: %w", err)
+		}
+		if block.ContentBlock.Type == "tool_use" {
+			return []SSEEvent{{
+				Type:          SSEEventToolCall,
+				ToolCallIndex: block.Index,
+				Meta: map[string]any{
+					"id":   block.ContentBlock.ID,
+					"name": block.ContentBlock.Name,
+				},
+			}}, nil
+		}
+		return nil, nil
+
+	case "content_block_delta":
+		var delta struct {
+			Type  string `json:"type"`
+			Index int    `json:"index"`
+			Delta struct {
+				Type        string `json:"type"`
+				Text        string `json:"text,omitempty"`
+				PartialJSON string `json:"partial_json,omitempty"`
+			} `json:"delta"`
+		}
+		if err := json.Unmarshal([]byte(payload), &delta); err != nil {
+			return nil, fmt.Errorf("anthropic SSE content_block_delta: %w", err)
+		}
+		switch delta.Delta.Type {
+		case "text_delta":
+			if delta.Delta.Text != "" {
+				return []SSEEvent{{
+					Type:    SSEEventText,
+					Content: delta.Delta.Text,
+				}}, nil
+			}
+		case "input_json_delta":
+			if delta.Delta.PartialJSON != "" {
+				return []SSEEvent{{
+					Type:          SSEEventToolCall,
+					ToolCallIndex: delta.Index,
+					Meta: map[string]any{
+						"arguments": delta.Delta.PartialJSON,
+					},
+				}}, nil
+			}
+		}
+		return nil, nil
+
+	case "content_block_stop":
+		return nil, nil
+
+	case "message_delta":
+		return nil, nil
+
+	case "message_stop":
+		return nil, nil
+
+	case "error":
+		var errPayload struct {
+			Type  string `json:"type"`
+			Error struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(payload), &errPayload); err != nil {
+			return nil, fmt.Errorf("anthropic SSE error: %w", err)
+		}
+		return []SSEEvent{{
+			Type:    SSEEventError,
+			Content: fmt.Sprintf("[%s] %s", errPayload.Error.Type, errPayload.Error.Message),
+		}}, nil
+
+	default:
+		return nil, nil
+	}
+}
 
 // BuildRequest: 转换历史消息为 Anthropic 格式。
 //
@@ -81,11 +230,14 @@ func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message,
 			if m.Content != nil {
 				content = *m.Content
 			}
-			block, _ := json.Marshal([]map[string]any{{
+			block, err := json.Marshal([]map[string]any{{
 				"type":        "tool_result",
 				"tool_use_id": m.ToolCallID,
 				"content":     content,
 			}})
+			if err != nil {
+				return nil, fmt.Errorf("anthropic BuildRequest: marshal tool_result: %w", err)
+			}
 			msgs = append(msgs, anthropicMessage{Role: "user", Content: block})
 
 		case "assistant":
@@ -106,16 +258,25 @@ func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message,
 						"input": input,
 					})
 				}
-				b, _ := json.Marshal(blocks)
+				b, err := json.Marshal(blocks)
+				if err != nil {
+					return nil, fmt.Errorf("anthropic BuildRequest: marshal assistant blocks: %w", err)
+				}
 				msgs = append(msgs, anthropicMessage{Role: "assistant", Content: b})
 			} else if m.Content != nil {
-				content, _ := json.Marshal(*m.Content)
+				content, err := json.Marshal(*m.Content)
+				if err != nil {
+					return nil, fmt.Errorf("anthropic BuildRequest: marshal assistant content: %w", err)
+				}
 				msgs = append(msgs, anthropicMessage{Role: "assistant", Content: content})
 			}
 
 		default:
 			if m.Content != nil {
-				content, _ := json.Marshal(*m.Content)
+				content, err := json.Marshal(*m.Content)
+				if err != nil {
+					return nil, fmt.Errorf("anthropic BuildRequest: marshal %s content: %w", m.Role, err)
+				}
 				msgs = append(msgs, anthropicMessage{Role: m.Role, Content: content})
 			}
 		}
@@ -137,9 +298,11 @@ func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message,
 		fnStrat := function.Get("anthropic")
 		if fnStrat != nil {
 			if encoded := fnStrat.EncodeTools(tools); encoded != nil {
-				if b, err := json.Marshal(encoded); err == nil {
-					req.Tools = b
+				b, err := json.Marshal(encoded)
+				if err != nil {
+					return nil, fmt.Errorf("anthropic BuildRequest: marshal tools: %w", err)
 				}
+				req.Tools = b
 			}
 		}
 	}

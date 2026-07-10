@@ -146,7 +146,7 @@ func (s *OpenAIStrategy) SSEHeaders() map[string]string {
 //   - SSEEventError — 帧中包含 error 字段
 //   - 空切片 — 无法解析的帧（如心跳）
 func (s *OpenAIStrategy) ParseSSEEvent(eventType string, payload string) ([]SSEEvent, error) {
-	if eventType != "data" {
+	if eventType != "data" && eventType != "" {
 		return nil, nil
 	}
 
