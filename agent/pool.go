@@ -4,32 +4,40 @@ import (
 	"context"
 	"fmt"
 
-	seelectx "github.com/RedHuang-0622/Seele/contexts"
+	"github.com/RedHuang-0622/Seele/types"
 )
+
+// Session 是 Pool 管理的对话会话抽象。
+// Engine 的 Chat/ChatStream/History 天然满足此接口。
+// 定义在 agent 包而非 engine 包，避免 import cycle。
+type Session interface {
+	Chat(ctx context.Context, userInput string) (string, error)
+	ChatStream(ctx context.Context, userInput string, onChunk func(string)) (string, error)
+	History() []types.Message
+	SessionID() string
+}
 
 // Pool 管理多个对话会话，支持切换当前活跃会话。
 type Pool struct {
-	agent    *Agent
 	sessions []*namedSession
 	current  int
 }
 
 type namedSession struct {
 	label   string
-	session *seelectx.Holder
+	session Session
 }
 
 // NewPool 创建一个空的会话池。
-func (a *Agent) NewPool() *Pool {
-	return &Pool{agent: a}
+func NewPool() *Pool {
+	return &Pool{}
 }
 
-// Add 向池中添加一个新会话，返回其索引。
-func (p *Pool) Add(label, prompt string) int {
-	sess := seelectx.New(p.agent.LLM(), p.agent.Tools(), prompt, seelectx.SessionConfig{MaxLoops: 8})
+// Add 向池中添加一个会话，返回其索引。
+func (p *Pool) Add(label string, session Session) int {
 	p.sessions = append(p.sessions, &namedSession{
 		label:   label,
-		session: sess,
+		session: session,
 	})
 	return len(p.sessions) - 1
 }
@@ -44,7 +52,7 @@ func (p *Pool) Switch(idx int) error {
 }
 
 // Current 返回当前活跃会话。
-func (p *Pool) Current() *seelectx.Holder {
+func (p *Pool) Current() Session {
 	if len(p.sessions) == 0 {
 		return nil
 	}

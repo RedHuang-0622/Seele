@@ -161,6 +161,9 @@ func (e *Engine) ClearHistory() {
 	}
 }
 
+// SessionID 返回当前会话的唯一标识（用于缓存和持久化）。
+func (e *Engine) SessionID() string { return e.sessionID }
+
 // Tracer 返回当前追踪器。可为 nil（未调用 WithTracer 时返回 NoopTracer）。
 func (e *Engine) Tracer() tracer.Tracer { return e.tracer }
 
