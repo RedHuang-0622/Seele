@@ -26,6 +26,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // =============================================================================
@@ -246,6 +249,18 @@ type SimpleTracer struct {
 	spans   map[string]*Node
 	rootID  string
 	seq     int
+
+	// OTel（可选）：非 nil 时在 span.End() 时额外发射 OTel span
+	otelTracer  oteltrace.Tracer  // nil = 不发射 OTel
+	otelTp      oteltrace.TracerProvider
+}
+
+// WithOTelTracerProvider 设置可选的 OTel TracerProvider。
+// 设置后，每个 span.End() 会额外发射一个 OTel span。
+// 不设置（默认）则完全不产生 OTel 开销。
+func (t *SimpleTracer) WithOTelTracerProvider(tp oteltrace.TracerProvider) {
+	t.otelTp = tp
+	t.otelTracer = tp.Tracer("github.com/RedHuang-0622/Seele/contexts/tracer")
 }
 
 // NewSimpleTracer 创建 SimpleTracer。
@@ -276,7 +291,7 @@ func (t *SimpleTracer) NewTrace(ctx context.Context, traceID string) (context.Co
 	t.mu.Unlock()
 
 	ctx = withSpanID(ctx, spanID)
-	return ctx, &simpleSpan{tracer: t, id: spanID}
+	return ctx, &simpleSpan{tracer: t, id: spanID, ctx: ctx}
 }
 
 func (t *SimpleTracer) StartSpan(ctx context.Context, name string, kind SpanKind, attrs map[string]string) (context.Context, Span) {
@@ -305,7 +320,7 @@ func (t *SimpleTracer) StartSpan(ctx context.Context, name string, kind SpanKind
 	t.mu.Unlock()
 
 	ctx = withSpanID(ctx, spanID)
-	return ctx, &simpleSpan{tracer: t, id: spanID}
+	return ctx, &simpleSpan{tracer: t, id: spanID, ctx: ctx}
 }
 
 func (t *SimpleTracer) Export(_ context.Context) *Tree {
@@ -372,6 +387,7 @@ func (t *SimpleTracer) buildChildren(parent *Node) {
 type simpleSpan struct {
 	tracer *SimpleTracer
 	id     string
+	ctx    context.Context // 用于 OTel 父 span 传播
 }
 
 func (s *simpleSpan) ID() string { return s.id }
@@ -391,6 +407,60 @@ func (s *simpleSpan) End(opts ...SpanOption) {
 	for _, opt := range opts {
 		opt(node)
 	}
+
+	// OTel 发射（可选）：只有设置了 OTel TracerProvider 时才发射
+	if s.tracer.otelTracer != nil {
+		s.emitOTelSpan(node)
+	}
+}
+
+// emitOTelSpan 将本地 span 发射为 OTel span（低精度模式）。
+//
+// 注意：这是在 span.End() 时创建并立即结束 OTel span，而非在 StartSpan 时创建。
+// 这意味者 OTel 父-子关系无法通过 OTel context 传播，所有 span 均为平级。
+// 如需精确的 OTel span 树，应在 StartSpan 时就创建 OTel span。
+func (s *simpleSpan) emitOTelSpan(node *Node) {
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// 映射 Local SpanKind → OTel SpanKind
+	var spanKind oteltrace.SpanKind
+	switch node.Kind {
+	case SpanReActLoop:
+		spanKind = oteltrace.SpanKindInternal
+	case SpanLLMCall:
+		spanKind = oteltrace.SpanKindClient
+	case SpanToolDispatch:
+		spanKind = oteltrace.SpanKindClient
+	case SpanCacheOp:
+		spanKind = oteltrace.SpanKindInternal
+	default:
+		spanKind = oteltrace.SpanKindInternal
+	}
+
+	// 将本地 Attrs 转为 OTel attributes
+	attrs := make([]attribute.KeyValue, 0, len(node.Attrs)+4)
+	for k, v := range node.Attrs {
+		attrs = append(attrs, attribute.String(k, v))
+	}
+	// 补充标准属性便于在 OTel 后端检索
+	attrs = append(attrs,
+		attribute.String("local.span.id", node.ID),
+		attribute.String("local.span.kind", string(node.Kind)),
+		attribute.String("local.node.name", node.Name),
+		attribute.String("local.node.status", string(node.Status)),
+		attribute.String("local.duration_ns", fmt.Sprintf("%d", node.Duration)),
+		attribute.Int64("local.duration_ms", node.Duration.Milliseconds()),
+	)
+
+	// 创建并立即结束 OTel span
+	_, span := s.tracer.otelTracer.Start(ctx, node.Name,
+		oteltrace.WithAttributes(attrs...),
+		oteltrace.WithSpanKind(spanKind),
+	)
+	span.End()
 }
 
 func (s *simpleSpan) SetAttr(key, value string) {
