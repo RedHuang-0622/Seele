@@ -1,12 +1,13 @@
 // Package engine 提供 Agent 的上层 ReAct 循环封装。
 //
-// Engine 持有 Agent、LLM 客户端、会话配置，并管理独立的对话历史，
-// 提供 Chat / ChatStream 两种入口执行完整的 ReAct 循环：
+// Engine 持有 Agent、LLM 客户端，并委托 Loop 接口执行实际 ReAct 循环，
+// 提供 Chat / ChatStream 两种入口。
 //
-//	build history → get tools → call LLM → tool calls → dispatch → repeat
+//	build history -> get tools -> call LLM -> tool calls -> dispatch -> repeat
 package engine
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -19,20 +20,23 @@ import (
 
 // Engine 封装 Agent 与 LLM 客户端，提供便捷的 ReAct 循环。
 //
-// 每个 Engine 实例管理自己的对话历史，支持多轮对话。
+// 每个 Engine 实例管理自己的对话历史（通过 Loop），支持多轮对话。
 // 可选的 cache.Provider 用于会话历史缓存（JSON 文件，带 TTL + 置信度）。
 // 可选的 tracer.Tracer 用于全链路追踪（默认 NoopTracer 零开销）。
 type Engine struct {
 	agent     *agent.Agent
 	llm       types.ChatCompleter
+	loop      Loop
+	tracer    tracer.Tracer
+	lastTrace *tracer.Tree
+
+	// 配置字段（传递给 ReActLoop）
 	cfg       SessionConfig
-	history   []types.Message
-	sessionID string         // 缓存键
+	history   []types.Message // 初始历史（如 system prompt）
+	sessionID string
 	cache     cache.Provider
 	store     *storage.Store
-	modelName string         // 供 tracer 使用
-	tracer    tracer.Tracer  // 可观测性追踪器
-	lastTrace *tracer.Tree   // 上次 Chat/ChatStream 的追踪树
+	modelName string
 }
 
 // Option 配置 Engine 的创建参数。
@@ -63,7 +67,7 @@ func WithStore(s *storage.Store) Option {
 
 // WithTracer 设置全链路追踪器。不调用此方法时使用 NoopTracer（零开销）。
 // 传入 tracer.NewSimpleTracer() 可在 Chat/ChatStream 结束后通过
-// History() 或 ExportTrace 获取完整追踪树。
+// ExportTrace() 获取完整追踪树。
 func WithTracer(t tracer.Tracer) Option {
 	return func(e *Engine) {
 		e.tracer = t
@@ -84,11 +88,19 @@ func WithSystemPrompt(prompt string) Option {
 	}
 }
 
+// WithLoop 注入自定义 Loop。不调用时默认使用 ReActLoop。
+func WithLoop(l Loop) Option {
+	return func(e *Engine) {
+		e.loop = l
+	}
+}
+
 // New 创建 Engine。
 //
-//	engine := engine.New(agt, engine.WithSessionConfig(cfg))
+//	engine := New(agt, WithSessionConfig(cfg))
 //
 // 必须传入 *agent.Agent，不传 opts 时使用默认配置。
+// 默认创建 ReActLoop 作为 Loop 实现。
 func New(a *agent.Agent, opts ...Option) *Engine {
 	// 尝试获取模型名（从账号池）
 	modelName := ""
@@ -110,6 +122,24 @@ func New(a *agent.Agent, opts ...Option) *Engine {
 		opt(e)
 	}
 	e.cfg = e.cfg.Effective()
+
+	// 创建默认 ReActLoop（如果未通过 WithLoop 注入）
+	if e.loop == nil {
+		rl := NewReActLoop(a, e.llm)
+		rl.sessionID = e.sessionID
+		rl.tracer = e.tracer
+		rl.modelName = e.modelName
+		rl.cache = e.cache
+		rl.store = e.store
+		if e.cfg.MaxLoops != DefaultSessionConfig().MaxLoops {
+			rl.cfg.MaxLoops = e.cfg.MaxLoops
+		}
+		if len(e.history) > 0 {
+			rl.history = append(rl.history, e.history...)
+		}
+		e.loop = rl
+	}
+
 	return e
 }
 
@@ -118,20 +148,17 @@ func (e *Engine) Agent() *agent.Agent { return e.agent }
 
 // History 返回当前对话历史的只读副本。
 func (e *Engine) History() []types.Message {
-	cp := make([]types.Message, len(e.history))
-	copy(cp, e.history)
-	return cp
+	if e.loop != nil {
+		return e.loop.History()
+	}
+	return nil
 }
 
 // ClearHistory 清空对话历史，但保留 system 消息（如有）。
 func (e *Engine) ClearHistory() {
-	var sys []types.Message
-	for _, m := range e.history {
-		if m.Role == "system" {
-			sys = append(sys, m)
-		}
+	if e.loop != nil {
+		e.loop.ClearHistory()
 	}
-	e.history = sys
 }
 
 // Tracer 返回当前追踪器。可为 nil（未调用 WithTracer 时返回 NoopTracer）。
@@ -142,4 +169,21 @@ func (e *Engine) Tracer() tracer.Tracer { return e.tracer }
 // 返回 nil 表示尚未执行过 Chat/ChatStream，或上次未产生追踪数据。
 func (e *Engine) ExportTrace() *tracer.Tree {
 	return e.lastTrace
+}
+
+// Chat 追加用户输入并运行 ReAct 循环，返回最终文本回复。
+// 结束后可通过 ExportTrace() 获取本次执行的 Trace Tree。
+func (e *Engine) Chat(ctx context.Context, userInput string) (string, error) {
+	reply, err := e.loop.Run(ctx, userInput, nil)
+	e.lastTrace = e.tracer.Export(ctx)
+	return reply, err
+}
+
+// ChatStream 追加用户输入并运行流式 ReAct 循环。
+// 文本 token 到达时通过 onChunk 实时推送；tool_call 阶段不会触发 onChunk。
+// 结束后可通过 ExportTrace() 获取本次执行的 Trace Tree。
+func (e *Engine) ChatStream(ctx context.Context, userInput string, onChunk func(string)) (string, error) {
+	reply, err := e.loop.Run(ctx, userInput, onChunk)
+	e.lastTrace = e.tracer.Export(ctx)
+	return reply, err
 }
