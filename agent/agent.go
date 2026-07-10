@@ -15,6 +15,7 @@ import (
 	hubprov "github.com/RedHuang-0622/Seele/agent/core/tool/hub"
 	mcp "github.com/RedHuang-0622/Seele/agent/core/tool/mcp"
 	"github.com/RedHuang-0622/Seele/types"
+	wp "github.com/RedHuang-0622/Seele/workplan"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 	registry "github.com/RedHuang-0622/microHub/service_registry"
 )
@@ -216,6 +217,13 @@ func (a *Agent) MCP() *mcp.Provider {
 func (a *Agent) RegisterTool(name, desc string, inputSchema map[string]interface{}, handler func(ctx context.Context, argsJSON string) (string, error), outputSchema ...map[string]interface{}) {
 	a.tools.RegisterInline(name, desc, inputSchema, handler, outputSchema...)
 	a.opts.Logger.Info("inline tool registered", "name", name)
+}
+
+// RegisterWorkPlanTool 注册一个 WorkPlan 驱动的工具。
+// WorkPlanTool.Run 会被委托给 Agent.RegisterTool。
+func (a *Agent) RegisterWorkPlanTool(tool wp.WorkPlanTool) error {
+	a.RegisterTool(tool.Name, tool.Description, tool.InputSchema, tool.Run)
+	return nil
 }
 
 // ── 新增访问器 ──────────────────────────────────────────────────────────
