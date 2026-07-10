@@ -7,6 +7,7 @@ package test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -15,7 +16,7 @@ import (
 	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
 	"github.com/RedHuang-0622/Seele/agent/core/tool/interfaces"
 	seelectx "github.com/RedHuang-0622/Seele/contexts"
-	
+
 	types "github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
@@ -263,11 +264,73 @@ func (m *autoMockLLM) handler(w http.ResponseWriter, r *http.Request) {
 }
 
 // =============================================================================
+// simpleAgent 是一个轻量 ReAct 循环。
+// 避免测试依赖已删除的 seelectx.Holder。
+// 持有自己的 history、config 以便测试检查。
+type simpleAgent struct {
+	llm          types.ChatCompleter
+	tools        *holder.Holder
+	systemPrompt string
+	history      []types.Message
+	cfg          seelectx.ContextConfig
+}
+
+func (a *simpleAgent) Chat(ctx context.Context, input string) (string, error) {
+	if a.systemPrompt != "" {
+		a.history = append(a.history, types.Message{Role: "system", Content: &a.systemPrompt})
+	}
+	a.history = append(a.history, types.Message{Role: "user", Content: &input})
+
+	// 需要压缩？
+	threshold := a.cfg.CompressThreshold
+	if threshold > 0 && seelectx.NeedCompression(a.history, threshold) {
+		compressed, err := seelectx.CompressHistory(ctx, a.llm, a.history, a.cfg.MaxTokens)
+		if err == nil {
+			a.history = compressed
+		}
+	}
+
+	for loop := 0; loop < 10; loop++ {
+		tools := a.tools.Tools()
+		msg, err := a.llm.Complete(ctx, a.history, tools)
+		if err != nil {
+			return "", fmt.Errorf("simpleAgent loop %d: %w", loop, err)
+		}
+		a.history = append(a.history, msg)
+
+		if len(msg.ToolCalls) == 0 {
+			if msg.Content != nil {
+				return *msg.Content, nil
+			}
+			return "", nil
+		}
+
+		for _, tc := range msg.ToolCalls {
+			result, dErr := a.tools.Dispatch(ctx, tc.Function.Name, tc.Function.Arguments)
+			if dErr != nil {
+				result = fmt.Sprintf(`{"error":%q}`, dErr.Error())
+			}
+			maxChars := a.cfg.MaxToolResultChars
+			if maxChars > 0 && len(result) > maxChars {
+				result = result[:maxChars] + "\n...[truncated]"
+			}
+			a.history = append(a.history, types.Message{
+				Role: "tool", ToolCallID: tc.ID, Name: tc.Function.Name, Content: &result,
+			})
+		}
+	}
+	return "", fmt.Errorf("simpleAgent: max loops reached")
+}
+
+func (a *simpleAgent) History() []types.Message       { return a.history }
+func (a *simpleAgent) SetContextConfig(cfg seelectx.ContextConfig) { a.cfg = cfg }
+func (a *simpleAgent) ForceAppendHistory(msg types.Message)       { a.history = append(a.history, msg) }
+func (a *simpleAgent) SessionID() string                         { return "test-session" }
+
 // sessionFactory —— 持有 LLM + 工具，用于创建测试会话
 // =============================================================================
 
-// sessionFactory 从 LLM 客户端 + tool_holder 创建 seelectx.Holder，
-// 适配 workplan.AgentFactory 接口。
+// sessionFactory 持有 LLM + 工具，适配 workplan.AgentFactory 接口。
 type sessionFactory struct {
 	Llm   *api.ChatClient
 	Tools *holder.Holder
@@ -278,7 +341,7 @@ func newSessionFactory(llmClient *api.ChatClient, tools *holder.Holder) *session
 }
 
 func (f *sessionFactory) NewAgent(systemPrompt string) workplan.Agent {
-	return seelectx.New(f.Llm, f.Tools, systemPrompt, seelectx.SessionConfig{MaxLoops: 1})
+	return &simpleAgent{llm: f.Llm, tools: f.Tools, systemPrompt: systemPrompt}
 }
 
 // newTestTools 快速创建一个带 LLM 的 tool_holder（用于 Fork 等多 Runtime 场景）。

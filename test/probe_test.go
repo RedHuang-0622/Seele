@@ -23,7 +23,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent"
-	seelectx "github.com/RedHuang-0622/Seele/contexts"
+	
 	types "github.com/RedHuang-0622/Seele/types"
 )
 
@@ -176,7 +176,8 @@ func TestProbe_ServiceDiscovery(t *testing.T) {
 	defer cancel()
 
 	chatStart := time.Now()
-	reply, err := seelectx.New(eng.LLM(), eng.Tools(), "", seelectx.SessionConfig{MaxLoops: 8}).Chat(ctx, `请调用 echo 工具，参数 content="探活测试"`)
+	sa := &simpleAgent{llm: eng.LLM(), tools: eng.Tools(), systemPrompt: ""}
+reply, err := sa.Chat(ctx, `请调用 echo 工具，参数 content="探活测试"`)
 	chatLatency := time.Since(chatStart)
 	if err != nil {
 		t.Logf("QuickChat error (LLM may not be available): %v", err)
@@ -284,7 +285,7 @@ func TestProbe_RecoveryLatency(t *testing.T) {
 
 	// 先确认初始可用
 	ctx := context.Background()
-	agent := seelectx.New(eng.LLM(), eng.Tools(), "", seelectx.SessionConfig{MaxLoops: 2})
+	agent := simpleAgent{llm: eng.LLM(), tools: eng.Tools(), systemPrompt: ""}
 	_, err := agent.Chat(ctx, `调用 echo 工具，content="before_kill"`)
 	if err != nil {
 		t.Logf("initial chat (pre-kill) error: %v", err)
@@ -303,7 +304,7 @@ func TestProbe_RecoveryLatency(t *testing.T) {
 	log.Printf("[%.2fs] RESTARTED+RESTORED: echo", probeElapsed())
 
 	// 测量恢复后 dispatch 延迟
-	agent2 := seelectx.New(eng.LLM(), eng.Tools(), "", seelectx.SessionConfig{MaxLoops: 2})
+	agent2 := simpleAgent{llm: eng.LLM(), tools: eng.Tools(), systemPrompt: ""}
 	recStart := time.Now()
 	reply, err := agent2.Chat(ctx, `调用 echo 工具，content="recovery_check"`)
 	recoveryTime := time.Since(recStart)
@@ -363,7 +364,7 @@ func TestProbe_ContinuousHealth(t *testing.T) {
 
 	for round := 0; round < 3; round++ {
 		for _, in := range inputs {
-			agent := seelectx.New(eng.LLM(), eng.Tools(), "", seelectx.SessionConfig{MaxLoops: 2})
+			agent := simpleAgent{llm: eng.LLM(), tools: eng.Tools(), systemPrompt: ""}
 			start := time.Now()
 			_, err := agent.Chat(ctx, in.prompt)
 			lat := time.Since(start)

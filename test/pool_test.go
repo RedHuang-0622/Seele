@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	seelectx "github.com/RedHuang-0622/Seele/contexts"
+	
 )
 
 // =============================================================================
@@ -57,7 +57,7 @@ func TestPool_AgentPipeline(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				agent := seelectx.New(llmClient, tools, "", seelectx.SessionConfig{MaxLoops: 2})
+				agent := &simpleAgent{llm: llmClient, tools: tools, systemPrompt: ""}
 				callStart := time.Now()
 				_, err := agent.Chat(ctx, fmt.Sprintf("call tool_%d", idx))
 				latencies[idx] = time.Since(callStart)
@@ -102,7 +102,7 @@ func TestPool_AgentPipeline(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				agent := seelectx.New(llmClient, tools, "", seelectx.SessionConfig{MaxLoops: 2})
+				agent := &simpleAgent{llm: llmClient, tools: tools, systemPrompt: ""}
 				_, err := agent.Chat(ctx, fmt.Sprintf("call tool"))
 				if err != nil {
 					atomic.AddInt32(&failCount, 1)
@@ -137,7 +137,7 @@ func TestPool_AgentPipeline(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				agent := seelectx.New(llmClient, tools, "", seelectx.SessionConfig{MaxLoops: 2})
+				agent := &simpleAgent{llm: llmClient, tools: tools, systemPrompt: ""}
 				_, err := agent.Chat(ctx, fmt.Sprintf("call tool_%d", idx%20))
 				if err != nil {
 					atomic.AddInt32(&failCount, 1)
