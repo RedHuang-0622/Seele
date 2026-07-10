@@ -28,7 +28,7 @@ type Options struct {
 	LLMConfig          types.LLMConfig // LLM 配置（由调用方加载后注入）
 	ProviderAccountPath string         // Provider 账号 YAML 路径（可选，加载多账号配置）
 	HubAddr            string          // Hub gRPC 监听地址，默认 ":0"
-	HubStartupDelay    time.Duration   // 等待 Hub 启动时间，默认 100ms
+	HubStartupDelay    time.Duration   // 已废弃：不再使用，保留兼容
 	ToolCallTimeOut    time.Duration   // 单次工具调用超时，默认 5s
 	Logger             Logger
 }
@@ -91,7 +91,9 @@ type Agent struct {
 	mcpMu          sync.Mutex
 	opts           Options
 	shutdown       chan struct{}
+	done           chan struct{} // closed 表示 Shutdown() 完成
 	healthCancel   context.CancelFunc // 停止 health probe goroutine
+	wg             sync.WaitGroup // 追踪 in-flight 操作
 }
 
 // New 创建 Agent 并完成初始化。
@@ -154,14 +156,20 @@ func New(opts Options) (*Agent, error) {
 	}
 	tools.Register(hubProv)
 
-	// 8. 所有验证通过，启动 Hub
+	// 8. 所有验证通过，启动 Hub（同步等待就绪，最多 5s）
+	hubReady := make(chan struct{})
 	go func() {
 		if err := hub.ServeAsync(opts.HubAddr, 5); err != nil {
 			opts.Logger.Error("hub exited", "error", err)
 		}
+		close(hubReady)
 	}()
-	time.Sleep(opts.HubStartupDelay)
-	opts.Logger.Info("hub listening", "addr", opts.HubAddr)
+	select {
+	case <-hubReady:
+		opts.Logger.Info("hub ready", "addr", opts.HubAddr)
+	case <-time.After(5 * time.Second):
+		opts.Logger.Info("hub startup timeout, continuing anyway")
+	}
 
 	// 9. Health probe
 	var healthCancel context.CancelFunc
@@ -181,6 +189,7 @@ func New(opts Options) (*Agent, error) {
 		hubProvider:  hubProv,
 		opts:         opts,
 		shutdown:     make(chan struct{}),
+		done:         make(chan struct{}),
 		healthCancel: healthCancel,
 	}
 
@@ -239,13 +248,27 @@ func (a *Agent) VisibleTools(ctx context.Context) []types.Tool {
 	return a.toolGW.VisibleTools(ctx)
 }
 
-// Dispatch 委托工具网关执行工具调用。
+// Dispatch 委托工具网关执行工具调用。在 wg 中追踪，支持 Graceful Shutdown。
 func (a *Agent) Dispatch(ctx context.Context, name, argsJSON string) (string, error) {
+	select {
+	case <-a.shutdown:
+		return "", fmt.Errorf("agent: shutting down")
+	default:
+	}
+	a.wg.Add(1)
+	defer a.wg.Done()
 	return a.toolGW.Dispatch(ctx, name, argsJSON)
 }
 
-// DirectDispatch 直接调度工具调用（绕过 LLM 循环）。
+// DirectDispatch 直接调度工具调用（绕过 LLM 循环）。在 wg 中追踪，支持 Graceful Shutdown。
 func (a *Agent) DirectDispatch(ctx context.Context, name, argsJSON string) (string, error) {
+	select {
+	case <-a.shutdown:
+		return "", fmt.Errorf("agent: shutting down")
+	default:
+	}
+	a.wg.Add(1)
+	defer a.wg.Done()
 	return a.toolGW.Dispatch(ctx, name, argsJSON)
 }
 
@@ -253,6 +276,7 @@ func (a *Agent) DirectDispatch(ctx context.Context, name, argsJSON string) (stri
 func (a *Agent) Tools() *holder.Holder { return a.tools }
 
 // Shutdown 关闭 Agent，释放资源。并发安全。
+// 先发送关闭信号，等待所有 in-flight 操作完成，再清理资源。
 func (a *Agent) Shutdown() {
 	select {
 	case <-a.shutdown:
@@ -260,6 +284,10 @@ func (a *Agent) Shutdown() {
 	default:
 		close(a.shutdown)
 	}
+
+	// 等待所有 in-flight Dispatch 完成
+	a.wg.Wait()
+
 	if a.healthCancel != nil {
 		a.healthCancel()
 	}
@@ -270,5 +298,6 @@ func (a *Agent) Shutdown() {
 		}
 	}
 	a.mcpMu.Unlock()
-	a.opts.Logger.Info("shutdown")
+	close(a.done)
+	a.opts.Logger.Info("shutdown complete")
 }
