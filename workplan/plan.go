@@ -2,6 +2,7 @@ package workplan
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -139,8 +140,10 @@ func (wp *WorkPlan) Run(ctx context.Context) (*WorkPlanResult, error) {
 		}
 	}
 
-	// 初始化执行状态
-	wp.vars = make(map[string]string)
+	// 初始化执行状态（保留 ToTool 预注入的 vars）
+	if wp.vars == nil {
+		wp.vars = make(map[string]string)
+	}
 	wp.execID = fmt.Sprintf("exec_%d", time.Now().UnixNano())
 	wp.execState = StateExecuting
 	wp.pauseSnapshot = nil
@@ -264,12 +267,13 @@ func (wp *WorkPlan) SetDecision(v any) { wp.pauseDecision = v }
 // =============================================================================
 
 // WorkPlanTool 是 WorkPlan 的工具包装。
-// 调用方可将此结构注册到 engine.RegisterInlineTool 或自行处理。
+// 调用方可将此结构注册到 Agent 或自行处理。
 // workplan 包保持零外部依赖，不引入 core/tool 包。
 type WorkPlanTool struct {
 	Name        string                 // 工具名称
 	Description string                 // 工具描述
 	InputSchema map[string]interface{} // JSON Schema
+	PlanRef     *Plan                  // 绑定的 Plan 快照（ToTool 时由 ToPlan() 生成）
 	Run         func(ctx context.Context, argsJSON string) (string, error)
 }
 
@@ -291,7 +295,20 @@ func (wp *WorkPlan) ToTool(name, desc string, inputSchema map[string]interface{}
 		Name:        name,
 		Description: desc,
 		InputSchema: inputSchema,
+		PlanRef:     wp.ToPlan(),
 		Run: func(ctx context.Context, argsJSON string) (string, error) {
+			// 解析 argsJSON，将参数注入 wp.vars（供 WorkPlan 执行时通过 ec.Vars 读取）
+			var args map[string]interface{}
+			if err := json.Unmarshal([]byte(argsJSON), &args); err == nil {
+				for k, v := range args {
+					if str, ok := v.(string); ok {
+						if wp.vars == nil {
+							wp.vars = make(map[string]string)
+						}
+						wp.vars[k] = str
+					}
+				}
+			}
 			result, err := wp.Run(ctx)
 			if err != nil {
 				return "", err
@@ -299,4 +316,432 @@ func (wp *WorkPlan) ToTool(name, desc string, inputSchema map[string]interface{}
 			return result.FinalOutput(), nil
 		},
 	}
+}
+
+// =============================================================================
+// Plan —— 可序列化的声明式工作流定义
+// =============================================================================
+
+// PlanNodeSpec 是可序列化的节点规格。
+type PlanNodeSpec struct {
+	ID           string   `json:"id"`
+	Kind         string   `json:"kind"` // "auto"|"method"|"llm"|"strategy"|"approve"|"if"|"switch"|"loop"|"fork"|"checkpoint"|"emit"|"join"
+	Input        string   `json:"input,omitempty"`
+	SystemPrompt string   `json:"system_prompt,omitempty"`
+	ToolFilter   []string `json:"tool_filter,omitempty"`
+	Next         string   `json:"next,omitempty"`
+
+	// approve
+	ApproveOptions []ChoiceOption `json:"approve_options,omitempty"`
+
+	// fork
+	ForkBranches []ForkBranchSpec `json:"fork_branches,omitempty"`
+
+	// loop
+	LoopBodyID      string `json:"loop_body_id,omitempty"`
+	LoopMaxIter     int    `json:"loop_max_iter,omitempty"`
+	LoopExhaustedID string `json:"loop_exhausted_id,omitempty"`
+
+	// if
+	IfTrueID  string `json:"if_true_id,omitempty"`
+	IfFalseID string `json:"if_false_id,omitempty"`
+
+	// switch
+	SwitchCases []SwitchCaseSpec `json:"switch_cases,omitempty"`
+
+	// emit
+	EmitKey string `json:"emit_key,omitempty"`
+}
+
+// ForkBranchSpec 可序列化的 ForkBranch。
+type ForkBranchSpec struct {
+	Label        string `json:"label"`
+	SystemPrompt string `json:"system_prompt,omitempty"`
+	Input        string `json:"input,omitempty"`
+}
+
+// SwitchCaseSpec 可序列化的 SwitchCase。
+type SwitchCaseSpec struct {
+	NextID string `json:"next_id"`
+	Label  string `json:"label,omitempty"`
+}
+
+// PlanEdgeSpec 是可序列化的边规格。
+type PlanEdgeSpec struct {
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Label     string `json:"label,omitempty"`
+	Condition string `json:"condition,omitempty"` // 条件标签
+}
+
+// Plan 是可序列化的工作流定义。
+type Plan struct {
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Version     string         `json:"version,omitempty"`
+	EntryNodeID string         `json:"entry_node_id"`
+	Nodes       []PlanNodeSpec `json:"nodes"`
+	Edges       []PlanEdgeSpec `json:"edges"`
+}
+
+// NewPlan 创建 Plan。
+func NewPlan(name string) *Plan {
+	return &Plan{Name: name}
+}
+
+// PlanNodeOpt 是 Add 方法的可选配置。
+type PlanNodeOpt func(*PlanNodeSpec)
+
+// Plan node options.
+func WithInput(input string) PlanNodeOpt {
+	return func(s *PlanNodeSpec) { s.Input = input }
+}
+func WithSystemPrompt(prompt string) PlanNodeOpt {
+	return func(s *PlanNodeSpec) { s.SystemPrompt = prompt }
+}
+func WithToolFilter(tools ...string) PlanNodeOpt {
+	return func(s *PlanNodeSpec) { s.ToolFilter = tools }
+}
+func WithPlanNext(id string) PlanNodeOpt {
+	return func(s *PlanNodeSpec) { s.Next = id }
+}
+func WithApproveOptions(opts ...ChoiceOption) PlanNodeOpt {
+	return func(s *PlanNodeSpec) { s.ApproveOptions = opts }
+}
+func WithForkBranches(branches ...ForkBranchSpec) PlanNodeOpt {
+	return func(s *PlanNodeSpec) { s.ForkBranches = branches }
+}
+func WithLoopConfig(bodyID string, maxIter int, exhaustedID string) PlanNodeOpt {
+	return func(s *PlanNodeSpec) {
+		s.LoopBodyID = bodyID
+		s.LoopMaxIter = maxIter
+		s.LoopExhaustedID = exhaustedID
+	}
+}
+func WithIfBranches(trueID, falseID string) PlanNodeOpt {
+	return func(s *PlanNodeSpec) {
+		s.IfTrueID = trueID
+		s.IfFalseID = falseID
+	}
+}
+func WithSwitchCases(cases ...SwitchCaseSpec) PlanNodeOpt {
+	return func(s *PlanNodeSpec) { s.SwitchCases = cases }
+}
+func WithEmitKey(key string) PlanNodeOpt {
+	return func(s *PlanNodeSpec) { s.EmitKey = key }
+}
+
+// Add 添加一个节点到 Plan。
+func (p *Plan) Add(id, kind string, opts ...PlanNodeOpt) *Plan {
+	spec := PlanNodeSpec{ID: id, Kind: kind}
+	for _, o := range opts {
+		o(&spec)
+	}
+	p.Nodes = append(p.Nodes, spec)
+	return p
+}
+
+// Edge 添加一条边到 Plan。
+func (p *Plan) Edge(from, to string) *Plan {
+	p.Edges = append(p.Edges, PlanEdgeSpec{From: from, To: to})
+	return p
+}
+
+// EdgeWith 添加一条带标签的边到 Plan。
+func (p *Plan) EdgeWith(from, to, label string) *Plan {
+	p.Edges = append(p.Edges, PlanEdgeSpec{From: from, To: to, Label: label})
+	return p
+}
+
+// =============================================================================
+// ConditionRegistry —— 条件标签注册表
+// =============================================================================
+
+// ConditionRegistry 管理条件标签到 EdgeCondition 的映射。
+type ConditionRegistry struct {
+	conditions map[string]EdgeCondition
+}
+
+// NewConditionRegistry 创建 ConditionRegistry。
+func NewConditionRegistry() *ConditionRegistry {
+	return &ConditionRegistry{conditions: make(map[string]EdgeCondition)}
+}
+
+// Register 注册一个条件标签。
+func (r *ConditionRegistry) Register(name string, cond EdgeCondition) {
+	r.conditions[name] = cond
+}
+
+// Resolve 解析条件标签。
+func (r *ConditionRegistry) Resolve(name string) (EdgeCondition, bool) {
+	c, ok := r.conditions[name]
+	return c, ok
+}
+
+// =============================================================================
+// 辅助工具：Kind 字符串 ↔ NodeKind 映射
+// =============================================================================
+
+var kindToStr = map[NodeKind]string{
+	kindAuto:       "auto",
+	kindMethod:     "method",
+	kindLLM:        "llm",
+	kindStrategy:   "strategy",
+	kindApprove:    "approve",
+	kindIf:         "if",
+	kindSwitch:     "switch",
+	kindLoop:       "loop",
+	kindFork:       "fork",
+	kindCheckpoint: "checkpoint",
+	kindEmit:       "emit",
+	kindJoin:       "join",
+}
+
+var strToKind = map[string]NodeKind{
+	"auto":       kindAuto,
+	"method":     kindMethod,
+	"llm":        kindLLM,
+	"strategy":   kindStrategy,
+	"approve":    kindApprove,
+	"if":         kindIf,
+	"switch":     kindSwitch,
+	"loop":       kindLoop,
+	"fork":       kindFork,
+	"checkpoint": kindCheckpoint,
+	"emit":       kindEmit,
+	"join":       kindJoin,
+}
+
+// =============================================================================
+// nodeToSpec —— 内部 node → PlanNodeSpec
+// =============================================================================
+
+func nodeToSpec(n *node) PlanNodeSpec {
+	spec := PlanNodeSpec{
+		ID:           n.id,
+		Kind:         kindToStr[n.kind],
+		Input:        n.input,
+		SystemPrompt: n.systemPrompt,
+		ToolFilter:   n.toolFilter,
+		Next:         n.next,
+	}
+
+	switch n.kind {
+	case kindApprove:
+		spec.ApproveOptions = n.approveOptions
+	case kindFork:
+		for _, b := range n.forkBranches {
+			spec.ForkBranches = append(spec.ForkBranches, ForkBranchSpec{
+				Label:        b.Label,
+				SystemPrompt: b.SystemPrompt,
+				Input:        b.Input,
+			})
+		}
+	case kindLoop:
+		spec.LoopBodyID = n.loopBodyID
+		spec.LoopMaxIter = n.loopMaxIter
+		spec.LoopExhaustedID = n.loopExhaustedID
+	case kindIf:
+		spec.IfTrueID = n.ifTrueID
+		spec.IfFalseID = n.ifFalseID
+	case kindSwitch:
+		for _, c := range n.switchCases {
+			spec.SwitchCases = append(spec.SwitchCases, SwitchCaseSpec{
+				NextID: c.NextID,
+			})
+		}
+	case kindEmit:
+		spec.EmitKey = n.emitKey
+	}
+
+	return spec
+}
+
+// =============================================================================
+// specToNode —— PlanNodeSpec → 内部 node
+// =============================================================================
+
+func specToNode(spec PlanNodeSpec) *node {
+	n := &node{
+		id:           spec.ID,
+		kind:         strToKind[spec.Kind],
+		input:        spec.Input,
+		systemPrompt: spec.SystemPrompt,
+		toolFilter:   spec.ToolFilter,
+		next:         spec.Next,
+	}
+
+	switch n.kind {
+	case kindApprove:
+		n.approveOptions = spec.ApproveOptions
+	case kindFork:
+		for _, b := range spec.ForkBranches {
+			n.forkBranches = append(n.forkBranches, ForkBranch{
+				Label:        b.Label,
+				SystemPrompt: b.SystemPrompt,
+				Input:        b.Input,
+			})
+		}
+	case kindLoop:
+		n.loopBodyID = spec.LoopBodyID
+		n.loopMaxIter = spec.LoopMaxIter
+		n.loopExhaustedID = spec.LoopExhaustedID
+	case kindIf:
+		n.ifTrueID = spec.IfTrueID
+		n.ifFalseID = spec.IfFalseID
+	case kindSwitch:
+		for _, c := range spec.SwitchCases {
+			n.switchCases = append(n.switchCases, SwitchCase{NextID: c.NextID})
+		}
+	case kindEmit:
+		n.emitKey = spec.EmitKey
+	}
+
+	return n
+}
+
+// =============================================================================
+// specToRunner —— PlanNodeSpec → NodeRunner
+// =============================================================================
+
+func specToRunner(spec PlanNodeSpec, factory AgentFactory, defaultPrompt string) (NodeRunner, error) {
+	switch spec.Kind {
+	case "auto":
+		return &strategyRunner{
+			id: spec.ID,
+			strategy: NewAgentStrategy(factory, spec.SystemPrompt, spec.ToolFilter...),
+		}, nil
+
+	case "method":
+		return nil, fmt.Errorf("workplan.LoadPlan: method nodes require live function reference, cannot deserialize")
+
+	case "llm":
+		return &strategyRunner{
+			id: spec.ID,
+			strategy: NewLLMStrategy(factory, spec.SystemPrompt),
+		}, nil
+
+	case "strategy":
+		return nil, fmt.Errorf("workplan.LoadPlan: strategy nodes require live strategy reference, cannot deserialize")
+
+	case "approve":
+		return &approveRunner{
+			id:            spec.ID,
+			systemPrompt:  spec.SystemPrompt,
+			input:         spec.Input,
+			options:       spec.ApproveOptions,
+			factory:       factory,
+			defaultPrompt: defaultPrompt,
+		}, nil
+
+	case "if", "switch":
+		return &controlRunner{id: spec.ID, kind: spec.Kind}, nil
+
+	case "loop":
+		return &loopRunner{
+			id:      spec.ID,
+			maxIter: spec.LoopMaxIter,
+			signal:  newSignal(),
+		}, nil
+
+	case "fork":
+		branches := make([]ForkBranch, len(spec.ForkBranches))
+		for i, b := range spec.ForkBranches {
+			branches[i] = ForkBranch{
+				Label:        b.Label,
+				SystemPrompt: b.SystemPrompt,
+				Input:        b.Input,
+			}
+		}
+		return &forkRunner{
+			id:            spec.ID,
+			branches:      branches,
+			factory:       factory,
+			defaultPrompt: defaultPrompt,
+		}, nil
+
+	case "checkpoint":
+		return &checkpointRunner{id: spec.ID}, nil
+
+	case "emit":
+		return &emitRunner{id: spec.ID, key: spec.EmitKey}, nil
+
+	case "join":
+		return &controlRunner{id: spec.ID, kind: "join"}, nil
+
+	default:
+		return nil, fmt.Errorf("workplan.LoadPlan: unknown node kind %q", spec.Kind)
+	}
+}
+
+// =============================================================================
+// ToPlan —— 将 WorkPlan 导出为 Plan
+// =============================================================================
+
+// ToPlan 将 WorkPlan 导出为可序列化的 Plan。
+func (wp *WorkPlan) ToPlan() *Plan {
+	plan := &Plan{
+		EntryNodeID: wp.entryID,
+	}
+	for _, n := range wp.nodes {
+		plan.Nodes = append(plan.Nodes, nodeToSpec(n))
+	}
+	for _, e := range wp.graph.edges {
+		edgeSpec := PlanEdgeSpec{
+			From:  e.From,
+			To:    e.To,
+			Label: e.Label,
+		}
+		plan.Edges = append(plan.Edges, edgeSpec)
+	}
+	return plan
+}
+
+// =============================================================================
+// LoadPlan —— 从 Plan 加载到 WorkPlan
+// =============================================================================
+
+// LoadPlan 从 Plan 加载到 WorkPlan（重建图）。
+// registry 可选的 ConditionRegistry，用于解析边上的条件标签。
+func (wp *WorkPlan) LoadPlan(plan *Plan, registry *ConditionRegistry) error {
+	if plan == nil {
+		return fmt.Errorf("WorkPlan.LoadPlan: plan is nil")
+	}
+
+	// 重置 WorkPlan
+	wp.nodeIndex = make(map[string]*node)
+	wp.nodes = nil
+	wp.graph = NewGraph()
+	wp.entryID = plan.EntryNodeID
+	wp.lastNodeID = ""
+
+	// 重建节点
+	for _, spec := range plan.Nodes {
+		n := specToNode(spec)
+		runner, err := specToRunner(spec, wp.factory, wp.defaultPrompt)
+		if err != nil {
+			return err
+		}
+		wp.nodes = append(wp.nodes, n)
+		wp.nodeIndex[n.id] = n
+		wp.graph.AddNode(runner)
+	}
+
+	// 重建边
+	for _, edgeSpec := range plan.Edges {
+		edge := Edge{
+			From:  edgeSpec.From,
+			To:    edgeSpec.To,
+			Label: edgeSpec.Label,
+		}
+		// 解析条件标签
+		if edgeSpec.Condition != "" && registry != nil {
+			if cond, ok := registry.Resolve(edgeSpec.Condition); ok {
+				edge.Condition = cond
+			}
+		}
+		wp.graph.AddEdge(edge)
+	}
+
+	return wp.Validate()
 }

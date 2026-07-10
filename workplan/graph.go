@@ -66,11 +66,11 @@ func (g *Graph) GetNode(id string) NodeRunner {
 
 // Edge 表示图的一条有向边。
 type Edge struct {
-	From      string         // 源节点 ID
-	To        string         // 目标节点 ID
-	Condition EdgeCondition  // nil = 无条件边，直接跟随
-	Priority  int            // 条件边之间的优先级，0 最高
-	Label     string         // 标签（调试用），如 "true"、"false"、"exhausted"
+	From      string         `json:"from"`
+	To        string         `json:"to"`
+	Condition EdgeCondition  `json:"-"`       // 不序列化
+	Priority  int            `json:"priority,omitempty"`
+	Label     string         `json:"label,omitempty"`
 }
 
 // EdgeCondition 是边的触发条件。
