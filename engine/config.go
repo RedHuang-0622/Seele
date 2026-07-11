@@ -12,7 +12,7 @@ type SessionConfig struct {
 // DefaultSessionConfig 返回推荐的默认配置。
 func DefaultSessionConfig() SessionConfig {
 	return SessionConfig{
-		MaxLoops:           10,
+		MaxLoops:           25,
 		MaxToolResultChars: 4000,
 	}
 }

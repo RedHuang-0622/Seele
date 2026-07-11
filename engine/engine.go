@@ -155,6 +155,19 @@ func (e *Engine) ChatStream(ctx context.Context, userInput string, onChunk func(
 	return reply, err
 }
 
+// SetMaxLoops 动态设置最大 tool_call 循环次数。
+// 0 表示使用默认值（25）。
+func (e *Engine) SetMaxLoops(n int) {
+	rl, ok := e.loop.(*ReActLoop)
+	if !ok {
+		return
+	}
+	if n <= 0 {
+		n = 25
+	}
+	rl.cfg.MaxLoops = n
+}
+
 // SetSystemPrompt 动态替换 system prompt。
 // 找到已有 system 消息替换，没有则追加到历史开头。
 func (e *Engine) SetSystemPrompt(prompt string) {
