@@ -19,6 +19,7 @@ const (
 	SSEEventReasoning                    // 推理内容
 	SSEEventDone                         // 流结束
 	SSEEventError                        // 错误
+	SSEEventUsage                        // token 用量（流式结束时）
 )
 
 // SSEEvent 是传输层协议解析后的结构化事件。

@@ -72,6 +72,11 @@ type openaiStreamResponse struct {
 		Delta        openaiStreamDelta `json:"delta"`
 		FinishReason string            `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
@@ -162,7 +167,18 @@ func (s *OpenAIStrategy) ParseSSEEvent(eventType string, payload string) ([]SSEE
 		}}, nil
 	}
 
+	// 流式结束帧可能带 usage（choices 为空但有 usage 字段）
 	if len(frame.Choices) == 0 {
+		if frame.Usage != nil {
+			return []SSEEvent{{
+				Type: SSEEventUsage,
+				Meta: map[string]any{
+					"prompt_tokens":     frame.Usage.PromptTokens,
+					"completion_tokens": frame.Usage.CompletionTokens,
+					"total_tokens":      frame.Usage.TotalTokens,
+				},
+			}}, nil
+		}
 		return nil, nil
 	}
 

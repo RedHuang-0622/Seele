@@ -21,11 +21,13 @@ type anthropicRequest struct {
 	Stream      bool               `json:"stream,omitempty"`
 	Temperature float64            `json:"temperature,omitempty"`
 	Tools       json.RawMessage    `json:"tools,omitempty"`
+	ToolChoice  json.RawMessage    `json:"tool_choice,omitempty"`
 }
 
 type anthropicContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"` // DeepSeek 思维链
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
@@ -110,6 +112,13 @@ func (s *AnthropicStrategy) ParseSSEEvent(eventType string, payload string) ([]S
 						Content: block.Text,
 					})
 				}
+			case "thinking":
+				if block.Thinking != "" {
+					events = append(events, SSEEvent{
+						Type:    SSEEventReasoning,
+						Content: block.Thinking,
+					})
+				}
 			case "tool_use":
 				events = append(events, SSEEvent{
 					Type:          SSEEventToolCall,
@@ -142,6 +151,12 @@ func (s *AnthropicStrategy) ParseSSEEvent(eventType string, payload string) ([]S
 				},
 			}}, nil
 		}
+		if block.ContentBlock.Type == "thinking" {
+			if block.ContentBlock.Thinking != "" {
+				return []SSEEvent{{Type: SSEEventReasoning, Content: block.ContentBlock.Thinking}}, nil
+			}
+			return nil, nil
+		}
 		return nil, nil
 
 	case "content_block_delta":
@@ -151,6 +166,7 @@ func (s *AnthropicStrategy) ParseSSEEvent(eventType string, payload string) ([]S
 			Delta struct {
 				Type        string `json:"type"`
 				Text        string `json:"text,omitempty"`
+				Thinking    string `json:"thinking,omitempty"`
 				PartialJSON string `json:"partial_json,omitempty"`
 			} `json:"delta"`
 		}
@@ -175,6 +191,17 @@ func (s *AnthropicStrategy) ParseSSEEvent(eventType string, payload string) ([]S
 					},
 				}}, nil
 			}
+		case "thinking_delta":
+			text := delta.Delta.Thinking
+			if text == "" {
+				text = delta.Delta.Text
+			}
+			if text != "" {
+				return []SSEEvent{{
+					Type:    SSEEventReasoning,
+					Content: delta.Delta.Text,
+				}}, nil
+			}
 		}
 		return nil, nil
 
@@ -182,6 +209,26 @@ func (s *AnthropicStrategy) ParseSSEEvent(eventType string, payload string) ([]S
 		return nil, nil
 
 	case "message_delta":
+		var delta struct {
+			Type  string `json:"type"`
+			Delta struct {
+				StopReason string `json:"stop_reason"`
+			} `json:"delta"`
+			Usage struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal([]byte(payload), &delta); err == nil && delta.Usage.InputTokens > 0 {
+			return []SSEEvent{{
+				Type: SSEEventUsage,
+				Meta: map[string]any{
+					"prompt_tokens":     delta.Usage.InputTokens,
+					"completion_tokens": delta.Usage.OutputTokens,
+					"total_tokens":      delta.Usage.InputTokens + delta.Usage.OutputTokens,
+				},
+			}}, nil
+		}
 		return nil, nil
 
 	case "message_stop":
@@ -218,6 +265,23 @@ func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message,
 	var sys string
 	var msgs []anthropicMessage
 
+	// Buffer for merging consecutive tool messages into one anthropic message.
+	// Anthropic requires ALL tool_results for a round to be in a single message.
+	var pendingTools []map[string]any
+
+	flushTools := func() error {
+		if len(pendingTools) == 0 {
+			return nil
+		}
+		b, err := json.Marshal(pendingTools)
+		if err != nil {
+			return fmt.Errorf("anthropic BuildRequest: marshal tool_results: %w", err)
+		}
+		msgs = append(msgs, anthropicMessage{Role: "user", Content: b})
+		pendingTools = nil
+		return nil
+	}
+
 	for _, m := range messages {
 		switch m.Role {
 		case "system":
@@ -230,19 +294,22 @@ func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message,
 			if m.Content != nil {
 				content = *m.Content
 			}
-			block, err := json.Marshal([]map[string]any{{
+			pendingTools = append(pendingTools, map[string]any{
 				"type":        "tool_result",
 				"tool_use_id": m.ToolCallID,
 				"content":     content,
-			}})
-			if err != nil {
-				return nil, fmt.Errorf("anthropic BuildRequest: marshal tool_result: %w", err)
-			}
-			msgs = append(msgs, anthropicMessage{Role: "user", Content: block})
+			})
 
 		case "assistant":
+			// Flush any pending tool results before a new assistant message
+			if err := flushTools(); err != nil {
+				return nil, err
+			}
 			if len(m.ToolCalls) > 0 {
-				blocks := make([]map[string]any, 0, len(m.ToolCalls)+1)
+				blocks := make([]map[string]any, 0, len(m.ToolCalls)+2)
+				if m.ReasoningContent != "" {
+					blocks = append(blocks, map[string]any{"type": "thinking", "thinking": m.ReasoningContent})
+				}
 				if m.Content != nil && *m.Content != "" {
 					blocks = append(blocks, map[string]any{"type": "text", "text": *m.Content})
 				}
@@ -281,6 +348,10 @@ func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message,
 			}
 		}
 	}
+	// flush trailing tool results (end of conversation)
+	if err := flushTools(); err != nil {
+		return nil, err
+	}
 
 	req := anthropicRequest{
 		Model:     model,
@@ -303,6 +374,7 @@ func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message,
 					return nil, fmt.Errorf("anthropic BuildRequest: marshal tools: %w", err)
 				}
 				req.Tools = b
+				req.ToolChoice = json.RawMessage(`{"type":"auto"}`)
 			}
 		}
 	}
@@ -320,12 +392,15 @@ func (s *AnthropicStrategy) ParseResponse(body []byte) (types.Message, error) {
 
 	fnStrat := function.Get("anthropic")
 	var textContent string
+	var thinkingContent string
 	var toolCalls []types.ToolCall
 
 	for _, block := range resp.Content {
 		switch block.Type {
 		case "text":
 			textContent += block.Text
+		case "thinking":
+			thinkingContent = block.Thinking // 保存 thinking，后续注入 ReasoningContent
 		case "tool_use":
 			if fnStrat != nil {
 				raw := map[string]any{
@@ -346,6 +421,9 @@ func (s *AnthropicStrategy) ParseResponse(body []byte) (types.Message, error) {
 		msg.ToolCalls = toolCalls
 	} else {
 		msg.Content = &textContent
+	}
+	if thinkingContent != "" {
+		msg.ReasoningContent = thinkingContent
 	}
 	if resp.Usage != nil {
 		msg.Usage = &types.Usage{
