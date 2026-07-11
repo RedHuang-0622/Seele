@@ -119,3 +119,25 @@ func (g *Graph) Resolve(currentID string, wc *types.WorkflowContext) string {
 	edges := *g.edges.Load()
 	return edge.Resolve(edges, currentID, wc)
 }
+
+// GetNextNodes returns ALL matching next node IDs from unconditional edges.
+// When multiple nodes are returned, the scheduler should run them concurrently (fork).
+func (g *Graph) GetNextNodes(currentID string, wc *types.WorkflowContext) []string {
+	edges := *g.edges.Load()
+	var ids []string
+	for _, e := range edges {
+		if e.From == currentID && e.Condition == nil {
+			ids = append(ids, e.To)
+		}
+	}
+	// Fallback to conditional edges if no unconditional
+	if len(ids) > 0 {
+		return ids
+	}
+	// (keep backward compat: single conditional match)
+	next := edge.Resolve(edges, currentID, wc)
+	if next != "" {
+		return []string{next}
+	}
+	return nil
+}
