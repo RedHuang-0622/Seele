@@ -89,7 +89,7 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 
 	rootCtx := ctx
 
-	for loop := 0; loop < rl.cfg.MaxLoops; loop++ {
+	for loop := 0; ; loop++ {
 		tools := rl.agent.VisibleTools(ctx)
 
 		if rl.hooks != nil && rl.hooks.OnLLMStart != nil {
@@ -186,7 +186,7 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 		}
 	}
 
-	return "", fmt.Errorf("engine: reached maxLoops (%d) without final text reply", rl.cfg.MaxLoops)
+	// unreachable: for loop only exits via return inside body
 }
 
 func (rl *ReActLoop) History() []types.Message {
