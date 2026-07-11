@@ -43,6 +43,9 @@ func getEnv(key, fallback string) string {
 func initAgent(t *testing.T) (*agent.Agent, *engine.Engine) {
 	t.Helper()
 
+	if _, err := os.Stat(smokeConfig); os.IsNotExist(err) {
+		t.Skipf("跳过: 配置文件 %s 不存在（冒烟测试需要本地 API 配置）", smokeConfig)
+	}
 	result, err := api.LoadFullAccountsConfig(smokeConfig)
 	if err != nil {
 		t.Fatalf("load config %q: %v", smokeConfig, err)
