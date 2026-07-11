@@ -9,13 +9,12 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	apigw "github.com/RedHuang-0622/Seele/agent/gateway/api"
-	toolgw "github.com/RedHuang-0622/Seele/agent/gateway/tool"
 	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
 	hubprov "github.com/RedHuang-0622/Seele/agent/core/tool/hub"
 	mcp "github.com/RedHuang-0622/Seele/agent/core/tool/mcp"
+	apigw "github.com/RedHuang-0622/Seele/agent/gateway/api"
+	toolgw "github.com/RedHuang-0622/Seele/agent/gateway/tool"
 	"github.com/RedHuang-0622/Seele/types"
-	wp "github.com/RedHuang-0622/Seele/workplan"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 	registry "github.com/RedHuang-0622/microHub/service_registry"
 )
@@ -24,13 +23,13 @@ import (
 
 // Options 配置 Agent 的启动参数。
 type Options struct {
-	RegistryPath       string          // registry.yaml 路径（可选，仅使用 Hub 工具时需要）
-	LLMConfig          types.LLMConfig // LLM 配置（由调用方加载后注入）
-	ProviderAccountPath string         // Provider 账号 YAML 路径（可选，加载多账号配置）
-	HubAddr            string          // Hub gRPC 监听地址，默认 ":0"
-	HubStartupDelay    time.Duration   // 已废弃：不再使用，保留兼容
-	ToolCallTimeOut    time.Duration   // 单次工具调用超时，默认 5s
-	Logger             Logger
+	RegistryPath        string          // registry.yaml 路径（可选，仅使用 Hub 工具时需要）
+	LLMConfig           types.LLMConfig // LLM 配置（由调用方加载后注入）
+	ProviderAccountPath string          // Provider 账号 YAML 路径（可选，加载多账号配置）
+	HubAddr             string          // Hub gRPC 监听地址，默认 ":0"
+	HubStartupDelay     time.Duration   // 已废弃：不再使用，保留兼容
+	ToolCallTimeOut     time.Duration   // 单次工具调用超时，默认 5s
+	Logger              Logger
 }
 
 func (o *Options) withDefaults() {
@@ -79,21 +78,21 @@ func (l *stdLogger) Error(msg string, args ...any) { slog.Default().Error(msg, a
 //	  ├── Shutdown()
 //	  └── ...
 type Agent struct {
-	llmClient      *api.ChatClient
-	tools          *holder.Holder
-	apiGW          apigw.Gateway
-	toolGW         toolgw.Gateway
-	pool           *api.AccountPool
-	hub            *hubbase.BaseHub
-	hubProvider    *hubprov.HubProvider
-	mcpProvider    *mcp.Provider    // 延迟初始化，mcpMu 保护
+	llmClient   *api.ChatClient
+	tools       *holder.Holder
+	apiGW       apigw.Gateway
+	toolGW      toolgw.Gateway
+	pool        *api.AccountPool
+	hub         *hubbase.BaseHub
+	hubProvider *hubprov.HubProvider
+	mcpProvider *mcp.Provider // 延迟初始化，mcpMu 保护
 	// 延迟初始化
-	mcpMu          sync.Mutex
-	opts           Options
-	shutdown       chan struct{}
-	done           chan struct{} // closed 表示 Shutdown() 完成
-	healthCancel   context.CancelFunc // 停止 health probe goroutine
-	wg             sync.WaitGroup // 追踪 in-flight 操作
+	mcpMu        sync.Mutex
+	opts         Options
+	shutdown     chan struct{}
+	done         chan struct{}      // closed 表示 Shutdown() 完成
+	healthCancel context.CancelFunc // 停止 health probe goroutine
+	wg           sync.WaitGroup     // 追踪 in-flight 操作
 }
 
 // New 创建 Agent 并完成初始化。
@@ -226,13 +225,6 @@ func (a *Agent) MCP() *mcp.Provider {
 func (a *Agent) RegisterTool(name, desc string, inputSchema map[string]interface{}, handler func(ctx context.Context, argsJSON string) (string, error), outputSchema ...map[string]interface{}) {
 	a.tools.RegisterInline(name, desc, inputSchema, handler, outputSchema...)
 	a.opts.Logger.Info("inline tool registered", "name", name)
-}
-
-// RegisterWorkPlanTool 注册一个 WorkPlan 驱动的工具。
-// WorkPlanTool.Run 会被委托给 Agent.RegisterTool。
-func (a *Agent) RegisterWorkPlanTool(tool wp.WorkPlanTool) error {
-	a.RegisterTool(tool.Name, tool.Description, tool.InputSchema, tool.Run)
-	return nil
 }
 
 // ── 新增访问器 ──────────────────────────────────────────────────────────
