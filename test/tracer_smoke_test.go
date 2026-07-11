@@ -208,7 +208,8 @@ func TestTraceMock(t *testing.T) {
 	t.Run("error in loop", func(t *testing.T) {
 		mock := newMockLLMInline()
 		defer mock.Close()
-		// Enqueue multiple tool calls to exhaust maxLoops
+		// Enqueue multiple tool calls — the first one cancels the context,
+		// causing the next LLM call to fail and verifying the trace error path.
 		for i := 0; i < 5; i++ {
 			mock.enqueueTool([]types.ToolCall{
 				{ID: fmt.Sprintf("c%d", i), Type: "function",
@@ -216,25 +217,28 @@ func TestTraceMock(t *testing.T) {
 			})
 		}
 
+		ctx, cancel := context.WithCancel(context.Background())
+
 		a := newTestAgentInline(t, mock.URL())
 		defer a.Shutdown()
 		a.RegisterTool(
 			"echo", "echo tool",
 			map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 			func(ctx context.Context, args string) (string, error) {
+				cancel() // cancel context on first tool call → next LLM call fails
 				return `{"ok":true}`, nil
 			},
 		)
 
 		tr := tracer.NewSimpleTracer()
 		eng := engine.New(a, engine.WithTracer(tr),
-			engine.WithSessionConfig(engine.SessionConfig{MaxLoops: 2}),
 			engine.WithSystemPrompt("You are helpful."))
 
-		_, err := eng.Chat(context.Background(), "Loop forever")
+		_, err := eng.Chat(ctx, "Loop forever")
 		if err == nil {
-			t.Fatal("expected error from maxLoops")
+			t.Fatal("expected error from cancelled context")
 		}
+		t.Logf("Chat error: %v", err)
 
 		tree := eng.ExportTrace()
 		if tree.Root == nil {
