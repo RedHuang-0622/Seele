@@ -59,6 +59,7 @@ var plugins = []pluginDef{
 	{"write", "编辑模式", []string{"switch_mode", "write*", "edit*", "read_file", "bash", "git_diff", "git_status", "get_time"}, nil},
 	{"git", "Git 模式", []string{"switch_mode", "git_*", "bash", "get_time"}, nil},
 	{"shell", "Shell/DevOps 模式", []string{"switch_mode", "bash", "get_time"}, nil},
+	{"plan", "WorkPlan 工作流模式", []string{"switch_mode", "plan_*", "get_time"}, nil},
 }
 
 func initPlugins(agt *agent.Agent) {
@@ -111,6 +112,10 @@ func main() {
 			return fmt.Sprintf(`"%s"`, time.Now().Format("2006-01-02 15:04:05")), nil
 		},
 	)
+
+	// ── WorkPlan 工具（LLM 可动态构建 DAG 工作流）──────────────────
+	wpt := builtin.NewWorkPlanTool(builtin.NewChatAgentFactory(agt.LLM()))
+	agt.Tools().Register(wpt)
 
 	// ── 插件系统 ──────────────────────────────────────────────────────
 	initPlugins(agt)
