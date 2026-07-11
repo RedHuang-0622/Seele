@@ -57,11 +57,11 @@ func TestWorkPlan_Fork_DifferentRegistries(t *testing.T) {
 		},
 	}
 
-	wp := workplan.New(factory, nil, "")
+	wp := workplan.New(factory)
 	wp.Fork("并发任务", []workplan.ForkBranch{
 		{Label: "前端", SystemPrompt: "label:前端 你是前端工程师", Input: "实现 tool_a 功能"},
 		{Label: "后端", SystemPrompt: "label:后端 你是后端工程师", Input: "实现 tool_b 功能"},
-	})
+	}, 3)
 
 	result, err := wp.Run(context.Background())
 	if err != nil {
@@ -137,7 +137,7 @@ func TestWorkPlan_LoopSignalEmit(t *testing.T) {
 	var mu sync.Mutex
 	iterResults := make([]string, 0)
 
-	wp := workplan.New(factory, nil, "")
+	wp := workplan.New(factory)
 
 	wp.Auto("初始分析", "分析系统状态")
 	wp.Emit("保存分析", "root_cause")
@@ -231,7 +231,7 @@ func TestWorkPlan_LoopExhausted(t *testing.T) {
 
 	factory := newSessionFactory(newTestTools(llmSrv.URL()))
 
-	wp := workplan.New(factory, nil, "")
+	wp := workplan.New(factory)
 
 	wp.Auto("修复执行体", "执行修复: {{.PrevResult}}")
 
@@ -282,7 +282,7 @@ func TestWorkPlan_EmitInFork(t *testing.T) {
 
 	factory := newSessionFactory(newTestTools(llmSrv.URL()))
 
-	wp := workplan.New(factory, nil, "")
+	wp := workplan.New(factory)
 
 	wp.Auto("需求分析", "分析需求：用户登录功能").
 		Emit("保存需求", "requirement")
@@ -290,7 +290,7 @@ func TestWorkPlan_EmitInFork(t *testing.T) {
 	wp.Fork("并行开发", []workplan.ForkBranch{
 		{Label: "前端", SystemPrompt: "你是前端工程师", Input: "实现登录页面，需求：{{.Vars.requirement}}"},
 		{Label: "后端", SystemPrompt: "你是后端工程师", Input: "实现登录接口，需求：{{.Vars.requirement}}"},
-	})
+	}, 3)
 
 	result, err := wp.Run(context.Background())
 	if err != nil {
