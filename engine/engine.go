@@ -100,6 +100,7 @@ func New(a *agent.Agent, opts ...Option) *Engine {
 		rl.tracer = e.tracer
 		rl.modelName = e.modelName
 		rl.cache = e.cache
+		rl.respCache = cache.NewResponseCache(e.cache)
 		rl.store = e.store
 		rl.hooks = e.hooks
 		if e.cfg.MaxLoops != DefaultSessionConfig().MaxLoops {

@@ -31,6 +31,7 @@ type ReActLoop struct {
 	modelName string
 	tracer    tracer.Tracer
 	hooks     *LoopHooks
+	respCache *cache.ResponseCache
 }
 
 type ReActLoopOption func(*ReActLoop)
@@ -205,45 +206,6 @@ func (rl *ReActLoop) ClearHistory() {
 	rl.history = sys
 }
 
-func (rl *ReActLoop) callLLM(ctx context.Context, tools []types.Tool, onChunk func(string)) (types.Message, error) {
-	if onChunk != nil {
-		content, reasoningContent, toolCalls, err := rl.llm.CompleteStream(ctx, rl.history, tools, onChunk)
-		if err != nil {
-			return types.Message{}, err
-		}
-		if len(toolCalls) > 0 {
-			msg := types.Message{Role: "assistant", Content: nil, ToolCalls: toolCalls}
-			if reasoningContent != "" {
-				msg.ReasoningContent = reasoningContent
-			}
-			return msg, nil
-		}
-		// streaming returned empty, fallback to non-streaming
-		if content == "" {
-			msg, err := rl.llm.Complete(ctx, rl.history, tools)
-			if err != nil {
-				return types.Message{}, err
-			}
-			return msg, nil
-		}
-		msg := types.Message{Role: "assistant", Content: &content}
-		if reasoningContent != "" {
-			msg.ReasoningContent = reasoningContent
-		}
-		est := len(content) / 4
-		if est < 1 {
-			est = 1
-		}
-		msg.Usage = &types.Usage{PromptTokens: 0, CompletionTokens: est, TotalTokens: est}
-		return msg, nil
-	}
-	msg, err := rl.llm.Complete(ctx, rl.history, tools)
-	if err != nil {
-		return types.Message{}, err
-	}
-	return msg, nil
-}
-
 func (rl *ReActLoop) restoreFromCache() {
 	if rl.sessionID == "" {
 		return
@@ -279,6 +241,45 @@ func (rl *ReActLoop) saveToCache() {
 	if rl.store != nil {
 		_ = rl.store.Save(rl.sessionID, rl.history)
 	}
+}
+
+// callLLM 执行真实的 LLM 调用（同步或流式）。
+func (rl *ReActLoop) callLLM(ctx context.Context, tools []types.Tool, onChunk func(string)) (types.Message, error) {
+	if onChunk != nil {
+		content, reasoningContent, toolCalls, err := rl.llm.CompleteStream(ctx, rl.history, tools, onChunk)
+		if err != nil {
+			return types.Message{}, err
+		}
+		if len(toolCalls) > 0 {
+			msg := types.Message{Role: "assistant", Content: nil, ToolCalls: toolCalls}
+			if reasoningContent != "" {
+				msg.ReasoningContent = reasoningContent
+			}
+			return msg, nil
+		}
+		if content == "" {
+			msg, err := rl.llm.Complete(ctx, rl.history, tools)
+			if err != nil {
+				return types.Message{}, err
+			}
+			return msg, nil
+		}
+		msg := types.Message{Role: "assistant", Content: &content}
+		if reasoningContent != "" {
+			msg.ReasoningContent = reasoningContent
+		}
+		est := len(content) / 4
+		if est < 1 {
+			est = 1
+		}
+		msg.Usage = &types.Usage{PromptTokens: 0, CompletionTokens: est, TotalTokens: est}
+		return msg, nil
+	}
+	msg, err := rl.llm.Complete(ctx, rl.history, tools)
+	if err != nil {
+		return types.Message{}, err
+	}
+	return msg, nil
 }
 
 func truncateResult(content string, maxChars int) string {
