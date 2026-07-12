@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
-	"github.com/RedHuang-0622/Seele/contexts/cache"
-	"github.com/RedHuang-0622/Seele/contexts/storage"
-	"github.com/RedHuang-0622/Seele/contexts/tracer"
+	"github.com/RedHuang-0622/Seele/seelectx/cache"
+	"github.com/RedHuang-0622/Seele/seelectx/storage"
+	"github.com/RedHuang-0622/Seele/seelectx/tracer"
 	"github.com/RedHuang-0622/Seele/types"
 )
 

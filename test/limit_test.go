@@ -15,7 +15,7 @@ import (
 	"github.com/RedHuang-0622/Seele/agent/core/api"
 	"github.com/RedHuang-0622/Seele/agent/core/tool/interfaces"
 	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
-seelectx "github.com/RedHuang-0622/Seele/contexts"
+seelectx "github.com/RedHuang-0622/Seele/seelectx"
 	"github.com/RedHuang-0622/Seele/engine"
 	
 	

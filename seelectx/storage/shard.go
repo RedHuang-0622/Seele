@@ -14,7 +14,7 @@ const (
 )
 
 // estimateTokens estimates the token count of messages using JSON byte-length heuristic.
-// formula: len(JSON(messages))/3, matching the convention used in contexts/history.
+// formula: len(JSON(messages))/3, matching the convention used in contexts/ctx_manager.
 func estimateTokens(msgs []types.Message) int {
 	if len(msgs) == 0 {
 		return 0

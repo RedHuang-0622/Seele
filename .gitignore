@@ -19,3 +19,6 @@ config/*.yaml
 
 # Claude worktrees (auto-generated)
 .claude/worktrees/
+
+# 运行时缓存/会话数据（本地测试产物，不提交）
+.seele/

@@ -1,4 +1,4 @@
-// Package history 提供 LLM 上下文预算管理。
+// Package ctx_manager 提供 LLM 上下文预算管理。
 //
 // 核心能力：
 //   - Token 估算（EstimateTokens / EstimateHistoryTokens）
@@ -7,7 +7,7 @@
 //   - 工具结果截断（TruncateToolResult）
 //
 // 依赖：types.Message（LLM 消息类型），仅此而已。
-package history
+package ctx_manager
 
 // ── Config ─────────────────────────────────────────────────────────
 

@@ -26,7 +26,7 @@ import (
 // 使用示例：
 //
 //	import (
-//	    "github.com/RedHuang-0622/Seele/contexts"
+//	    "github.com/RedHuang-0622/Seele/seelectx"
 //	    "github.com/RedHuang-0622/Seele/provider"
 //	)
 //

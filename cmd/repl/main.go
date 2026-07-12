@@ -35,7 +35,8 @@ import (
 	"github.com/RedHuang-0622/Seele/agent/core/api"
 	"github.com/RedHuang-0622/Seele/agent/core/tool/builtin"
 	"github.com/RedHuang-0622/Seele/agent/core/tool/holder"
-	"github.com/RedHuang-0622/Seele/contexts/tracer"
+	"github.com/RedHuang-0622/Seele/seelectx/storage"
+	"github.com/RedHuang-0622/Seele/seelectx/tracer"
 	"github.com/RedHuang-0622/Seele/engine"
 	"github.com/RedHuang-0622/Seele/types"
 )
@@ -135,17 +136,22 @@ You can switch between specialized modes using the switch_mode tool:
 
 When you need tools outside your current mode, call switch_mode to change.
 Always respond in the user's language.`
-	}
+		}
+		// ── Engine ──────────────────────────────────────────────────────────────────────────
+		tr := tracer.NewSimpleTracer()
+		store, err := storage.NewStore("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "✖ 初始化存储失败: %v\n", err)
+			os.Exit(1)
+		}
+		hooks := buildHooks()
 
-	// ── Engine ────────────────────────────────────────────────────────
-	tr := tracer.NewSimpleTracer()
-	hooks := buildHooks()
-
-	eng := engine.New(agt,
-		engine.WithTracer(tr),
-		engine.WithHooks(hooks),
-		engine.WithSystemPrompt(defaultPrompt),
-	)
+		eng := engine.New(agt,
+			engine.WithTracer(tr),
+			engine.WithStore(store),
+			engine.WithHooks(hooks),
+			engine.WithSystemPrompt(defaultPrompt),
+		)
 
 	// ── 注册 switch_mode 工具（闭包捕获 eng/agt/prompts）────────────
 	agt.RegisterTool(

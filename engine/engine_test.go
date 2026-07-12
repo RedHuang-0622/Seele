@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/agent"
-	"github.com/RedHuang-0622/Seele/contexts/tracer"
+	"github.com/RedHuang-0622/Seele/seelectx/tracer"
 	"github.com/RedHuang-0622/Seele/types"
 )
 

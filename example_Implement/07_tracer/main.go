@@ -22,7 +22,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/contexts/tracer"
+	"github.com/RedHuang-0622/Seele/seelectx/tracer"
 	"github.com/RedHuang-0622/Seele/engine"
 	"github.com/RedHuang-0622/Seele/types"
 )
