@@ -46,7 +46,7 @@ jobs:
 
       - name: go test (coverage)
         run: |
-          go test -cover ./agent/core/... ./engine/... ./contexts/... ./test/... -count=1 -timeout 120s
+          go test -cover ./agent/core/... ./engine/... ./seelectx/... ./test/... -count=1 -timeout 120s
 
   # ── 冒烟测试（mock LLM，无需真实 API key）────────────
   smoke-test:
