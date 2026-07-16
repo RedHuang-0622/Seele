@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/agent/core/tool/permission"
 	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
 	hubprov "github.com/RedHuang-0622/Seele/agent/core/tool/hub"
 	mcp "github.com/RedHuang-0622/Seele/agent/core/tool/mcp"
@@ -267,24 +266,6 @@ func (a *Agent) DirectDispatch(ctx context.Context, name, argsJSON string) (stri
 
 // Tools 暴露底层 Holder，供精细控制使用。
 func (a *Agent) Tools() *holder.Holder { return a.tools }
-
-// ToolGateway 返回工具网关，可用于配置权限系统等横切关注点。
-func (a *Agent) ToolGateway() toolgw.Gateway { return a.toolGW }
-
-// SetPermissionConfig 设置权限规则和审批处理器。
-// 委托底层的 DefaultGateway 实现权限门控。
-func (a *Agent) SetPermissionConfig(cfg permission.PermissionConfig, handler permission.ApprovalHandler) {
-	if gw, ok := a.toolGW.(*toolgw.DefaultGateway); ok {
-		gw.SetPermissionConfig(cfg, handler)
-	}
-}
-
-// SetApprovalHandler 设置审批处理器（无权限规则时仅作用于 ask_approve 类工具）。
-func (a *Agent) SetApprovalHandler(handler permission.ApprovalHandler) {
-	if gw, ok := a.toolGW.(*toolgw.DefaultGateway); ok {
-		gw.SetApprovalHandler(handler)
-	}
-}
 
 // Shutdown 关闭 Agent，释放资源。并发安全。
 // 先发送关闭信号，等待所有 in-flight 操作完成，再清理资源。
