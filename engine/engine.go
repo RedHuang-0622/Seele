@@ -169,6 +169,13 @@ func (e *Engine) SetMaxLoops(n int) {
 	rl.cfg.MaxLoops = n
 }
 
+// AppendHistory 追加消息到对话历史。
+func (e *Engine) AppendHistory(msg types.Message) {
+	if rl, ok := e.loop.(*ReActLoop); ok {
+		rl.history = append(rl.history, msg)
+	}
+}
+
 // SetSystemPrompt 动态替换 system prompt。
 // 找到已有 system 消息替换，没有则追加到历史开头。
 func (e *Engine) SetSystemPrompt(prompt string) {
