@@ -30,6 +30,7 @@ func toResult(a Action) CheckResult {
 
 type PermissionChecker struct {
 	mu         sync.RWMutex
+	mode       Mode
 	rules      []PermissionRule
 	allowCache map[string]bool
 }
@@ -38,19 +39,43 @@ func NewPermissionChecker(cfg PermissionConfig) *PermissionChecker {
 	rules := make([]PermissionRule, len(cfg.Rules))
 	copy(rules, cfg.Rules)
 	return &PermissionChecker{
+		mode:       cfg.EffectiveMode(),
 		rules:      rules,
 		allowCache: make(map[string]bool),
 	}
 }
 
-func (pc *PermissionChecker) Check(toolName, argsJSON string) CheckResult {
+// SetMode 运行时切换权限模式（每次 Check 都会读取最新值）。
+func (pc *PermissionChecker) SetMode(m Mode) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	pc.mode = m
+}
+
+// Mode 返回当前权限模式。
+func (pc *PermissionChecker) Mode() Mode {
 	pc.mu.RLock()
 	defer pc.mu.RUnlock()
+	return pc.mode
+}
+
+func (pc *PermissionChecker) Check(toolName, argsJSON string) CheckResult {
+	pc.mu.RLock()
+	mode := pc.mode
+	defer pc.mu.RUnlock()
+
+	// full_access：所有工具静默放行
+	if mode == ModeFullAccess {
+		return ResultAllow
+	}
+
 	cacheKey := toolName + ":" + truncateStr(argsJSON, 200)
 	if pc.allowCache[cacheKey] {
 		return ResultAllow
 	}
-	var result CheckResult = ResultAllow
+
+	// manual：默认 ask，由规则覆盖
+	var result CheckResult = ResultAsk
 	for _, rule := range pc.rules {
 		if !matchGlob(rule.ToolName, toolName) {
 			continue

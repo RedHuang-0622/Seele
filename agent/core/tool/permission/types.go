@@ -3,6 +3,16 @@ package permission
 
 import "time"
 
+// Mode 控制权限门控的整体行为。
+// full_access：所有工具静默放行，不弹审批。
+// manual：命中 allow 规则放行，命中 deny 规则拒绝，命中 ask 或无匹配则弹审批。
+type Mode string
+
+const (
+	ModeFullAccess Mode = "full_access"
+	ModeManual     Mode = "manual"
+)
+
 type Action string
 
 const (
@@ -17,8 +27,19 @@ type PermissionRule struct {
 	Action   Action   `yaml:"action" json:"action"`
 }
 
+// PermissionConfig 是权限门控的配置入口。
+// Mode 决定无规则命中时的默认行为；Rules 提供细粒度覆盖。
 type PermissionConfig struct {
+	Mode  Mode             `yaml:"mode,omitempty" json:"mode,omitempty"`
 	Rules []PermissionRule `yaml:"rules,omitempty" json:"rules,omitempty"`
+}
+
+// EffectiveMode 返回生效的 Mode，空值默认为 full_access（与现有行为兼容）。
+func (cfg PermissionConfig) EffectiveMode() Mode {
+	if cfg.Mode == "" {
+		return ModeFullAccess
+	}
+	return cfg.Mode
 }
 
 type ApprovalRequest struct {
