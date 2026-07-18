@@ -278,13 +278,15 @@ func TestIsConnectivityError_ExitStatus(t *testing.T) {
 	}
 }
 
-func TestIsConnectivityError_WrappedNetError(t *testing.T) {
-	_, err := net.Dial("tcp", "192.0.2.1:1")
-	if err == nil {
-		t.Skip("could not trigger dial error")
+func TestIsConnectivityError_NetOpError(t *testing.T) {
+	// 构造 net.OpError 而非真实拨号，避免 Linux CI 超时
+	err := &net.OpError{
+		Op:  "dial",
+		Net: "tcp",
+		Err: fmt.Errorf("connect: connection refused"),
 	}
 	if !isConnectivityError(err) {
-		t.Errorf("net dial error should be connectivity error, got: %v", err)
+		t.Errorf("net.OpError should be connectivity error, got: %v", err)
 	}
 }
 
