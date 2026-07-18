@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -36,11 +37,13 @@ type serverConn struct {
 type Provider struct {
 	mu      sync.RWMutex
 	servers map[string]*serverConn
+	breaker *mcpBreaker // 熔断器（按 server name 追踪故障）
 }
 
 func NewProvider() *Provider {
 	return &Provider{
 		servers: make(map[string]*serverConn),
+		breaker: newBreaker(),
 	}
 }
 
@@ -54,6 +57,36 @@ func (p *Provider) ServerNames() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// IsAlive 通过 MCP ping 探测服务器是否存活。超时 2 秒。
+// 这是 MCP 协议中最轻量的检查，不拉取工具列表也不传输数据。
+func (p *Provider) IsAlive(name string) bool {
+	p.mu.RLock()
+	conn, ok := p.servers[name]
+	p.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return conn.client.Ping(ctx) == nil
+}
+
+// ServerStatus 返回指定 MCP 服务器的健康信息。
+func (p *Provider) ServerStatus(name string) (alive bool, tools int, err error) {
+	p.mu.RLock()
+	conn, ok := p.servers[name]
+	p.mu.RUnlock()
+	if !ok {
+		return false, 0, fmt.Errorf("mcp server %q not attached", name)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := conn.client.Ping(ctx); err != nil {
+		return false, len(conn.tools), err
+	}
+	return true, len(conn.tools), nil
 }
 
 // Attach 连接并初始化一个 MCP Server。
@@ -162,8 +195,10 @@ func (p *Provider) Tools() []interfaces.ToolEntry {
 					},
 				},
 				Handler: &Handler{
-					Client:   conn.client,
-					ToolName: t.Function.Name,
+					Client:     conn.client,
+					ToolName:   t.Function.Name,
+					ServerName: serverName,
+					breaker:    p.breaker,
 				},
 			})
 		}
