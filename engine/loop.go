@@ -27,7 +27,7 @@ type ReActLoop struct {
 	cfg       SessionConfig
 	sessionID string
 	cache     cache.Provider
-	store     *storage.Store
+	store     storage.Storage
 	modelName string
 	tracer    tracer.Tracer
 	hooks     *LoopHooks

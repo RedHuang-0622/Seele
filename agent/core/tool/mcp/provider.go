@@ -49,6 +49,13 @@ func NewProvider() *Provider {
 
 func (p *Provider) ProviderName() string { return "mcp" }
 
+// SetBreakerEventsChannel 设置熔断器事件通知 channel。
+// 所有 MCP server 共享同一个 breaker，事件按 serverName 区分。
+// nil = 不启用（默认）。必须在 Attach 之前调用。
+func (p *Provider) SetBreakerEventsChannel(ch chan<- BreakerEvent) {
+	p.breaker.SetEventsChannel(ch)
+}
+
 func (p *Provider) ServerNames() []string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

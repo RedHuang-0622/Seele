@@ -24,11 +24,20 @@ type SessionMeta struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// Store implements JSON file-based persistent session storage.
+// Storage 是会话持久化接口。框架只定义契约，不关心实现。
+// 内置 FileStore 是基于文件系统的实现；调用方也可以传入内存实现或数据库实现。
+type Storage interface {
+	Save(sessionID string, messages []types.Message) error
+	Load(sessionID string) ([]types.Message, error)
+	List() []SessionMeta
+	Delete(sessionID string) error
+}
+
+// FileStore implements Storage with JSON file-based persistence.
 //
 // Directory layout:
 //
-//	.seele/sessions/
+//	{baseDir}/
 //	  ├── idx.json                          ← global index
 //	  ├── {hash_prefix}/
 //	  │     ├── meta.json                   ← session metadata
@@ -38,17 +47,23 @@ type SessionMeta struct {
 //
 // Shard strategy: each shard holds at most 100 messages or 8K tokens,
 // whichever is reached first.
-type Store struct {
+type FileStore struct {
 	baseDir string
 	mu      sync.RWMutex
 	index   map[string]*SessionMeta // sessionID → meta
 }
 
 // NewStore creates a persistent session storage.
-// If baseDir is empty, it defaults to ".seele/sessions/".
-func NewStore(baseDir string) (*Store, error) {
+// baseDir is required; pass empty only if you want no persistent storage.
+func NewFileStore(baseDir string) (*FileStore, error) {
 	if baseDir == "" {
-		baseDir = ".seele/sessions/"
+		// No storage configured: Save/Load become no-ops.
+		// Seelex always passes a real path; this branch exists so callers
+		// that don't care about persistence can leave it empty.
+		return &Store{
+			baseDir: "",
+			index:   make(map[string]*SessionMeta),
+		}, nil
 	}
 	baseDir = filepath.Clean(baseDir)
 
@@ -113,6 +128,9 @@ func (s *Store) sessionDir(sessionID string) string {
 //
 // messages is []types.Message, typically from engine.History().
 func (s *Store) Save(sessionID string, messages []types.Message) error {
+	if s.baseDir == "" {
+		return nil // no-op: no storage configured
+	}
 	if sessionID == "" {
 		return fmt.Errorf("storage: empty session ID")
 	}
@@ -179,6 +197,12 @@ func (s *Store) Save(sessionID string, messages []types.Message) error {
 
 // Load retrieves all messages for a session, merging shards in order.
 func (s *Store) Load(sessionID string) ([]types.Message, error) {
+	if s.baseDir == "" {
+		if sessionID == "" {
+			return nil, fmt.Errorf("storage: empty session ID")
+		}
+		return nil, fmt.Errorf("storage: session %q not found (no storage configured)", sessionID)
+	}
 	if sessionID == "" {
 		return nil, fmt.Errorf("storage: empty session ID")
 	}
@@ -264,6 +288,15 @@ func (s *Store) Delete(sessionID string) error {
 
 	return nil
 }
+
+// ── Backward compatibility ─────────────────────────────────────────
+// TODO: remove after all callers migrate to FileStore / NewFileStore
+
+// Store 是 FileStore 的旧名，已废弃。
+type Store = FileStore
+
+// NewStore 是 NewFileStore 的旧名，已废弃。
+func NewStore(baseDir string) (*FileStore, error) { return NewFileStore(baseDir) }
 
 // ── Internal helpers ─────────────────────────────────────────────────
 

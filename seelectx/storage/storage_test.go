@@ -45,34 +45,21 @@ func tempStore(t *testing.T) *Store {
 // NewStore
 // ---------------------------------------------------------------------------
 
-func TestNewStore_DefaultDir(t *testing.T) {
-	cwd, _ := os.Getwd()
-	tmpDir, err := os.MkdirTemp("", "seele-default-dir-*")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	// Restore CWD before removing temp dir (Windows requires CWD != dir being removed).
-	defer os.RemoveAll(tmpDir)
-	defer func() {
-		if chErr := os.Chdir(cwd); chErr != nil {
-			t.Errorf("Chdir back: %v", chErr)
-		}
-	}()
-
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("Chdir to tmp: %v", err)
-	}
-
+func TestNewStore_EmptyDir(t *testing.T) {
+	// NewStore("") should return a non-persistent store (no directory).
 	s, err := NewStore("")
 	if err != nil {
 		t.Fatalf("NewStore(''): %v", err)
 	}
-	expected := filepath.Clean(".seele/sessions/")
-	if s.baseDir != expected {
-		t.Errorf("baseDir = %q, want %q", s.baseDir, expected)
+	if s.baseDir != "" {
+		t.Errorf("baseDir = %q, want empty (no default dir)", s.baseDir)
 	}
 	if s.index == nil {
 		t.Error("index should be initialized")
+	}
+	// Save/Load should work without creating files
+	if err := s.Save("test-session", nil); err != nil {
+		t.Fatalf("Save on empty store: %v", err)
 	}
 }
 

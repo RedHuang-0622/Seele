@@ -8,24 +8,43 @@ import (
 	"time"
 )
 
+// BreakerEventType 熔断器事件类型。
+type BreakerEventType string
+
+const (
+	BreakerOpened     BreakerEventType = "opened"      // 熔断器打开，开始退避
+	BreakerHalfOpen   BreakerEventType = "half_open"   // 退避到期，允许探测调用
+	BreakerClosed     BreakerEventType = "closed"      // 熔断器关闭（恢复正常）
+	BreakerRecovering BreakerEventType = "recovering"  // 后台恢复 ping 已启动
+	BreakerRecovered  BreakerEventType = "recovered"   // 后台恢复成功
+)
+
+// BreakerEvent 熔断器状态变更事件。
+type BreakerEvent struct {
+	ServerName string
+	Type       BreakerEventType
+	Failures   int
+}
+
 // breakerState 单个 MCP server 的熔断状态。
 type breakerState struct {
-	failures      int
-	lastFail      time.Time
-	open          bool     // 熔断器打开：拒绝所有调用
-	until         time.Time // 熔断持续到此时（含退避）
-	recovering    bool     // 后台恢复 goroutine 是否已启动
+	failures   int
+	lastFail   time.Time
+	open       bool        // 熔断器打开：拒绝所有调用
+	until      time.Time   // 熔断持续到此时（含退避）
+	recovering bool        // 后台恢复 goroutine 是否已启动
 }
 
 // mcpBreaker 按 server name 管理熔断与自动恢复。
 // 零值不可用，必须通过 newBreaker() 创建。
 type mcpBreaker struct {
-	mu            sync.Mutex
-	servers       map[string]*breakerState
-	maxFails      int           // 连续失败 N 次后打开熔断
-	backoffBase   time.Duration // 首次熔断时长
-	backoffMax    time.Duration // 最大熔断时长
-	pingInterval  time.Duration // 恢复检查间隔
+	mu           sync.Mutex
+	servers      map[string]*breakerState
+	maxFails     int           // 连续失败 N 次后打开熔断
+	backoffBase  time.Duration // 首次熔断时长
+	backoffMax   time.Duration // 最大熔断时长
+	pingInterval time.Duration // 恢复检查间隔
+	events       chan<- BreakerEvent // 事件通知 channel，nil = 不启用
 }
 
 func newBreaker() *mcpBreaker {
@@ -38,6 +57,25 @@ func newBreaker() *mcpBreaker {
 	}
 }
 
+// SetEventsChannel 设置熔断器事件通知 channel。nil = 不启用。
+// 必须在第一次调用 beforeCall/afterCall 之前设置。
+func (b *mcpBreaker) SetEventsChannel(ch chan<- BreakerEvent) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.events = ch
+}
+
+func (b *mcpBreaker) emit(serverName string, typ BreakerEventType, failures int) {
+	if b.events == nil {
+		return
+	}
+	select {
+	case b.events <- BreakerEvent{ServerName: serverName, Type: typ, Failures: failures}:
+	default:
+		// channel 满则丢弃，不阻塞
+	}
+}
+
 // beforeCall 在发起 MCP 调用前检查熔断器。返回 nil 表示允许调用。
 func (b *mcpBreaker) beforeCall(serverName string) error {
 	b.mu.Lock()
@@ -45,16 +83,18 @@ func (b *mcpBreaker) beforeCall(serverName string) error {
 
 	st := b.servers[serverName]
 	if st == nil {
-		return nil // 无历史，放行
+		return nil
 	}
 	if !st.open {
-		return nil // 熔断器未开，放行
+		return nil
 	}
 	if time.Now().Before(st.until) {
+		b.emit(serverName, BreakerOpened, st.failures)
 		return fmt.Errorf("mcp breaker: server %q is degraded (backoff until %s)", serverName, st.until.Format("15:04:05"))
 	}
 	// 熔断超时到期，进入半开状态：允许一次探测调用
 	st.open = false
+	b.emit(serverName, BreakerHalfOpen, st.failures)
 	return nil
 }
 
@@ -84,11 +124,12 @@ func (b *mcpBreaker) afterCall(serverName string, isConnErr bool) {
 				backoff = b.backoffMax
 			}
 			st.until = time.Now().Add(backoff)
+			b.emit(serverName, BreakerOpened, st.failures)
 		}
 	} else {
-		// 成功调用：重置计数器
 		st.failures = 0
 		st.open = false
+		b.emit(serverName, BreakerClosed, 0)
 	}
 }
 
@@ -113,6 +154,7 @@ func (b *mcpBreaker) startRecovery(serverName string, pingFn func(context.Contex
 		return
 	}
 	st.recovering = true
+	b.emit(serverName, BreakerRecovering, st.failures)
 	b.mu.Unlock()
 
 	go func() {
@@ -140,6 +182,7 @@ func (b *mcpBreaker) startRecovery(serverName string, pingFn func(context.Contex
 					st.recovering = false
 				}
 				b.mu.Unlock()
+				b.emit(serverName, BreakerRecovered, 0)
 				return
 			}
 		}

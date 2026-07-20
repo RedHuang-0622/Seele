@@ -30,7 +30,7 @@ type Engine struct {
 	history   []types.Message
 	sessionID string
 	cache     cache.Provider
-	store     *storage.Store
+	store     storage.Storage
 	modelName string
 	hooks     *LoopHooks
 }
@@ -44,7 +44,7 @@ func WithSessionConfig(cfg SessionConfig) Option {
 func WithCache(c cache.Provider) Option {
 	return func(e *Engine) { e.cache = c }
 }
-func WithStore(s *storage.Store) Option {
+func WithStore(s storage.Storage) Option {
 	return func(e *Engine) { e.store = s }
 }
 func WithTracer(t tracer.Tracer) Option {

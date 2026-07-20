@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -43,6 +44,10 @@ func (h *Handler) Execute(ctx context.Context, argsJSON string) (string, error) 
 	if err != nil {
 		// 区分连接错误与业务逻辑错误
 		connErr := isConnectivityError(err)
+		// 操作超时 / 用户取消 ≠ 连接故障，不计入熔断
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			connErr = false
+		}
 
 		if h.breaker != nil && h.ServerName != "" {
 			h.breaker.afterCall(h.ServerName, connErr)
