@@ -59,7 +59,20 @@ func (s *Scheduler) Run(ctx context.Context) (*types.WorkPlanResult, error) {
 			NodeID: currentID, Kind: n.Kind().String(),
 			Output: output, StartedAt: nodeStart, EndedAt: time.Now(),
 		}
+		nr.Err = err
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
+
+		if s.OnNodeDone != nil {
+			status := "completed"
+			if nr.Aborted {
+				status = "aborted"
+			} else if err != nil {
+				status = "failed"
+			} else if nr.Skipped {
+				status = "skipped"
+			}
+			s.OnNodeDone(nr.NodeID, nr.Kind, status, nr.EndedAt.Sub(nr.StartedAt))
+		}
 
 		if err != nil {
 			nr.Err = err
@@ -142,6 +155,14 @@ func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.Workfl
 		}
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
 
+		if s.OnNodeDone != nil {
+			status := "completed"
+			if r.err != nil {
+				status = "failed"
+			}
+			s.OnNodeDone(r.id, r.kind, status, r.end.Sub(r.start))
+		}
+
 		if r.err != nil {
 			if firstErr == nil {
 				firstErr = r.err
@@ -182,7 +203,6 @@ func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.Workfl
 }
 
 // RunWithCheckpoint is identical to Run but also returns per-node snapshots.
-// (Implementation preserved from original — fork logic not yet applied here)
 func (s *Scheduler) RunWithCheckpoint(ctx context.Context) (*types.WorkPlanResult, map[string]*types.Snapshot, error) {
 	wc := types.NewWorkflowContext()
 	start := time.Now()
@@ -209,7 +229,18 @@ func (s *Scheduler) RunWithCheckpoint(ctx context.Context) (*types.WorkPlanResul
 			NodeID: currentID, Kind: n.Kind().String(),
 			Output: output, StartedAt: nodeStart, EndedAt: time.Now(),
 		}
+		nr.Err = err
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
+
+		if s.OnNodeDone != nil {
+			status := "completed"
+			if nr.Aborted {
+				status = "aborted"
+			} else if err != nil {
+				status = "failed"
+			}
+			s.OnNodeDone(nr.NodeID, nr.Kind, status, nr.EndedAt.Sub(nr.StartedAt))
+		}
 
 		if err != nil {
 			nr.Err = err

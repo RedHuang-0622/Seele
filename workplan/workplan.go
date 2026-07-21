@@ -37,6 +37,10 @@ type WorkPlan struct {
 	entryID       string
 	lastNodeID    string
 	pendingGate   *approve.Question
+
+	// NodeHook 每节点完成时回调，按需选填。
+	// 用于 plan_run 实时回传进度给 TUI（seelex plan visualization）。
+	NodeHook func(nodeID, kind, status string, elapsed time.Duration)
 }
 
 // Option configures a WorkPlan instance.
@@ -216,6 +220,9 @@ func (wp *WorkPlan) Vars() map[string]string { return make(map[string]string) }
 
 // Run validates and executes the workflow graph.
 func (wp *WorkPlan) Run(ctx context.Context) (*types.WorkPlanResult, error) {
+	if wp.NodeHook != nil {
+		wp.runner.SetNodeHook(wp.NodeHook)
+	}
 	return wp.runner.Run(ctx)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/RedHuang-0622/Seele/agent/core/tool/interfaces"
 	"github.com/RedHuang-0622/Seele/types"
@@ -75,6 +76,10 @@ type WorkPlanTool struct {
 	mu      sync.Mutex
 	wp      *workplan.WorkPlan
 	factory node.AgentFactory
+
+	// ProgressCallback 每节点完成时回调，按需选填。
+	// seelex plan visualization 通过此回调实时更新 TUI Plan 面板。
+	ProgressCallback func(nodeID, kind, status string, elapsed time.Duration)
 }
 
 // NewWorkPlanTool 创建 WorkPlan 工具。factory 用于子 Agent 创建。
