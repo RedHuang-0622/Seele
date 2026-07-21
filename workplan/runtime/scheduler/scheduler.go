@@ -16,8 +16,14 @@ import (
 
 // Scheduler drives the execution loop.
 type Scheduler struct {
-	graph    *graph.Graph
-	executor *executor.Executor
+	graph      *graph.Graph
+	executor   *executor.Executor
+	OnNodeDone func(nodeID, kind, status string, elapsed time.Duration) // 每节点完成回调
+}
+
+// SetNodeHook 设置节点完成回调。
+func (s *Scheduler) SetNodeHook(hook func(nodeID, kind, status string, elapsed time.Duration)) {
+	s.OnNodeDone = hook
 }
 
 // New creates a scheduler bound to a graph and executor.
