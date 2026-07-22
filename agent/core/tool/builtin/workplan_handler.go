@@ -30,9 +30,9 @@ import (
 type planLoadHandler struct{ tool *WorkPlanTool }
 
 type planLoadInput struct {
-	Entry string                        `json:"entry"`
-	Nodes map[string]planNodeSpec       `json:"nodes"`
-	Edges map[string][]string           `json:"edges"`
+	Entry string                  `json:"entry"`
+	Nodes map[string]planNodeSpec `json:"nodes"`
+	Edges map[string][]string     `json:"edges"`
 }
 
 type planNodeSpec struct {
@@ -110,6 +110,9 @@ type planRunHandler struct{ tool *WorkPlanTool }
 
 func (h *planRunHandler) Execute(ctx context.Context, argsJSON string) (string, error) {
 	h.tool.mu.Lock()
+	if h.tool.ProgressCallback != nil {
+		h.tool.wp.NodeHook = h.tool.ProgressCallback
+	}
 	result, err := h.tool.wp.Run(ctx)
 	h.tool.mu.Unlock()
 
