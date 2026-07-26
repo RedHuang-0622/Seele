@@ -48,6 +48,11 @@ type LoopHooks struct {
 	// OnToolComplete 在工具执行完成后触发（含成功和失败两种情况）。
 	OnToolComplete func(ctx context.Context, info ToolCallInfo)
 
+	// OnIterationComplete 在每轮 ReAct 迭代结束时触发，
+	// 即本轮所有工具调用完成后、下一次 LLM 调用前。
+	// 可用于检查输入队列等场景，返回 false 可中断后续迭代。
+	OnIterationComplete func(ctx context.Context, turn int) bool
+
 	// OnError 在循环因错误退出时触发。
 	OnError func(ctx context.Context, err error, turn int)
 }

@@ -185,6 +185,12 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 				Role: "tool", ToolCallID: tc.ID, Name: tc.Function.Name, Content: &content,
 			})
 		}
+
+		// OnIterationComplete 每轮 ReAct 结束后、下次 LLM 调用前回调。
+		// 返回 false 可中断后续迭代（输入队列等场景）。
+		if rl.hooks != nil && rl.hooks.OnIterationComplete != nil && !rl.hooks.OnIterationComplete(ctx, loop) {
+			return "", nil
+		}
 	}
 
 	// unreachable: for loop only exits via return inside body
