@@ -241,7 +241,7 @@ func TestFromPlanToGraph(t *testing.T) {
 	}
 
 	// Placeholder Run should return an error
-	_, err = startNode.Run(nil, types.NewWorkflowContext())
+	_, err = startNode.Run(context.TODO(), types.NewWorkflowContext())
 	if err == nil {
 		t.Error("expected placeholder Run to return error")
 	}

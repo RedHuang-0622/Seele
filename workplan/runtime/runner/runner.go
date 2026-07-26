@@ -88,8 +88,12 @@ func (r *Runner) Resume(ctx context.Context, snapshotID string) (*types.WorkPlan
 
 		output, err := r.exec.RunNode(ctx, n, wc)
 		nr := &types.NodeResult{
-			NodeID: currentID, Kind: n.Kind().String(),
-			Output: output, Err: err,
+			NodeBase: types.NodeBase{
+				NodeID: currentID,
+				Kind:   n.Kind().String(),
+				Output: output,
+			},
+			Err: err,
 		}
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
 		if err != nil {

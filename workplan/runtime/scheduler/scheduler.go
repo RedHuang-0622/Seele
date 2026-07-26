@@ -18,11 +18,11 @@ import (
 type Scheduler struct {
 	graph      *graph.Graph
 	executor   *executor.Executor
-	OnNodeDone func(nodeID, kind, status string, elapsed time.Duration) // 每节点完成回调
+	OnNodeDone func(nr *types.NodeResult) // 每节点完成回调
 }
 
 // SetNodeHook 设置节点完成回调。
-func (s *Scheduler) SetNodeHook(hook func(nodeID, kind, status string, elapsed time.Duration)) {
+func (s *Scheduler) SetNodeHook(hook func(nr *types.NodeResult)) {
 	s.OnNodeDone = hook
 }
 
@@ -56,26 +56,23 @@ func (s *Scheduler) Run(ctx context.Context) (*types.WorkPlanResult, error) {
 		nodeStart := time.Now()
 		output, err := s.executor.RunNode(ctx, n, wc)
 		nr := &types.NodeResult{
-			NodeID: currentID, Kind: n.Kind().String(),
-			Output: output, StartedAt: nodeStart, EndedAt: time.Now(),
+			NodeBase: types.NodeBase{
+				NodeID:    currentID,
+				Kind:      n.Kind().String(),
+				Output:    output,
+				StartedAt: nodeStart,
+				EndedAt:   time.Now(),
+			},
 		}
 		nr.Err = err
+		nr.Status = statusFromResult(nr, err)
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
 
 		if s.OnNodeDone != nil {
-			status := "completed"
-			if nr.Aborted {
-				status = "aborted"
-			} else if err != nil {
-				status = "failed"
-			} else if nr.Skipped {
-				status = "skipped"
-			}
-			s.OnNodeDone(nr.NodeID, nr.Kind, status, nr.EndedAt.Sub(nr.StartedAt))
+			s.OnNodeDone(nr)
 		}
 
 		if err != nil {
-			nr.Err = err
 			wc.Result.TotalElapsed = time.Since(start)
 			return wc.Result, fmt.Errorf("node %q: %w", currentID, err)
 		}
@@ -149,18 +146,20 @@ func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.Workfl
 	var firstErr error
 	for _, r := range results {
 		nr := &types.NodeResult{
-			NodeID: r.id, Kind: r.kind,
-			Output: r.out, Err: r.err,
-			StartedAt: r.start, EndedAt: r.end,
+			NodeBase: types.NodeBase{
+				NodeID:    r.id,
+				Kind:      r.kind,
+				Output:    r.out,
+				StartedAt: r.start,
+				EndedAt:   r.end,
+			},
+			Err: r.err,
 		}
+		nr.Status = statusFromResult(nr, r.err)
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
 
 		if s.OnNodeDone != nil {
-			status := "completed"
-			if r.err != nil {
-				status = "failed"
-			}
-			s.OnNodeDone(r.id, r.kind, status, r.end.Sub(r.start))
+			s.OnNodeDone(nr)
 		}
 
 		if r.err != nil {
@@ -226,24 +225,23 @@ func (s *Scheduler) RunWithCheckpoint(ctx context.Context) (*types.WorkPlanResul
 		nodeStart := time.Now()
 		output, err := s.executor.RunNode(ctx, n, wc)
 		nr := &types.NodeResult{
-			NodeID: currentID, Kind: n.Kind().String(),
-			Output: output, StartedAt: nodeStart, EndedAt: time.Now(),
+			NodeBase: types.NodeBase{
+				NodeID:    currentID,
+				Kind:      n.Kind().String(),
+				Output:    output,
+				StartedAt: nodeStart,
+				EndedAt:   time.Now(),
+			},
 		}
 		nr.Err = err
+		nr.Status = statusFromResult(nr, err)
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
 
 		if s.OnNodeDone != nil {
-			status := "completed"
-			if nr.Aborted {
-				status = "aborted"
-			} else if err != nil {
-				status = "failed"
-			}
-			s.OnNodeDone(nr.NodeID, nr.Kind, status, nr.EndedAt.Sub(nr.StartedAt))
+			s.OnNodeDone(nr)
 		}
 
 		if err != nil {
-			nr.Err = err
 			wc.Result.TotalElapsed = time.Since(start)
 			return wc.Result, checkpoints, fmt.Errorf("node %q: %w", currentID, err)
 		}
@@ -275,4 +273,18 @@ func (s *Scheduler) RunWithCheckpoint(ctx context.Context) (*types.WorkPlanResul
 	wc.Result.TotalElapsed = time.Since(start)
 	wc.Result.Vars = wc.Vars
 	return wc.Result, checkpoints, nil
+}
+
+// statusFromResult derives the status string from a NodeResult and its error.
+func statusFromResult(nr *types.NodeResult, err error) string {
+	if nr.Aborted {
+		return "aborted"
+	}
+	if err != nil {
+		return "failed"
+	}
+	if nr.Skipped {
+		return "skipped"
+	}
+	return "completed"
 }

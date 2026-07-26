@@ -40,7 +40,7 @@ type WorkPlan struct {
 
 	// NodeHook 每节点完成时回调，按需选填。
 	// 用于 plan_run 实时回传进度给 TUI（seelex plan visualization）。
-	NodeHook func(nodeID, kind, status string, elapsed time.Duration)
+	NodeHook func(nr *types.NodeResult)
 }
 
 // Option configures a WorkPlan instance.

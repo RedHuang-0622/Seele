@@ -7,6 +7,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/workplan"
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
+	workplanTypes "github.com/RedHuang-0622/Seele/workplan/core/types"
 	sauto "github.com/RedHuang-0622/Seele/workplan/sugar/auto"
 )
 
@@ -123,38 +124,26 @@ func (h *planRunHandler) Execute(ctx context.Context, argsJSON string) (string, 
 	if err != nil {
 		return fmt.Sprintf(`{"status":"failed","error":"%s"}`, err.Error()), nil
 	}
-	out := map[string]interface{}{
-		"status":       "completed",
-		"node_count":   len(result.NodeResults),
-		"final_output": result.FinalOutputString(),
+
+	type planRunOutput struct {
+		Status      string              `json:"status"`
+		NodeCount   int                 `json:"node_count"`
+		FinalOutput string              `json:"final_output"`
+		AbortReason string              `json:"abort_reason,omitempty"`
+		Nodes       []*workplanTypes.NodeResult `json:"nodes,omitempty"`
+	}
+
+	out := planRunOutput{
+		Status:      "completed",
+		NodeCount:   len(result.NodeResults),
+		FinalOutput: result.FinalOutputString(),
+		Nodes:       result.NodeResults,
 	}
 	if result.Aborted {
-		out["status"] = "aborted"
-		out["abort_reason"] = result.AbortReason
+		out.Status = "aborted"
+		out.AbortReason = result.AbortReason
 	}
-	if len(result.NodeResults) > 0 {
-		nodes := make([]map[string]interface{}, 0, len(result.NodeResults))
-		for _, nr := range result.NodeResults {
-			nodeStatus := "completed"
-			if nr.Aborted {
-				nodeStatus = "aborted"
-			} else if nr.Err != nil {
-				nodeStatus = "failed"
-			} else if nr.Skipped {
-				nodeStatus = "skipped"
-			}
-			elapsed := nr.EndedAt.Sub(nr.StartedAt).String()
-			nodes = append(nodes, map[string]interface{}{
-				"node_id": nr.NodeID,
-				"kind":    nr.Kind,
-				"status":  nodeStatus,
-				"elapsed": elapsed,
-				"skipped": nr.Skipped,
-				"aborted": nr.Aborted,
-			})
-		}
-		out["nodes"] = nodes
-	}
+
 	b, _ := json.Marshal(out)
 	return string(b), nil
 }

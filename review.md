@@ -1,6 +1,6 @@
 # Seele 框架架构 Review
 
-> 最后更新：2026-06-01
+> 最后更新：2026-07-26
 
 ---
 
@@ -42,15 +42,31 @@ history/                      ← 上下文管理
 └── context_limit.go          ← Token 估算 + 结果截断 + 配置
 config/loader.go              ← YAML 配置加载
 
-workplan/                     ← 声明式工作流引擎（v0.3 底层为图引擎）
-├── plan.go                   ← WorkPlan 定义 + Run/Resume
-├── graph.go                  ← Graph + Edge + ExecutionContext + NodeRunner
-├── runner.go                 ← 6 种 NodeRunner 实现
-├── sugar.go                  ← 声明式 DSL（Auto/If/Loop/Fork... — 构建 Graph）
-├── node.go                   ← node/Signal/SwitchCase/ForkBranch/NodeResult
-├── gate.go                   ← ApprovalGate 接口 + 3 种实现
-├── validate.go               ← 拓扑校验（DFS 三色环检测）
-└── primitive.go              ← 旧执行引擎（待废弃，已迁至 runner.go）
+workplan/                     ← 声明式工作流引擎（v0.6 图引擎）
+├── workplan.go                ← WorkPlan + 链式 DSL (Auto/If/Loop/Fork/...)
+├── gate.go                    ← ApprovalGate 接口 + CLI/Network/Auto 实现
+├── core/
+│   ├── types/context.go       ← NodeBase/NodeStatus/NodeResult/WorkflowContext
+│   ├── types/status.go        ← Status 枚举
+│   ├── types/snapshot.go      ← Snapshot/ConditionRegistry
+│   ├── node/base_node.go      ← Node 接口 + 12 种 NodeKind + AgentFactory
+│   └── edge/edge.go           ← Edge 结构 + Resolve() 条件路由
+├── runtime/
+│   ├── graph/graph.go         ← 无锁 Graph (atomic.Pointer)
+│   ├── executor/executor.go   ← 单节点执行器
+│   ├── scheduler/scheduler.go ← 主循环 + NodeHook 回调
+│   ├── runner/runner.go       ← Run/Resume 入口
+│   ├── validate/validate.go   ← DAG 拓扑校验
+│   ├── checkpoint/checkpoint.go ← 快照持久化
+│   └── serialize/serialize.go ← Plan ↔ Graph 双向序列化
+└── sugar/
+    ├── auto/                  ← Auto/Method/LLM 节点
+    ├── fork/                  ← Fork 并发
+    ├── loop/                  ← Loop + Signal
+    ├── switch/                ← If/Switch 条件
+    ├── approve/               ← 审批节点
+    ├── emit/                  ← Emit 变量写入
+    └── checkpoint/            ← 快照写入器
 
 sdk/
 ├── api/seele_api.go          ← 类型别名层（Engine = agent.Agent）

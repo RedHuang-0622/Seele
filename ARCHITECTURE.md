@@ -87,18 +87,22 @@ wp.Run(ctx)
   └─ 节点循环: currentID = entryID
        WHILE currentID != "":
          │
-         ├─ graph.GetNode(currentID) → NodeRunner
+         ├─ graph.GetNode(currentID) → node.Node
          │     │
-         │     └─ runner.Run(ctx, ec) → (output, error)
-         │           ├─ autoRunner       → Agent Chat（支持模板渲染+工具过滤）
-         │           ├─ controlRunner    → 透传（If/Switch 纯路由）
-         │           ├─ loopRunner       → 循环体迭代 + Signal 实时推送
-         │           ├─ forkRunner       → 多 Agent 并发 + JSON 汇合
-         │           ├─ approveRunner    → 暂停等待人工决策
-         │           ├─ checkpointRunner → 快照保存
-         │           └─ emitRunner       → 变量写入
+         │     └─ executor.RunNode(ctx, n, wc) → (output, error)
+         │           ├─ auto/agent node   → Agent Chat（模板渲染+工具过滤）
+         │           ├─ method node       → Go 函数直接执行
+         │           ├─ llm node          → 纯 LLM 调用
+         │           ├─ if/switch node    → 条件路由
+         │           ├─ loop node         → 循环体迭代 + Signal 实时推送
+         │           ├─ fork node         → 多 Agent 并发 + JSON 汇合
+         │           ├─ approve node      → 暂停等待人工决策
+         │           ├─ checkpoint node   → 快照保存
+         │           └─ emit node         → 变量写入
          │
-         ├─ 节点结果写入 result.NodeResults（含 Output 字段）
+         ├─ 节点结果写入 result.NodeResults（NodeBase 嵌入，含 Output/Status 字段）
+         │
+         ├─ scheduler.OnNodeDone(nr) 触发 NodeHook 回调（含完整 NodeResult）
          │
          └─ graph.resolve(currentID, ec) → nextID
                ├─ 无条件边 → 直接跟随
@@ -169,38 +173,56 @@ type ToolHandler interface {
 // InlineToolHandler — Go 函数直接调用
 ```
 
-### 3.2 WorkPlan 图引擎类型（v0.3 新增）
+### 3.2 WorkPlan 图引擎类型（v0.6 重构）
 
 ```go
-// 图
+// ── 节点基类：NodeStatus（回调）/ NodeResult（内部）共享字段 ──
+type NodeBase struct {
+    NodeID    string    `json:"node_id"`
+    Kind      string    `json:"kind"`
+    Status    string    `json:"status"`    // completed | failed | skipped | aborted
+    Output    string    `json:"output,omitempty"`
+    Skipped   bool      `json:"skipped"`
+    Aborted   bool      `json:"aborted"`
+    StartedAt time.Time `json:"started_at"`
+    EndedAt   time.Time `json:"ended_at"`
+}
+
+// 回调载荷 — 纯 JSON 安全，无 Go error
+type NodeStatus struct { NodeBase }
+
+// 完整执行记录 — 嵌入 NodeBase + Go error
+type NodeResult struct {
+    NodeBase
+    Err error `json:"-"`   // Go error 不可序列化
+}
+
+// ── 图 ──
 type Graph struct {
-    nodes map[string]NodeRunner
-    edges []Edge
+    nodes atomic.Pointer[map[string]Node]   // 无锁并发安全
+    edges atomic.Pointer[[]Edge]
     entry string
 }
 
-// 边（一等公民）
+// ── 边 ──
 type Edge struct {
     From      string
     To        string
     Condition EdgeCondition   // nil = 无条件边
-    Priority  int             // 条件边优先级，0 最高
+    Priority  int
     Label     string
 }
 
-// 可执行节点
-type NodeRunner interface {
-    ID() string
-    Run(ctx context.Context, ec *ExecutionContext) (string, error)
-}
-
-// 执行状态载体
-type ExecutionContext struct {
-    Vars       map[string]string
+// ── 运行时上下文 ──
+type WorkflowContext struct {
     PrevOutput string
+    Vars       map[string]string
     Result     *WorkPlanResult
     Metadata   map[string]any
 }
+
+// ── 每节点完成回调（含 Output） ──
+type ProgressCallback func(nr *NodeResult)
 ```
 
 ### 3.3 消息类型
@@ -266,8 +288,8 @@ type ContextConfig struct {
 
 | # | 问题 | 位置 |
 | -- | ---- | ---- |
-| D1 | 两套执行引擎并存（`primitive.go` + `runner.go`），应统一到 runner | `workplan/` |
-| D2 | `graph.Execute()` 完美实现但无人调用，`plan.go:Run()` 手动调度 | `workplan/` |
+| D1 | ~~两套执行引擎并存（`primitive.go` + `runner.go`）~~ ✅ 已统一到 core/runtime/sugar 三层架构 | `workplan/` |
+| D2 | ~~`graph.Execute()` 完美实现但无人调用~~ ✅ 已重构为 scheduler.Run() 主循环 | `workplan/` |
 | D3 | `sdk/api/seele_api.go` 纯 type alias，零抽象价值 | `sdk/api/` |
 | D4 | `EngineFactory` 命名不当 — 实际创建 Session，非 Agent | `sdk/cluster/harness.go` |
 | D5 | `go 1.25.5` 版本过高，应降为 1.23 | `go.mod` |
@@ -328,14 +350,33 @@ Seele/
 ├── llm/chat_client.go              # OpenAI 兼容 HTTP 客户端（同步+流式）
 ├── types/model.go                  # Message, Tool, Config 等共享类型
 ├── workplan/
-│   ├── plan.go                     # WorkPlan struct + Run/Resume
-│   ├── graph.go                    # Graph + Edge + ExecutionContext + NodeRunner
-│   ├── runner.go                   # 6 种 Runner 实现
-│   ├── sugar.go                    # 构建期语法糖 (Auto/If/Loop/Fork/...)
-│   ├── node.go                     # node/Signal/SwitchCase/ForkBranch/NodeResult
-│   ├── gate.go                     # ApprovalGate 接口 + CLI/Network/Auto 实现
-│   ├── validate.go                 # 拓扑校验（DFS 三色环检测）
-│   └── primitive.go                # 旧执行引擎（待废弃，已迁至 runner.go）
+│   ├── workplan.go                  # WorkPlan struct + 链式 DSL (Auto/If/Loop/Fork/...)
+│   ├── gate.go                      # ApprovalGate 接口 + CLI/Network/Auto 实现
+│   ├── core/
+│   │   ├── types/
+│   │   │   ├── context.go           # NodeBase/NodeStatus/NodeResult/WorkflowContext
+│   │   │   ├── status.go            # Status 枚举 (pending/running/completed/failed/aborted)
+│   │   │   └── snapshot.go          # Snapshot/ConditionRegistry
+│   │   ├── node/
+│   │   │   └── base_node.go         # Node 接口 + 12 种 NodeKind + AgentFactory
+│   │   └── edge/
+│   │       └── edge.go              # Edge 结构 + Resolve() 条件路由
+│   ├── runtime/
+│   │   ├── graph/graph.go           # 无锁 Graph (atomic.Pointer)
+│   │   ├── executor/executor.go     # 单节点执行器
+│   │   ├── scheduler/scheduler.go   # 主循环 (顺序/分叉/条件) + NodeHook 回调
+│   │   ├── runner/runner.go         # Run/Resume 顶层入口
+│   │   ├── validate/validate.go     # DAG 拓扑校验
+│   │   ├── checkpoint/checkpoint.go # 快照持久化
+│   │   └── serialize/serialize.go   # Plan ↔ Graph 双向序列化
+│   └── sugar/
+│       ├── auto/                    # Auto/Method/LLM 策略节点
+│       ├── fork/                    # Fork 并发节点
+│       ├── loop/                    # Loop + Signal 实时迭代追踪
+│       ├── switch/                  # If / Switch 条件分支
+│       ├── approve/                 # 人工审批节点
+│       ├── emit/                    # Emit 命名变量写入
+│       └── checkpoint/              # 快照写入器
 ├── sdk/
 │   ├── api/seele_api.go            # 类型别名 (Engine = agent.Agent)
 │   ├── cli/
@@ -371,5 +412,5 @@ Seele/
 
 - **新增工具来源**：实现 `ToolProvider` 接口（1 方法），注入 `engine.Tools().Register()`
 - **替换审批门**：实现 `workplan.ApprovalGate` 接口 → 注入 `workplan.New()`
-- **自定义 NodeRunner**：实现 `NodeRunner` 接口，通过 `graph.AddNode()` 注入图引擎
+- **自定义 Node 节点**：实现 `node.Node` 接口，通过 `graph.AddNode()` 注入图引擎
 - **Schema 扩展**：`SchemaOf` 的 `typeToSchema` 可扩展支持 `$ref`/`oneOf`/`anyOf`

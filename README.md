@@ -765,16 +765,31 @@ Seele/
 │   └── config.go                   上下文配置
 │
 ├── workplan/                         ← 图编排引擎（核心差异化）
-│   ├── plan.go                     WorkPlan + Run + Plan 序列化 + ToTool
-│   ├── graph.go                    图引擎 + Edge 条件路由
-│   ├── strategy.go                 NodeStrategy 接口 + 三态实现
-│   ├── sugar.go                    声明式构建 API（零执行逻辑）
-│   ├── runner.go                   所有 Runner 实现
-│   ├── node.go                     NodeKind + Signal + WorkPlanResult
-│   ├── gate.go                     两段式审批（Approve/Resume）
-│   ├── validate.go                 拓扑校验 + DFS 环检测
-│   ├── cache_strategy.go           CachedStrategy 装饰器
-│   └── tracer_internal.go          内置 Tracer/Span 接口
+│   ├── workplan.go                  WorkPlan + 链式 DSL (Auto/If/Loop/Fork/...)
+│   ├── gate.go                      ApprovalGate 接口 + CLI/Network/Auto 实现
+│   ├── core/
+│   │   ├── types/
+│   │   │   ├── context.go           NodeBase/NodeStatus/NodeResult/WorkflowContext
+│   │   │   ├── status.go            Status 枚举
+│   │   │   └── snapshot.go          Snapshot/ConditionRegistry
+│   │   ├── node/base_node.go        Node 接口 + 12 种 NodeKind + AgentFactory
+│   │   └── edge/edge.go             Edge 结构 + Resolve() 条件路由
+│   ├── runtime/
+│   │   ├── graph/graph.go           无锁 Graph (atomic.Pointer)
+│   │   ├── executor/executor.go     单节点执行器
+│   │   ├── scheduler/scheduler.go   主循环 (顺序/分叉/条件) + NodeHook
+│   │   ├── runner/runner.go         Run/Resume 顶层入口
+│   │   ├── validate/validate.go     DAG 拓扑校验
+│   │   ├── checkpoint/checkpoint.go 快照持久化
+│   │   └── serialize/serialize.go   Plan ↔ Graph 双向序列化
+│   └── sugar/
+│       ├── auto/                    Auto/Method/LLM 策略节点
+│       ├── fork/                    Fork 并发节点
+│       ├── loop/                    Loop + Signal 实时迭代
+│       ├── switch/                  If / Switch 条件分支
+│       ├── approve/                 人工审批节点
+│       ├── emit/                    Emit 命名变量写入
+│       └── checkpoint/              Checkpoint 快照写入器
 │
 ├── types/model.go                    ← 核心类型（ChatCompleter/Message/Tool）
 ├── config/                           ← 配置文件 + 加载器

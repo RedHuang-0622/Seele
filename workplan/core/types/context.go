@@ -25,16 +25,34 @@ func NewWorkflowContext() *WorkflowContext {
 	}
 }
 
-// NodeResult records the execution result of a single node.
+// NodeBase contains fields common to both NodeStatus (callback payload)
+// and NodeResult (full execution record). All fields have JSON tags so
+// they can be serialized directly without manual map construction.
+type NodeBase struct {
+	NodeID    string    `json:"node_id"`
+	Kind      string    `json:"kind"`
+	Status    string    `json:"status"` // completed | failed | skipped | aborted
+	Output    string    `json:"output,omitempty"`
+	Skipped   bool      `json:"skipped"`
+	Aborted   bool      `json:"aborted"`
+	StartedAt time.Time `json:"started_at"`
+	EndedAt   time.Time `json:"ended_at"`
+}
+
+// Elapsed returns the wall-clock duration of this node's execution.
+func (b *NodeBase) Elapsed() time.Duration { return b.EndedAt.Sub(b.StartedAt) }
+
+// NodeStatus is the lightweight, JSON-serializable payload sent through
+// the per-node progress callback. It contains no Go-only fields.
+type NodeStatus struct {
+	NodeBase
+}
+
+// NodeResult is the full execution record including the Go error.
+// It embeds NodeBase so all JSON-tagged fields are promoted.
 type NodeResult struct {
-	NodeID    string
-	Kind      string
-	Output    string
-	Skipped   bool
-	Aborted   bool
-	Err       error
-	StartedAt time.Time
-	EndedAt   time.Time
+	NodeBase
+	Err error `json:"-"`
 }
 
 // WorkPlanResult is the execution summary of the entire WorkPlan.

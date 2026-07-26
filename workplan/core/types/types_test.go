@@ -45,40 +45,40 @@ func TestFinalOutput(t *testing.T) {
 		{
 			name: "last non-skipped output",
 			result: &WorkPlanResult{NodeResults: []*NodeResult{
-				{NodeID: "n1", Output: "first", Skipped: false, Err: nil},
-				{NodeID: "n2", Output: "second", Skipped: false, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n1", Output: "first", Skipped: false}, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n2", Output: "second", Skipped: false}, Err: nil},
 			}},
 			want: "second",
 		},
 		{
 			name: "skip aborted result",
 			result: &WorkPlanResult{NodeResults: []*NodeResult{
-				{NodeID: "n1", Output: "should not see", Skipped: false, Aborted: true, Err: nil},
-				{NodeID: "n2", Output: "valid", Skipped: false, Aborted: false, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n1", Output: "should not see", Skipped: false, Aborted: true}, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n2", Output: "valid", Skipped: false, Aborted: false}, Err: nil},
 			}},
 			want: "valid",
 		},
 		{
 			name: "skip errored result",
 			result: &WorkPlanResult{NodeResults: []*NodeResult{
-				{NodeID: "n1", Output: "good", Skipped: false, Err: nil},
-				{NodeID: "n2", Output: "bad", Skipped: false, Err: errors.New("exec error")},
+				{NodeBase: NodeBase{NodeID: "n1", Output: "good", Skipped: false}, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n2", Output: "bad", Skipped: false}, Err: errors.New("exec error")},
 			}},
 			want: "good",
 		},
 		{
 			name: "skip empty output",
 			result: &WorkPlanResult{NodeResults: []*NodeResult{
-				{NodeID: "n1", Output: "", Skipped: false, Err: nil},
-				{NodeID: "n2", Output: "filled", Skipped: false, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n1", Output: "", Skipped: false}, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n2", Output: "filled", Skipped: false}, Err: nil},
 			}},
 			want: "filled",
 		},
 		{
 			name: "skip skipped result",
 			result: &WorkPlanResult{NodeResults: []*NodeResult{
-				{NodeID: "n1", Output: "skipped", Skipped: true, Err: nil},
-				{NodeID: "n2", Output: "real", Skipped: false, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n1", Output: "skipped", Skipped: true}, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n2", Output: "real", Skipped: false}, Err: nil},
 			}},
 			want: "real",
 		},
@@ -90,8 +90,8 @@ func TestFinalOutput(t *testing.T) {
 		{
 			name: "all skipped returns empty JSON string",
 			result: &WorkPlanResult{NodeResults: []*NodeResult{
-				{NodeID: "n1", Output: "a", Skipped: true, Err: nil},
-				{NodeID: "n2", Output: "b", Skipped: true, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n1", Output: "a", Skipped: true}, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n2", Output: "b", Skipped: true}, Err: nil},
 			}},
 			want: `""`,
 		},
@@ -115,28 +115,28 @@ func TestFinalOutputString(t *testing.T) {
 		{
 			name: "unwraps JSON string",
 			result: &WorkPlanResult{NodeResults: []*NodeResult{
-				{NodeID: "n1", Output: `"hello world"`, Skipped: false, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n1", Output: `"hello world"`, Skipped: false}, Err: nil},
 			}},
 			want: "hello world",
 		},
 		{
 			name: "plain text returned as-is",
 			result: &WorkPlanResult{NodeResults: []*NodeResult{
-				{NodeID: "n1", Output: `plaintext`, Skipped: false, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n1", Output: `plaintext`, Skipped: false}, Err: nil},
 			}},
 			want: "plaintext",
 		},
 		{
 			name: "JSON object returned as-is",
 			result: &WorkPlanResult{NodeResults: []*NodeResult{
-				{NodeID: "n1", Output: `{"a":1}`, Skipped: false, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n1", Output: `{"a":1}`, Skipped: false}, Err: nil},
 			}},
 			want: `{"a":1}`,
 		},
 		{
 			name: "empty output",
 			result: &WorkPlanResult{NodeResults: []*NodeResult{
-				{NodeID: "n1", Output: `""`, Skipped: false, Err: nil},
+				{NodeBase: NodeBase{NodeID: "n1", Output: `""`, Skipped: false}, Err: nil},
 			}},
 			want: "",
 		},
