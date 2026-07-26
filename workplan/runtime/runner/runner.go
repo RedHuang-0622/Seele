@@ -96,6 +96,10 @@ func (r *Runner) Resume(ctx context.Context, snapshotID string) (*types.WorkPlan
 			Err: err,
 		}
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
+		// Record output for multi-upstream reference via {{.PrevResults.nodeID}}
+		if output != "" {
+			wc.PrevResults[currentID] = output
+		}
 		if err != nil {
 			wc.Result.TotalElapsed = start
 			return wc.Result, fmt.Errorf("resume node %q: %w", currentID, err)

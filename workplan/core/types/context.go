@@ -10,18 +10,20 @@ import (
 // WorkflowContext carries shared state during graph execution.
 // Named WorkflowContext to avoid collision with stdlib context.Context.
 type WorkflowContext struct {
-	PrevOutput string            // JSON output from the previous node
-	Vars       map[string]string // Named variables written by Emit nodes
-	Result     *WorkPlanResult   // Accumulated execution result
-	Metadata   map[string]any    // Extension fields
+	PrevOutput  string            // JSON output from the immediately previous node
+	PrevResults map[string]string // nodeID → output for all executed nodes (multi-upstream reference)
+	Vars        map[string]string // Named variables written by Emit nodes
+	Result      *WorkPlanResult   // Accumulated execution result
+	Metadata    map[string]any    // Extension fields
 }
 
 // NewWorkflowContext creates an empty workflow context.
 func NewWorkflowContext() *WorkflowContext {
 	return &WorkflowContext{
-		Vars:     make(map[string]string),
-		Result:   &WorkPlanResult{Checkpoints: make(map[string]string)},
-		Metadata: make(map[string]any),
+		PrevResults: make(map[string]string),
+		Vars:        make(map[string]string),
+		Result:      &WorkPlanResult{Checkpoints: make(map[string]string)},
+		Metadata:    make(map[string]any),
 	}
 }
 
@@ -105,13 +107,16 @@ func FromJSON(s string) string {
 }
 
 // RenderTemplate renders template variables in a string.
-// Supports {{.PrevResult}} and {{.Vars.key}}.
+// Supports {{.PrevResult}}, {{.PrevResults.nodeID}}, and {{.Vars.key}}.
 func RenderTemplate(tmpl string, ec *WorkflowContext) string {
 	if ec == nil {
 		return tmpl
 	}
 	result := tmpl
 	result = replaceAll(result, "{{.PrevResult}}", FromJSON(ec.PrevOutput))
+	for nodeID, output := range ec.PrevResults {
+		result = replaceAll(result, "{{.PrevResults."+nodeID+"}}", FromJSON(output))
+	}
 	for key, jsonVal := range ec.Vars {
 		result = replaceAll(result, "{{.Vars."+key+"}}", FromJSON(jsonVal))
 	}

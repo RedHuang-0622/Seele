@@ -67,6 +67,10 @@ func (s *Scheduler) Run(ctx context.Context) (*types.WorkPlanResult, error) {
 		nr.Err = err
 		nr.Status = statusFromResult(nr, err)
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
+			// Record output for multi-upstream reference via {{.PrevResults.nodeID}}
+			if output != "" {
+				wc.PrevResults[currentID] = output
+			}
 
 		if s.OnNodeDone != nil {
 			s.OnNodeDone(nr)
@@ -157,6 +161,10 @@ func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.Workfl
 		}
 		nr.Status = statusFromResult(nr, r.err)
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
+		// Record output for multi-upstream reference via {{.PrevResults.nodeID}}
+		if r.out != "" {
+			wc.PrevResults[r.id] = r.out
+		}
 
 		if s.OnNodeDone != nil {
 			s.OnNodeDone(nr)
@@ -236,6 +244,10 @@ func (s *Scheduler) RunWithCheckpoint(ctx context.Context) (*types.WorkPlanResul
 		nr.Err = err
 		nr.Status = statusFromResult(nr, err)
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
+			// Record output for multi-upstream reference via {{.PrevResults.nodeID}}
+			if output != "" {
+				wc.PrevResults[currentID] = output
+			}
 
 		if s.OnNodeDone != nil {
 			s.OnNodeDone(nr)
