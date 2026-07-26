@@ -110,6 +110,10 @@ type planRunHandler struct{ tool *WorkPlanTool }
 
 func (h *planRunHandler) Execute(ctx context.Context, argsJSON string) (string, error) {
 	h.tool.mu.Lock()
+	if h.tool.wp == nil {
+		h.tool.mu.Unlock()
+		return `{"status":"failed","error":"no plan loaded - call plan_load first"}`, nil
+	}
 	if h.tool.ProgressCallback != nil {
 		h.tool.wp.NodeHook = h.tool.ProgressCallback
 	}
@@ -163,6 +167,9 @@ func (h *planStatusHandler) Execute(ctx context.Context, argsJSON string) (strin
 	h.tool.mu.Lock()
 	defer h.tool.mu.Unlock()
 
+	if h.tool.wp == nil {
+		return `{"status":"empty","node_count":0,"edge_count":0}`, nil
+	}
 	g := h.tool.wp.Graph()
 	var ni []map[string]string
 	for _, id := range g.AllNodes() {
@@ -195,6 +202,9 @@ type planExportHandler struct{ tool *WorkPlanTool }
 func (h *planExportHandler) Execute(ctx context.Context, argsJSON string) (string, error) {
 	h.tool.mu.Lock()
 	defer h.tool.mu.Unlock()
+	if h.tool.wp == nil {
+		return `{"entry_node_id":"","nodes":[],"edges":[]}`, nil
+	}
 	return h.tool.wp.ExportJSON()
 }
 
