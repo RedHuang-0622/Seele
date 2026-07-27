@@ -14,6 +14,7 @@ import (
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
+	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/runner"
 	"github.com/RedHuang-0622/Seele/workplan/sugar/approve"
@@ -34,13 +35,17 @@ type WorkPlan struct {
 	tracer        Tracer
 
 	// Auto-linking state (chainable API support)
-	entryID       string
-	lastNodeID    string
-	pendingGate   *approve.Question
+	entryID     string
+	lastNodeID  string
+	pendingGate *approve.Question
 
 	// NodeHook 每节点完成时回调，按需选填。
 	// 用于 plan_run 实时回传进度给 TUI（seelex plan visualization）。
-	NodeHook func(nr *types.NodeResult)
+	NodeHook           func(nr *types.NodeResult)
+	BranchEventHook    func(forkexec.Event)
+	BranchRuntimeFor   func(string) forkexec.BranchRuntime
+	ForkPolicy         forkexec.Policy
+	MaxForkConcurrency int
 }
 
 // Option configures a WorkPlan instance.
@@ -54,6 +59,26 @@ func WithDefaultPrompt(prompt string) Option {
 // WithTracer sets a tracer for execution observability.
 func WithTracer(t Tracer) Option {
 	return func(wp *WorkPlan) { wp.tracer = t }
+}
+
+// WithBranchEventHook observes queued/started/completed/failed/canceled/panicked branch events.
+func WithBranchEventHook(hook func(forkexec.Event)) Option {
+	return func(wp *WorkPlan) { wp.BranchEventHook = hook }
+}
+
+// WithBranchRuntimeResolver accepts Seelex-injected read-only branch runtime.
+func WithBranchRuntimeResolver(resolver func(string) forkexec.BranchRuntime) Option {
+	return func(wp *WorkPlan) { wp.BranchRuntimeFor = resolver }
+}
+
+// WithForkPolicy explicitly enables the requested fork policy.
+func WithForkPolicy(policy forkexec.Policy) Option {
+	return func(wp *WorkPlan) { wp.ForkPolicy = policy }
+}
+
+// WithMaxForkConcurrency configures automatic fork parallelism.
+func WithMaxForkConcurrency(maxConcurrent int) Option {
+	return func(wp *WorkPlan) { wp.MaxForkConcurrency = maxConcurrent }
 }
 
 // New creates a new WorkPlan with the given AgentFactory.
@@ -147,7 +172,14 @@ func (wp *WorkPlan) Retry(id, bodyID string, maxIter int, successCond func(strin
 
 // Fork adds a concurrent fork node with auto-linking.
 func (wp *WorkPlan) Fork(id string, branches []node.ForkBranch, maxConcurrent int) *WorkPlan {
-	fork.Add(wp.graph, id, branches, maxConcurrent, wp.factory)
+	forkNode := fork.Add(wp.graph, id, branches, maxConcurrent, wp.factory)
+	forkNode.SetPolicy(wp.ForkPolicy)
+	if wp.BranchRuntimeFor != nil {
+		forkNode.SetRuntimeResolver(func(branch node.ForkBranch) forkexec.BranchRuntime {
+			return wp.BranchRuntimeFor(branch.Label)
+		})
+	}
+	forkNode.OnEvent = wp.BranchEventHook
 	wp.autoLink(wp.graph.GetNode(id))
 	return wp
 }
@@ -223,6 +255,10 @@ func (wp *WorkPlan) Run(ctx context.Context) (*types.WorkPlanResult, error) {
 	if wp.NodeHook != nil {
 		wp.runner.SetNodeHook(wp.NodeHook)
 	}
+	wp.runner.SetBranchEventHook(wp.BranchEventHook)
+	wp.runner.SetBranchRuntimeResolver(wp.BranchRuntimeFor)
+	wp.runner.SetForkPolicy(wp.ForkPolicy)
+	wp.runner.SetMaxForkConcurrency(wp.MaxForkConcurrency)
 	return wp.runner.Run(ctx)
 }
 
@@ -321,7 +357,7 @@ func (wp *WorkPlan) SetTracer(t Tracer) { wp.tracer = t }
 type ExecState int
 
 const (
-	StateNotStarted       ExecState = iota
+	StateNotStarted ExecState = iota
 	StateExecuting
 	StateAwaitingApproval
 	StateCompleted

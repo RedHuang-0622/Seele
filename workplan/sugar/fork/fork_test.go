@@ -8,6 +8,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
+	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 	"go.uber.org/goleak"
 )
@@ -24,6 +25,18 @@ type mockFactory struct{}
 
 func (m *mockFactory) NewAgent(_ string) node.Agent {
 	return &mockAgent{}
+}
+
+type taggedFactory struct{ tag string }
+
+func (f taggedFactory) NewAgent(_ string) node.Agent {
+	return taggedAgent{tag: f.tag}
+}
+
+type taggedAgent struct{ tag string }
+
+func (a taggedAgent) Chat(context.Context, string) (string, error) {
+	return a.tag, nil
 }
 
 type blockingFactory struct {
@@ -226,6 +239,45 @@ func TestRun_RespectsMaxConcurrentAndReleasesGoroutines(t *testing.T) {
 	}
 	if current := factory.current.Load(); current != 0 {
 		t.Errorf("active branches after Run() = %d, want 0", current)
+	}
+}
+
+func TestRun_UsesInjectedBranchRuntimeAndEmitsBranchEvents(t *testing.T) {
+	events := make(chan forkexec.Event, 12)
+	n := NewNode("runtime-fork", []node.ForkBranch{
+		{Label: "left"},
+		{Label: "right"},
+	}, 2, &mockFactory{})
+	n.SetRuntimeResolver(func(branch node.ForkBranch) forkexec.BranchRuntime {
+		return forkexec.BranchRuntime{SessionID: "session-1", AgentFactory: taggedFactory{tag: branch.Label + "-runtime"}}
+	})
+	n.OnEvent = func(event forkexec.Event) { events <- event }
+
+	output, err := n.Run(context.Background(), types.NewWorkflowContext())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(output, "left-runtime") || !strings.Contains(output, "right-runtime") {
+		t.Errorf("output = %q, want injected runtime agent outputs", output)
+	}
+
+	seen := make(map[string]map[forkexec.BranchState]bool)
+	for len(events) > 0 {
+		event := <-events
+		if event.BranchID == "" {
+			t.Error("event missing branch ID")
+		}
+		if seen[event.BranchID] == nil {
+			seen[event.BranchID] = make(map[forkexec.BranchState]bool)
+		}
+		seen[event.BranchID][event.Type] = true
+	}
+	for _, branchID := range []string{"left", "right"} {
+		for _, eventType := range []forkexec.BranchState{forkexec.StateQueued, forkexec.StateStarted, forkexec.StateCompleted} {
+			if !seen[branchID][eventType] {
+				t.Errorf("branch %q missing %q event", branchID, eventType)
+			}
+		}
 	}
 }
 

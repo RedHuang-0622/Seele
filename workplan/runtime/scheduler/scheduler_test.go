@@ -477,6 +477,8 @@ func TestRunWithForkDivergent(t *testing.T) {
 	g.AddNode(newTestNode("start", node.KindMethod))
 	g.AddNode(newTestNode("b1", node.KindMethod))
 	g.AddNode(newTestNode("b2", node.KindMethod))
+	g.AddNode(newTestNode("end1", node.KindMethod))
+	g.AddNode(newTestNode("end2", node.KindMethod))
 	g.SetEntry("start")
 
 	// Unconditional fork: start -> {b1, b2}
@@ -493,10 +495,50 @@ func TestRunWithForkDivergent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
-	// Divergent fork returns early after branches, so we expect:
-	// start, b1, b2 — then divergent detection returns ""
-	if len(result.NodeResults) < 3 {
-		t.Errorf("expected at least 3 node results, got %d", len(result.NodeResults))
+	if len(result.NodeResults) != 5 {
+		t.Errorf("expected all divergent branch nodes to run, got %d results", len(result.NodeResults))
+	}
+}
+
+func TestNestedForkDependencyJoin(t *testing.T) {
+	g := graph.New()
+	var reviewContext *types.WorkflowContext
+	start := newTestNode("start", node.KindMethod)
+	backend := newTestNode("backend", node.KindMethod)
+	tests := newTestNode("tests", node.KindMethod)
+	backendCheck := newTestNode("backend-check", node.KindMethod)
+	testsCheck := newTestNode("tests-check", node.KindMethod)
+	review := newTestNode("review", node.KindMethod)
+	review.runFn = func(_ context.Context, wc *types.WorkflowContext) (string, error) {
+		reviewContext = wc
+		return "reviewed", nil
+	}
+	for _, n := range []*testNode{start, backend, tests, backendCheck, testsCheck, review} {
+		g.AddNode(n)
+	}
+	g.SetEntry("start")
+	g.AddEdge(edge.Edge{From: "start", To: "backend"})
+	g.AddEdge(edge.Edge{From: "start", To: "tests"})
+	g.AddEdge(edge.Edge{From: "backend", To: "backend-check"})
+	g.AddEdge(edge.Edge{From: "tests", To: "tests-check"})
+	g.AddEdge(edge.Edge{From: "backend-check", To: "review"})
+	g.AddEdge(edge.Edge{From: "tests-check", To: "review"})
+
+	result, err := New(g, executor.New()).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(result.NodeResults) != 6 {
+		t.Fatalf("node results = %d, want 6", len(result.NodeResults))
+	}
+	if reviewContext == nil {
+		t.Fatal("review did not run after both branch paths completed")
+	}
+	if _, ok := reviewContext.PrevResults["backend-check"]; !ok {
+		t.Error("review context is missing backend-check output")
+	}
+	if _, ok := reviewContext.PrevResults["tests-check"]; !ok {
+		t.Error("review context is missing tests-check output")
 	}
 }
 

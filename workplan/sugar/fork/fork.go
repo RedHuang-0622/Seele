@@ -3,13 +3,11 @@ package fork
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
-	"sync"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
+	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
@@ -20,6 +18,9 @@ type ForkNode struct {
 	MaxConcurrent int
 	factory       node.AgentFactory
 	DefaultPrompt string
+	Policy        forkexec.Policy
+	RuntimeFor    func(node.ForkBranch) forkexec.BranchRuntime
+	OnEvent       func(forkexec.Event)
 }
 
 // NewNode creates a fork node.
@@ -32,89 +33,76 @@ func NewNode(id string, branches []node.ForkBranch, maxConcurrent int, factory n
 		Branches:      branches,
 		MaxConcurrent: maxConcurrent,
 		factory:       factory,
+		Policy:        forkexec.PolicyFailFast,
 	}
+}
+
+// SetPolicy changes fork failure behavior. Best-effort is opt-in only.
+func (n *ForkNode) SetPolicy(policy forkexec.Policy) {
+	if policy == forkexec.PolicyBestEffort {
+		n.Policy = policy
+		return
+	}
+	n.Policy = forkexec.PolicyFailFast
+}
+
+// SetRuntimeResolver accepts branch-bound Seelex runtime injection.
+func (n *ForkNode) SetRuntimeResolver(resolver func(node.ForkBranch) forkexec.BranchRuntime) {
+	n.RuntimeFor = resolver
 }
 
 // Run executes all branches concurrently and merges results.
 func (n *ForkNode) Run(ctx context.Context, ec *types.WorkflowContext) (string, error) {
-	type branchResult struct {
-		label string
-		out   string
-		err   error
-	}
-	results := make([]branchResult, len(n.Branches))
-	branchContexts := make([]*types.WorkflowContext, len(n.Branches))
-	for index := range n.Branches {
-		branchContexts[index] = ec.Clone()
-	}
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, n.MaxConcurrent)
-
-	for i, branch := range n.Branches {
-		wg.Add(1)
-		go func(i int, b node.ForkBranch) {
-			defer wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					results[i] = branchResult{label: b.Label, err: fmt.Errorf("panic: %v", r)}
+	specs := make([]forkexec.Spec, 0, len(n.Branches))
+	for _, branch := range n.Branches {
+		branch := branch
+		runtime := forkexec.BranchRuntime{}
+		if n.RuntimeFor != nil {
+			runtime = n.RuntimeFor(branch)
+		}
+		specs = append(specs, forkexec.Spec{
+			ID: branch.Label, NodeID: branch.Label, Runtime: runtime,
+			Execute: func(ctx context.Context, branchCtx *forkexec.BranchContext) (string, error) {
+				input := types.RenderTemplate(branch.Input, branchCtx.Workflow)
+				prompt := branch.SystemPrompt
+				if prompt == "" {
+					prompt = n.DefaultPrompt
 				}
-			}()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				results[i] = branchResult{label: b.Label, err: ctx.Err()}
-				return
-			}
-			defer func() { <-sem }()
-
-			if ctx.Err() != nil {
-				results[i] = branchResult{label: b.Label, err: ctx.Err()}
-				return
-			}
-
-			input := types.RenderTemplate(b.Input, branchContexts[i])
-			prompt := b.SystemPrompt
-			if prompt == "" {
-				prompt = n.DefaultPrompt
-			}
-			if prompt == "" {
-				prompt = "You are a helpful assistant."
-			}
-			agt := n.factory.NewAgent(prompt)
-			if agt == nil {
-				results[i] = branchResult{label: b.Label, err: fmt.Errorf("nil agent")}
-				return
-			}
-			out, err := agt.Chat(ctx, input)
-			if err != nil {
-				results[i] = branchResult{label: b.Label, err: err}
-				return
-			}
-			results[i] = branchResult{label: b.Label, out: types.ToJSON(out)}
-		}(i, branch)
+				if prompt == "" {
+					prompt = "You are a helpful assistant."
+				}
+				factory := branchCtx.Runtime.AgentFactory
+				if factory == nil {
+					factory = n.factory
+				}
+				if factory == nil {
+					return "", fmt.Errorf("nil agent factory")
+				}
+				agent := factory.NewAgent(prompt)
+				if agent == nil {
+					return "", fmt.Errorf("nil agent")
+				}
+				return agent.Chat(ctx, input)
+			},
+		})
 	}
-	wg.Wait()
 
-	merged := make(map[string]any, len(results))
-	var errs []string
-	for _, r := range results {
-		if r.err != nil {
-			errs = append(errs, fmt.Sprintf("[%s] %v", r.label, r.err))
-			merged[r.label] = nil
-			continue
-		}
-		var v any
-		if err := json.Unmarshal([]byte(r.out), &v); err == nil {
-			merged[r.label] = v
-		} else {
-			merged[r.label] = r.out
-		}
+	coordinator := forkexec.Coordinator{MaxConcurrent: n.MaxConcurrent, Policy: n.Policy, OnEvent: n.OnEvent}
+	results, runErr := coordinator.Run(ctx, ec, specs)
+	for _, result := range results {
+		nr := &types.NodeResult{NodeBase: types.NodeBase{
+			NodeID: result.ID, Kind: node.KindFork.String(), Status: string(result.State),
+			Output: result.Output, StartedAt: result.StartedAt, EndedAt: result.EndedAt,
+		}, Err: result.Err}
+		ec.Result.NodeResults = append(ec.Result.NodeResults, nr)
 	}
-	if len(errs) > 0 && len(merged) == 0 {
-		return "", fmt.Errorf("all fork branches failed: %s", strings.Join(errs, "; "))
+	if runErr != nil {
+		return "", runErr
 	}
-	b, _ := json.Marshal(merged)
-	return string(b), nil
+	if err := coordinator.JoinAggregate(ec, results); err != nil {
+		return "", err
+	}
+	return ec.PrevOutput, nil
 }
 
 // Add registers a fork node in the graph.

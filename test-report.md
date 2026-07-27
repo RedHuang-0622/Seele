@@ -27,3 +27,22 @@
 ## 综合判断
 
 - [x] 通过
+
+## Parallel Coordinator Verification (2026-07-27)
+
+| Dimension | Result | Evidence |
+|---|:---:|---|
+| Functional regression | Passed | Coordinator panic handling, explicit best-effort, injected runtime, branch events, divergent paths, nested joins, and failed `plan_run` results passed with `-count=10`. |
+| Resource occupancy | Passed | Automatic and explicit fork concurrency limit tests passed with `-count=100`; active branch counters return to zero. |
+| Race detector | Environment blocked | Windows ThreadSanitizer failed to reserve 70-88 MiB virtual memory with error 87 in both sandboxed and elevated runs. The test binaries start successfully; no race report was produced. WSL is installed but its Linux kernel is unavailable on this machine. |
+| Diff validation | Passed | `git diff --check` completed without whitespace errors. |
+
+Commands executed:
+
+```powershell
+go test ./workplan/runtime/forkexec ./workplan/runtime/scheduler ./workplan/sugar/fork ./agent/core/tool/builtin -run 'Test(RunRecoversPanicAndCancelsSibling|BestEffortJoinUsesStableBranchIDs|Run_UsesInjectedBranchRuntimeAndEmitsBranchEvents|PlanRunFailureIncludesKnownNodeResults|NestedForkDependencyJoin|RunWithForkDivergent|SchedulerForkRespectsMaxForkConcurrency|SchedulerForkFailFastCancelsSiblings|ForkJoinContextInheritance)' -count=10 -timeout=2m
+
+go test ./workplan/runtime/scheduler ./workplan/sugar/fork -run 'Test(SchedulerForkRespectsMaxForkConcurrency|Run_RespectsMaxConcurrentAndReleasesGoroutines)' -count=100 -timeout=3m
+
+go test -race ./workplan/runtime/forkexec ./workplan/runtime/scheduler ./workplan/sugar/fork ./agent/core/tool/builtin -run 'Test(RunRecoversPanicAndCancelsSibling|BestEffortJoinUsesStableBranchIDs|Run_UsesInjectedBranchRuntimeAndEmitsBranchEvents|PlanRunFailureIncludesKnownNodeResults|NestedForkDependencyJoin|RunWithForkDivergent|SchedulerForkRespectsMaxForkConcurrency|SchedulerForkFailFastCancelsSiblings|ForkJoinContextInheritance)' -count=3 -timeout=3m
+```

@@ -122,6 +122,15 @@ func countEdges(e map[string][]string) int {
 
 type planRunHandler struct{ tool *WorkPlanTool }
 
+type planRunOutput struct {
+	Status      string                      `json:"status"`
+	NodeCount   int                         `json:"node_count"`
+	FinalOutput string                      `json:"final_output,omitempty"`
+	AbortReason string                      `json:"abort_reason,omitempty"`
+	Error       string                      `json:"error,omitempty"`
+	Nodes       []*workplanTypes.NodeResult `json:"nodes,omitempty"`
+}
+
 func (h *planRunHandler) Execute(ctx context.Context, argsJSON string) (string, error) {
 	h.tool.mu.Lock()
 	if h.tool.wp == nil {
@@ -134,23 +143,19 @@ func (h *planRunHandler) Execute(ctx context.Context, argsJSON string) (string, 
 	result, err := h.tool.wp.Run(ctx)
 	h.tool.mu.Unlock()
 
-	if err != nil {
-		return fmt.Sprintf(`{"status":"failed","error":"%s"}`, err.Error()), nil
-	}
-
-	type planRunOutput struct {
-		Status      string              `json:"status"`
-		NodeCount   int                 `json:"node_count"`
-		FinalOutput string              `json:"final_output"`
-		AbortReason string              `json:"abort_reason,omitempty"`
-		Nodes       []*workplanTypes.NodeResult `json:"nodes,omitempty"`
-	}
-
 	out := planRunOutput{
-		Status:      "completed",
-		NodeCount:   len(result.NodeResults),
-		FinalOutput: result.FinalOutputString(),
-		Nodes:       result.NodeResults,
+		Status: "completed",
+	}
+	if result != nil {
+		out.NodeCount = len(result.NodeResults)
+		out.FinalOutput = result.FinalOutputString()
+		out.Nodes = result.NodeResults
+	}
+	if err != nil {
+		out.Status = "failed"
+		out.Error = err.Error()
+		b, _ := json.Marshal(out)
+		return string(b), nil
 	}
 	if result.Aborted {
 		out.Status = "aborted"
