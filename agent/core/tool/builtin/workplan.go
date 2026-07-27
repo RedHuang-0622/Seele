@@ -10,6 +10,7 @@ import (
 	"github.com/RedHuang-0622/Seele/workplan"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	workplanTypes "github.com/RedHuang-0622/Seele/workplan/core/types"
+	"github.com/RedHuang-0622/Seele/workplan/sugar/approve"
 )
 
 // ── AgentFactory 适配 ───────────────────────────────────────────────────
@@ -77,6 +78,10 @@ type WorkPlanTool struct {
 	wp      *workplan.WorkPlan
 	factory node.AgentFactory
 
+	// Gate 用于 kind:manual 节点的审批（human-in-the-loop）。
+	// 未设置时，manual 节点回退为 auto 节点。
+	Gate approve.ApprovalGate
+
 	// ProgressCallback 每节点完成时回调，按需选填。
 	// seelex plan visualization 通过此回调实时更新 TUI Plan 面板。
 	ProgressCallback func(nr *workplanTypes.NodeResult)
@@ -86,6 +91,9 @@ type WorkPlanTool struct {
 func NewWorkPlanTool(factory node.AgentFactory) *WorkPlanTool {
 	return &WorkPlanTool{factory: factory}
 }
+
+// SetGate 设置审批门控，用于 kind:manual 节点的 human-in-the-loop 审批。
+func (w *WorkPlanTool) SetGate(g approve.ApprovalGate) { w.Gate = g }
 
 func (w *WorkPlanTool) ProviderName() string { return "workplan" }
 

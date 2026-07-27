@@ -8,6 +8,7 @@ import (
 	"github.com/RedHuang-0622/Seele/workplan"
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	workplanTypes "github.com/RedHuang-0622/Seele/workplan/core/types"
+	"github.com/RedHuang-0622/Seele/workplan/sugar/approve"
 	sauto "github.com/RedHuang-0622/Seele/workplan/sugar/auto"
 )
 
@@ -38,6 +39,7 @@ type planLoadInput struct {
 
 type planNodeSpec struct {
 	Input string `json:"input"`
+	Kind  string `json:"kind,omitempty"` // "auto" (default) or "manual"
 }
 
 func (h *planLoadHandler) Execute(ctx context.Context, argsJSON string) (string, error) {
@@ -78,7 +80,18 @@ func (h *planLoadHandler) Execute(ctx context.Context, argsJSON string) (string,
 
 	// 1. 添加所有节点
 	for id, spec := range input.Nodes {
-		sauto.Add(g, id, spec.Input, h.tool.factory)
+		switch spec.Kind {
+		case "manual":
+			if h.tool.Gate != nil {
+				approve.Add(g, id, spec.Input, h.tool.Gate, h.tool.factory,
+					approve.WithOptions(approve.Choices("execute", "skip", "abort")))
+			} else {
+				// Gate not set — fallback to auto node
+				sauto.Add(g, id, spec.Input, h.tool.factory)
+			}
+		default:
+			sauto.Add(g, id, spec.Input, h.tool.factory)
+		}
 	}
 
 	// 2. 设置入口
