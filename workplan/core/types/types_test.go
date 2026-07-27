@@ -84,6 +84,35 @@ func TestWorkflowContextCloneIsIndependent(t *testing.T) {
 	}
 }
 
+func TestWorkflowContextCloneCopiesTypedMetadataValues(t *testing.T) {
+	type metadataPayload struct {
+		Values []int
+		Labels map[string]string
+	}
+
+	source := NewWorkflowContext()
+	source.Metadata["typed"] = []map[string]any{{"values": []int{1, 2}}}
+	source.Metadata["payload"] = &metadataPayload{
+		Values: []int{3, 4},
+		Labels: map[string]string{"scope": "parent"},
+	}
+
+	clone := source.Clone()
+	clone.Metadata["typed"].([]map[string]any)[0]["values"].([]int)[0] = 99
+	payload := clone.Metadata["payload"].(*metadataPayload)
+	payload.Values[0] = 88
+	payload.Labels["scope"] = "branch"
+
+	typed := source.Metadata["typed"].([]map[string]any)
+	if typed[0]["values"].([]int)[0] != 1 {
+		t.Error("source typed metadata was mutated through clone")
+	}
+	originalPayload := source.Metadata["payload"].(*metadataPayload)
+	if originalPayload.Values[0] != 3 || originalPayload.Labels["scope"] != "parent" {
+		t.Error("source pointer metadata was mutated through clone")
+	}
+}
+
 // --- WorkPlanResult FinalOutput / FinalOutputString ---
 
 func TestFinalOutput(t *testing.T) {

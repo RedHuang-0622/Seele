@@ -4,6 +4,7 @@ package types
 
 import (
 	"encoding/json"
+	"reflect"
 	"time"
 )
 
@@ -96,19 +97,62 @@ func cloneMetadata(source map[string]any) map[string]any {
 }
 
 func cloneMetadataValue(value any) any {
-	switch value := value.(type) {
-	case map[string]any:
-		return cloneMetadata(value)
-	case map[string]string:
-		return cloneStringMap(value)
-	case []any:
-		clone := make([]any, len(value))
-		for index, item := range value {
-			clone[index] = cloneMetadataValue(item)
+	if value == nil {
+		return nil
+	}
+	return cloneMetadataReflect(reflect.ValueOf(value)).Interface()
+}
+
+func cloneMetadataReflect(value reflect.Value) reflect.Value {
+	switch value.Kind() {
+	case reflect.Interface:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		clone := reflect.New(value.Type()).Elem()
+		clone.Set(cloneMetadataReflect(value.Elem()))
+		return clone
+	case reflect.Pointer:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		clone := reflect.New(value.Type().Elem())
+		clone.Elem().Set(cloneMetadataReflect(value.Elem()))
+		return clone
+	case reflect.Map:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		clone := reflect.MakeMapWithSize(value.Type(), value.Len())
+		iterator := value.MapRange()
+		for iterator.Next() {
+			clone.SetMapIndex(iterator.Key(), cloneMetadataReflect(iterator.Value()))
 		}
 		return clone
-	case []string:
-		return append([]string(nil), value...)
+	case reflect.Slice:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		clone := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+		for index := 0; index < value.Len(); index++ {
+			clone.Index(index).Set(cloneMetadataReflect(value.Index(index)))
+		}
+		return clone
+	case reflect.Array:
+		clone := reflect.New(value.Type()).Elem()
+		for index := 0; index < value.Len(); index++ {
+			clone.Index(index).Set(cloneMetadataReflect(value.Index(index)))
+		}
+		return clone
+	case reflect.Struct:
+		clone := reflect.New(value.Type()).Elem()
+		clone.Set(value)
+		for index := 0; index < value.NumField(); index++ {
+			if value.Type().Field(index).PkgPath == "" {
+				clone.Field(index).Set(cloneMetadataReflect(value.Field(index)))
+			}
+		}
+		return clone
 	default:
 		return value
 	}

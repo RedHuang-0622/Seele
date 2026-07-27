@@ -16,9 +16,10 @@ import (
 
 // Scheduler drives the execution loop.
 type Scheduler struct {
-	graph      *graph.Graph
-	executor   *executor.Executor
-	OnNodeDone func(nr *types.NodeResult) // 每节点完成回调
+	graph              *graph.Graph
+	executor           *executor.Executor
+	MaxForkConcurrency int
+	OnNodeDone         func(nr *types.NodeResult) // 每节点完成回调
 }
 
 // SetNodeHook 设置节点完成回调。
@@ -28,7 +29,15 @@ func (s *Scheduler) SetNodeHook(hook func(nr *types.NodeResult)) {
 
 // New creates a scheduler bound to a graph and executor.
 func New(g *graph.Graph, exec *executor.Executor) *Scheduler {
-	return &Scheduler{graph: g, executor: exec}
+	return &Scheduler{graph: g, executor: exec, MaxForkConcurrency: 3}
+}
+
+// SetMaxForkConcurrency limits concurrently running branches in automatic forks.
+func (s *Scheduler) SetMaxForkConcurrency(maxConcurrent int) {
+	if maxConcurrent <= 0 {
+		maxConcurrent = 3
+	}
+	s.MaxForkConcurrency = maxConcurrent
 }
 
 // Run executes the graph from the entry node.
@@ -99,7 +108,12 @@ func (s *Scheduler) Run(ctx context.Context) (*types.WorkPlanResult, error) {
 
 		// ── Fork detected: multiple unconditional outgoing edges ──────
 		// Run all downstream nodes concurrently, merge results.
-		currentID = s.fork(ctx, nextIDs, wc)
+		nextID, err := s.fork(ctx, nextIDs, wc)
+		if err != nil {
+			wc.Result.TotalElapsed = time.Since(start)
+			return wc.Result, err
+		}
+		currentID = nextID
 		if currentID == "" {
 			break
 		}
@@ -110,8 +124,9 @@ func (s *Scheduler) Run(ctx context.Context) (*types.WorkPlanResult, error) {
 }
 
 // fork runs all target nodes concurrently and merges their outputs.
-// Returns the common next node ID for all branches, or "" if graph ends.
-func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.WorkflowContext) string {
+// It cancels sibling branches on the first failure and only writes parent
+// context after every branch succeeds.
+func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.WorkflowContext) (string, error) {
 	type branchResult struct {
 		id    string
 		kind  string
@@ -127,31 +142,46 @@ func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.Workfl
 		branchContexts[index] = wc.Clone()
 	}
 	var wg sync.WaitGroup
+	forkCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	sem := make(chan struct{}, s.maxForkConcurrency())
 
 	for i, id := range nextIDs {
 		wg.Add(1)
 		go func(idx int, nodeID string) {
 			defer wg.Done()
 			start := time.Now()
+			select {
+			case sem <- struct{}{}:
+			case <-forkCtx.Done():
+				results[idx] = branchResult{id: nodeID, err: forkContextError(forkCtx), start: start, end: time.Now()}
+				return
+			}
+			defer func() { <-sem }()
 
 			n := s.graph.GetNode(nodeID)
 			if n == nil {
-				results[idx] = branchResult{id: nodeID, err: fmt.Errorf("fork node %q not found", nodeID), start: start, end: time.Now()}
+				err := fmt.Errorf("fork node %q not found", nodeID)
+				results[idx] = branchResult{id: nodeID, err: err, start: start, end: time.Now()}
+				cancel(err)
 				return
 			}
 
-			out, err := s.executor.RunNode(ctx, n, branchContexts[idx])
+			out, err := s.executor.RunNode(forkCtx, n, branchContexts[idx])
 			results[idx] = branchResult{
 				id: nodeID, kind: n.Kind().String(),
 				out: out, err: err, start: start, end: time.Now(),
+			}
+			if err != nil {
+				cancel(err)
 			}
 		}(i, id)
 	}
 	wg.Wait()
 
-	// Record branch results and collect errors
-	merged := make(map[string]any)
+	// Record branch lifecycle results before determining whether join may run.
 	var firstErr error
+	var failedBranch string
 	for _, r := range results {
 		nr := &types.NodeResult{
 			NodeBase: types.NodeBase{
@@ -165,11 +195,6 @@ func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.Workfl
 		}
 		nr.Status = statusFromResult(nr, r.err)
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
-		// Record output for multi-upstream reference via {{.PrevResults.nodeID}}
-		if r.out != "" {
-			wc.PrevResults[r.id] = r.out
-		}
-
 		if s.OnNodeDone != nil {
 			s.OnNodeDone(nr)
 		}
@@ -177,15 +202,24 @@ func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.Workfl
 		if r.err != nil {
 			if firstErr == nil {
 				firstErr = r.err
+				failedBranch = r.id
 			}
-			merged[r.id] = nil
+		}
+	}
+	if firstErr != nil {
+		return "", fmt.Errorf("fork branch %q: %w", failedBranch, firstErr)
+	}
+
+	merged := make(map[string]any, len(results))
+	for _, r := range results {
+		if r.out != "" {
+			wc.PrevResults[r.id] = r.out
+		}
+		var v any
+		if json.Unmarshal([]byte(r.out), &v) == nil {
+			merged[r.id] = v
 		} else {
-			var v any
-			if json.Unmarshal([]byte(r.out), &v) == nil {
-				merged[r.id] = v
-			} else {
-				merged[r.id] = r.out
-			}
+			merged[r.id] = r.out
 		}
 	}
 
@@ -202,15 +236,26 @@ func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.Workfl
 				commonNext = nid
 			} else if commonNext != nid {
 				// Divergent — can't continue deterministically
-				return ""
+				return "", nil
 			}
 		}
 	}
 
-	if firstErr != nil {
-		return commonNext // let runner report the error
+	return commonNext, nil
+}
+
+func (s *Scheduler) maxForkConcurrency() int {
+	if s.MaxForkConcurrency <= 0 {
+		return 3
 	}
-	return commonNext
+	return s.MaxForkConcurrency
+}
+
+func forkContextError(ctx context.Context) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	return ctx.Err()
 }
 
 // RunWithCheckpoint is identical to Run but also returns per-node snapshots.
@@ -280,7 +325,12 @@ func (s *Scheduler) RunWithCheckpoint(ctx context.Context) (*types.WorkPlanResul
 			continue
 		}
 		// Fork: use the same fork logic (simplified — no checkpoints for branches)
-		currentID = s.fork(ctx, nextIDs, wc)
+		nextID, err := s.fork(ctx, nextIDs, wc)
+		if err != nil {
+			wc.Result.TotalElapsed = time.Since(start)
+			return wc.Result, checkpoints, err
+		}
+		currentID = nextID
 		if currentID == "" {
 			break
 		}

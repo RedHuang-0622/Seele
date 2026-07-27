@@ -2,6 +2,9 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
@@ -39,6 +42,17 @@ func TestNew(t *testing.T) {
 	}
 	if s.executor != exec {
 		t.Error("executor not set")
+	}
+	if s.MaxForkConcurrency != 3 {
+		t.Errorf("MaxForkConcurrency = %d, want 3", s.MaxForkConcurrency)
+	}
+	s.SetMaxForkConcurrency(2)
+	if s.MaxForkConcurrency != 2 {
+		t.Errorf("MaxForkConcurrency = %d, want 2", s.MaxForkConcurrency)
+	}
+	s.SetMaxForkConcurrency(0)
+	if s.MaxForkConcurrency != 3 {
+		t.Errorf("MaxForkConcurrency = %d after reset, want 3", s.MaxForkConcurrency)
 	}
 }
 
@@ -155,6 +169,227 @@ func TestRunWithFork(t *testing.T) {
 	// First node should always be "start"
 	if result.NodeResults[0].NodeID != "start" {
 		t.Errorf("expected first node 'start', got %q", result.NodeResults[0].NodeID)
+	}
+}
+
+func TestForkJoinContextInheritance(t *testing.T) {
+	type branchSnapshot struct {
+		prevOutput  string
+		startResult string
+		variable    string
+		metadata    string
+	}
+
+	g := graph.New()
+	branchSnapshots := make(chan branchSnapshot, 2)
+	var joinOutput string
+	var joinResults map[string]string
+	var joinVars map[string]string
+	var joinMetadata string
+
+	start := newTestNode("start", node.KindMethod)
+	start.runFn = func(_ context.Context, wc *types.WorkflowContext) (string, error) {
+		wc.Vars["scope"] = `"parent"`
+		wc.Metadata["scope"] = "parent"
+		return "parent-output", nil
+	}
+
+	newBranch := func(id, output string) *testNode {
+		branch := newTestNode(id, node.KindMethod)
+		branch.runFn = func(_ context.Context, wc *types.WorkflowContext) (string, error) {
+			branchSnapshots <- branchSnapshot{
+				prevOutput:  wc.PrevOutput,
+				startResult: wc.PrevResults["start"],
+				variable:    wc.Vars["scope"],
+				metadata:    wc.Metadata["scope"].(string),
+			}
+			return output, nil
+		}
+		return branch
+	}
+
+	merge := newTestNode("merge", node.KindMethod)
+	merge.runFn = func(_ context.Context, wc *types.WorkflowContext) (string, error) {
+		joinOutput = wc.PrevOutput
+		joinResults = make(map[string]string, len(wc.PrevResults))
+		for key, value := range wc.PrevResults {
+			joinResults[key] = value
+		}
+		joinVars = make(map[string]string, len(wc.Vars))
+		for key, value := range wc.Vars {
+			joinVars[key] = value
+		}
+		joinMetadata = wc.Metadata["scope"].(string)
+		return "joined", nil
+	}
+
+	g.AddNode(start)
+	g.AddNode(newBranch("b1", "branch-one"))
+	g.AddNode(newBranch("b2", "branch-two"))
+	g.AddNode(merge)
+	g.SetEntry("start")
+	g.AddEdge(edge.Edge{From: "start", To: "b1"})
+	g.AddEdge(edge.Edge{From: "start", To: "b2"})
+	g.AddEdge(edge.Edge{From: "b1", To: "merge"})
+	g.AddEdge(edge.Edge{From: "b2", To: "merge"})
+
+	result, err := New(g, executor.New()).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	for range 2 {
+		snapshot := <-branchSnapshots
+		if snapshot.prevOutput != types.ToJSON("parent-output") {
+			t.Errorf("branch PrevOutput = %q, want parent output", snapshot.prevOutput)
+		}
+		if snapshot.startResult != types.ToJSON("parent-output") {
+			t.Errorf("branch PrevResults[start] = %q, want parent output", snapshot.startResult)
+		}
+		if snapshot.variable != `"parent"` {
+			t.Errorf("branch Vars[scope] = %q, want parent value", snapshot.variable)
+		}
+		if snapshot.metadata != "parent" {
+			t.Errorf("branch Metadata[scope] = %q, want parent value", snapshot.metadata)
+		}
+	}
+
+	var aggregate map[string]string
+	if err := json.Unmarshal([]byte(joinOutput), &aggregate); err != nil {
+		t.Fatalf("join PrevOutput is not aggregate JSON: %v", err)
+	}
+	if aggregate["b1"] != "branch-one" || aggregate["b2"] != "branch-two" {
+		t.Errorf("join aggregate = %#v, want both branch outputs", aggregate)
+	}
+	if joinResults["start"] != types.ToJSON("parent-output") {
+		t.Errorf("join PrevResults[start] = %q, want parent output", joinResults["start"])
+	}
+	if joinResults["b1"] != types.ToJSON("branch-one") || joinResults["b2"] != types.ToJSON("branch-two") {
+		t.Errorf("join PrevResults = %#v, want both branch outputs", joinResults)
+	}
+	if joinVars["scope"] != `"parent"` || joinMetadata != "parent" {
+		t.Errorf("join did not preserve parent context: Vars=%#v Metadata=%q", joinVars, joinMetadata)
+	}
+	if result.FinalOutputString() != "joined" {
+		t.Errorf("final output = %q, want joined", result.FinalOutputString())
+	}
+}
+
+func TestSchedulerForkRespectsMaxForkConcurrency(t *testing.T) {
+	var active atomic.Int32
+	var maximum atomic.Int32
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+
+	g := graph.New()
+	start := newTestNode("start", node.KindMethod)
+	newBranch := func(id string) *testNode {
+		branch := newTestNode(id, node.KindMethod)
+		branch.runFn = func(_ context.Context, _ *types.WorkflowContext) (string, error) {
+			current := active.Add(1)
+			defer active.Add(-1)
+			for {
+				maximumSeen := maximum.Load()
+				if current <= maximumSeen || maximum.CompareAndSwap(maximumSeen, current) {
+					break
+				}
+			}
+			started <- struct{}{}
+			<-release
+			return id, nil
+		}
+		return branch
+	}
+
+	g.AddNode(start)
+	for _, id := range []string{"b1", "b2", "b3", "b4"} {
+		g.AddNode(newBranch(id))
+		g.AddEdge(edge.Edge{From: "start", To: id})
+	}
+	g.SetEntry("start")
+
+	scheduler := New(g, executor.New())
+	scheduler.SetMaxForkConcurrency(2)
+	done := make(chan error, 1)
+	go func() {
+		_, err := scheduler.Run(context.Background())
+		done <- err
+	}()
+
+	for range 2 {
+		<-started
+	}
+	if current := active.Load(); current != 2 {
+		t.Fatalf("active automatic fork branches = %d, want 2", current)
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if maximumSeen := maximum.Load(); maximumSeen != 2 {
+		t.Errorf("maximum automatic fork branches = %d, want 2", maximumSeen)
+	}
+	if current := active.Load(); current != 0 {
+		t.Errorf("active automatic fork branches after Run = %d, want 0", current)
+	}
+}
+
+func TestSchedulerForkFailFastCancelsSiblings(t *testing.T) {
+	g := graph.New()
+	failureReady := make(chan struct{}, 1)
+	siblingReady := make(chan struct{}, 1)
+	releaseFailure := make(chan struct{})
+	var siblingCanceled atomic.Bool
+	var mergeRan atomic.Bool
+
+	start := newTestNode("start", node.KindMethod)
+	failingBranch := newTestNode("b1", node.KindMethod)
+	failingBranch.runFn = func(_ context.Context, _ *types.WorkflowContext) (string, error) {
+		failureReady <- struct{}{}
+		<-releaseFailure
+		return "", errors.New("branch failed")
+	}
+	siblingBranch := newTestNode("b2", node.KindMethod)
+	siblingBranch.runFn = func(ctx context.Context, _ *types.WorkflowContext) (string, error) {
+		siblingReady <- struct{}{}
+		<-ctx.Done()
+		siblingCanceled.Store(true)
+		return "", ctx.Err()
+	}
+	merge := newTestNode("merge", node.KindMethod)
+	merge.runFn = func(_ context.Context, _ *types.WorkflowContext) (string, error) {
+		mergeRan.Store(true)
+		return "merged", nil
+	}
+
+	g.AddNode(start)
+	g.AddNode(failingBranch)
+	g.AddNode(siblingBranch)
+	g.AddNode(merge)
+	g.SetEntry("start")
+	g.AddEdge(edge.Edge{From: "start", To: "b1"})
+	g.AddEdge(edge.Edge{From: "start", To: "b2"})
+	g.AddEdge(edge.Edge{From: "b1", To: "merge"})
+	g.AddEdge(edge.Edge{From: "b2", To: "merge"})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := New(g, executor.New()).Run(context.Background())
+		done <- err
+	}()
+
+	<-failureReady
+	<-siblingReady
+	close(releaseFailure)
+	if err := <-done; err == nil {
+		t.Fatal("Run() error = nil, want fork failure")
+	}
+	if !siblingCanceled.Load() {
+		t.Error("failing branch did not cancel its sibling")
+	}
+	if mergeRan.Load() {
+		t.Error("join node ran after a fork branch failed")
 	}
 }
 
