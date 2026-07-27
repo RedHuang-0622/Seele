@@ -34,6 +34,56 @@ func TestNewWorkflowContext(t *testing.T) {
 	}
 }
 
+func TestWorkflowContextCloneIsIndependent(t *testing.T) {
+	source := NewWorkflowContext()
+	source.PrevOutput = `"parent"`
+	source.PrevResults["parent"] = `"result"`
+	source.Vars["scope"] = `"parent"`
+	source.Result.NodeResults = []*NodeResult{{NodeBase: NodeBase{NodeID: "parent", Output: `"result"`}}}
+	source.Result.Vars = map[string]string{"scope": `"parent"`}
+	source.Result.Checkpoints["parent"] = `"checkpoint"`
+	source.Metadata["nested"] = map[string]any{
+		"items": []any{map[string]string{"key": "parent"}},
+	}
+
+	clone := source.Clone()
+	if clone == source {
+		t.Fatal("Clone() returned the source context")
+	}
+
+	clone.PrevOutput = `"branch"`
+	clone.PrevResults["parent"] = `"branch-result"`
+	clone.Vars["scope"] = `"branch"`
+	clone.Result.NodeResults[0].Output = `"branch-result"`
+	clone.Result.Vars["scope"] = `"branch"`
+	clone.Result.Checkpoints["parent"] = `"branch-checkpoint"`
+	nested := clone.Metadata["nested"].(map[string]any)
+	nested["items"].([]any)[0].(map[string]string)["key"] = "branch"
+
+	if source.PrevOutput != `"parent"` {
+		t.Errorf("source PrevOutput = %q, want parent value", source.PrevOutput)
+	}
+	if source.PrevResults["parent"] != `"result"` {
+		t.Errorf("source PrevResults[parent] = %q, want parent result", source.PrevResults["parent"])
+	}
+	if source.Vars["scope"] != `"parent"` {
+		t.Errorf("source Vars[scope] = %q, want parent value", source.Vars["scope"])
+	}
+	if source.Result.NodeResults[0].Output != `"result"` {
+		t.Errorf("source node output = %q, want parent result", source.Result.NodeResults[0].Output)
+	}
+	if source.Result.Vars["scope"] != `"parent"` {
+		t.Errorf("source result vars = %q, want parent value", source.Result.Vars["scope"])
+	}
+	if source.Result.Checkpoints["parent"] != `"checkpoint"` {
+		t.Errorf("source checkpoint = %q, want parent value", source.Result.Checkpoints["parent"])
+	}
+	originalNested := source.Metadata["nested"].(map[string]any)
+	if originalNested["items"].([]any)[0].(map[string]string)["key"] != "parent" {
+		t.Error("source nested metadata was mutated through clone")
+	}
+}
+
 // --- WorkPlanResult FinalOutput / FinalOutputString ---
 
 func TestFinalOutput(t *testing.T) {

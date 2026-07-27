@@ -3,11 +3,13 @@ package fork
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
+	"go.uber.org/goleak"
 )
 
 // ── Mock types ─────────────────────────────────────────────────────────────
@@ -22,6 +24,40 @@ type mockFactory struct{}
 
 func (m *mockFactory) NewAgent(_ string) node.Agent {
 	return &mockAgent{}
+}
+
+type blockingFactory struct {
+	started chan<- struct{}
+	release <-chan struct{}
+	current atomic.Int32
+	maximum atomic.Int32
+}
+
+func (f *blockingFactory) NewAgent(_ string) node.Agent {
+	return &blockingAgent{factory: f}
+}
+
+type blockingAgent struct {
+	factory *blockingFactory
+}
+
+func (a *blockingAgent) Chat(ctx context.Context, _ string) (string, error) {
+	current := a.factory.current.Add(1)
+	defer a.factory.current.Add(-1)
+	for {
+		maximum := a.factory.maximum.Load()
+		if current <= maximum || a.factory.maximum.CompareAndSwap(maximum, current) {
+			break
+		}
+	}
+
+	a.factory.started <- struct{}{}
+	select {
+	case <-a.factory.release:
+		return `"done"`, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -152,6 +188,44 @@ func TestRun_AllBranchesSucceed(t *testing.T) {
 	}
 	if !strings.Contains(result, "succeed1") {
 		t.Errorf("result = %q, should contain 'succeed1'", result)
+	}
+}
+
+func TestRun_RespectsMaxConcurrentAndReleasesGoroutines(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	factory := &blockingFactory{started: started, release: release}
+	n := NewNode("limited-fork", []node.ForkBranch{
+		{Label: "one"},
+		{Label: "two"},
+		{Label: "three"},
+		{Label: "four"},
+	}, 2, factory)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := n.Run(context.Background(), types.NewWorkflowContext())
+		done <- err
+	}()
+
+	for range 2 {
+		<-started
+	}
+	if current := factory.current.Load(); current != 2 {
+		t.Fatalf("active branches = %d, want 2 while semaphore is saturated", current)
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if maximum := factory.maximum.Load(); maximum != 2 {
+		t.Errorf("maximum active branches = %d, want 2", maximum)
+	}
+	if current := factory.current.Load(); current != 0 {
+		t.Errorf("active branches after Run() = %d, want 0", current)
 	}
 }
 

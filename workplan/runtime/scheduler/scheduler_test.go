@@ -158,6 +158,85 @@ func TestRunWithFork(t *testing.T) {
 	}
 }
 
+func TestForkCreatesIndependentBranchContexts(t *testing.T) {
+	g := graph.New()
+	branchContexts := make(chan *types.WorkflowContext, 2)
+	var mergeContext *types.WorkflowContext
+
+	start := newTestNode("start", node.KindMethod)
+	start.runFn = func(_ context.Context, wc *types.WorkflowContext) (string, error) {
+		wc.PrevResults["parent"] = `"result"`
+		wc.Vars["scope"] = `"parent"`
+		wc.Metadata["nested"] = map[string]any{"value": "parent"}
+		wc.Result.Checkpoints["parent"] = `"checkpoint"`
+		return "parent", nil
+	}
+
+	newBranch := func(id string) *testNode {
+		branch := newTestNode(id, node.KindMethod)
+		branch.runFn = func(_ context.Context, wc *types.WorkflowContext) (string, error) {
+			branchContexts <- wc
+			return id, nil
+		}
+		return branch
+	}
+
+	merge := newTestNode("merge", node.KindMethod)
+	merge.runFn = func(_ context.Context, wc *types.WorkflowContext) (string, error) {
+		mergeContext = wc
+		return "merged", nil
+	}
+
+	g.AddNode(start)
+	g.AddNode(newBranch("b1"))
+	g.AddNode(newBranch("b2"))
+	g.AddNode(merge)
+	g.SetEntry("start")
+	g.AddEdge(edge.Edge{From: "start", To: "b1"})
+	g.AddEdge(edge.Edge{From: "start", To: "b2"})
+	g.AddEdge(edge.Edge{From: "b1", To: "merge"})
+	g.AddEdge(edge.Edge{From: "b2", To: "merge"})
+
+	if _, err := New(g, executor.New()).Run(context.Background()); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	firstBranch := <-branchContexts
+	secondBranch := <-branchContexts
+	if firstBranch == secondBranch {
+		t.Fatal("fork branches received the same WorkflowContext pointer")
+	}
+	if mergeContext == nil {
+		t.Fatal("merge node did not receive a workflow context")
+	}
+	if firstBranch == mergeContext || secondBranch == mergeContext {
+		t.Fatal("fork branch received the parent WorkflowContext pointer")
+	}
+
+	firstBranch.Vars["branch"] = `"mutated"`
+	firstBranch.Metadata["nested"].(map[string]any)["value"] = "mutated"
+	firstBranch.Result.Checkpoints["branch"] = `"mutated"`
+
+	if _, ok := secondBranch.Vars["branch"]; ok {
+		t.Error("mutating one branch Vars polluted its sibling")
+	}
+	if secondBranch.Metadata["nested"].(map[string]any)["value"] != "parent" {
+		t.Error("mutating one branch Metadata polluted its sibling")
+	}
+	if _, ok := secondBranch.Result.Checkpoints["branch"]; ok {
+		t.Error("mutating one branch Result polluted its sibling")
+	}
+	if _, ok := mergeContext.Vars["branch"]; ok {
+		t.Error("mutating a branch Vars polluted the parent context")
+	}
+	if mergeContext.Metadata["nested"].(map[string]any)["value"] != "parent" {
+		t.Error("mutating a branch Metadata polluted the parent context")
+	}
+	if _, ok := mergeContext.Result.Checkpoints["branch"]; ok {
+		t.Error("mutating a branch Result polluted the parent context")
+	}
+}
+
 func TestRunWithForkDivergent(t *testing.T) {
 	g := graph.New()
 	g.AddNode(newTestNode("start", node.KindMethod))

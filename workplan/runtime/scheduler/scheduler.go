@@ -67,10 +67,10 @@ func (s *Scheduler) Run(ctx context.Context) (*types.WorkPlanResult, error) {
 		nr.Err = err
 		nr.Status = statusFromResult(nr, err)
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
-			// Record output for multi-upstream reference via {{.PrevResults.nodeID}}
-			if output != "" {
-				wc.PrevResults[currentID] = output
-			}
+		// Record output for multi-upstream reference via {{.PrevResults.nodeID}}
+		if output != "" {
+			wc.PrevResults[currentID] = output
+		}
 
 		if s.OnNodeDone != nil {
 			s.OnNodeDone(nr)
@@ -122,6 +122,10 @@ func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.Workfl
 	}
 
 	results := make([]branchResult, len(nextIDs))
+	branchContexts := make([]*types.WorkflowContext, len(nextIDs))
+	for index := range nextIDs {
+		branchContexts[index] = wc.Clone()
+	}
 	var wg sync.WaitGroup
 
 	for i, id := range nextIDs {
@@ -136,7 +140,7 @@ func (s *Scheduler) fork(ctx context.Context, nextIDs []string, wc *types.Workfl
 				return
 			}
 
-			out, err := s.executor.RunNode(ctx, n, wc)
+			out, err := s.executor.RunNode(ctx, n, branchContexts[idx])
 			results[idx] = branchResult{
 				id: nodeID, kind: n.Kind().String(),
 				out: out, err: err, start: start, end: time.Now(),
@@ -244,10 +248,10 @@ func (s *Scheduler) RunWithCheckpoint(ctx context.Context) (*types.WorkPlanResul
 		nr.Err = err
 		nr.Status = statusFromResult(nr, err)
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
-			// Record output for multi-upstream reference via {{.PrevResults.nodeID}}
-			if output != "" {
-				wc.PrevResults[currentID] = output
-			}
+		// Record output for multi-upstream reference via {{.PrevResults.nodeID}}
+		if output != "" {
+			wc.PrevResults[currentID] = output
+		}
 
 		if s.OnNodeDone != nil {
 			s.OnNodeDone(nr)

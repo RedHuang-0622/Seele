@@ -3,7 +3,7 @@ bin/*
 # test artifacts
 test/report/*
 test/log/*
-
+.tmp/*
 data/*
 *.db
 
@@ -22,3 +22,6 @@ config/*.yaml
 
 # 运行时缓存/会话数据（本地测试产物，不提交）
 .seele/
+
+# 临时测试工具链与下载产物
+.tmp/

@@ -43,6 +43,10 @@ func (n *ForkNode) Run(ctx context.Context, ec *types.WorkflowContext) (string, 
 		err   error
 	}
 	results := make([]branchResult, len(n.Branches))
+	branchContexts := make([]*types.WorkflowContext, len(n.Branches))
+	for index := range n.Branches {
+		branchContexts[index] = ec.Clone()
+	}
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, n.MaxConcurrent)
 
@@ -68,7 +72,7 @@ func (n *ForkNode) Run(ctx context.Context, ec *types.WorkflowContext) (string, 
 				return
 			}
 
-			input := types.RenderTemplate(b.Input, ec)
+			input := types.RenderTemplate(b.Input, branchContexts[i])
 			prompt := b.SystemPrompt
 			if prompt == "" {
 				prompt = n.DefaultPrompt

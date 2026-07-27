@@ -27,6 +27,93 @@ func NewWorkflowContext() *WorkflowContext {
 	}
 }
 
+// Clone returns an independent copy of the workflow context. It is used at
+// fork boundaries so branch-local writes cannot mutate the parent context or
+// sibling branches.
+func (wc *WorkflowContext) Clone() *WorkflowContext {
+	if wc == nil {
+		return nil
+	}
+
+	return &WorkflowContext{
+		PrevOutput:  wc.PrevOutput,
+		PrevResults: cloneStringMap(wc.PrevResults),
+		Vars:        cloneStringMap(wc.Vars),
+		Result:      cloneWorkPlanResult(wc.Result),
+		Metadata:    cloneMetadata(wc.Metadata),
+	}
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+
+	clone := make(map[string]string, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
+}
+
+func cloneWorkPlanResult(source *WorkPlanResult) *WorkPlanResult {
+	if source == nil {
+		return nil
+	}
+
+	clone := &WorkPlanResult{
+		Vars:         cloneStringMap(source.Vars),
+		Checkpoints:  cloneStringMap(source.Checkpoints),
+		Aborted:      source.Aborted,
+		AbortReason:  source.AbortReason,
+		TotalElapsed: source.TotalElapsed,
+	}
+	if source.NodeResults == nil {
+		return clone
+	}
+
+	clone.NodeResults = make([]*NodeResult, len(source.NodeResults))
+	for index, result := range source.NodeResults {
+		if result == nil {
+			continue
+		}
+		resultClone := *result
+		clone.NodeResults[index] = &resultClone
+	}
+	return clone
+}
+
+func cloneMetadata(source map[string]any) map[string]any {
+	if source == nil {
+		return nil
+	}
+
+	clone := make(map[string]any, len(source))
+	for key, value := range source {
+		clone[key] = cloneMetadataValue(value)
+	}
+	return clone
+}
+
+func cloneMetadataValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneMetadata(value)
+	case map[string]string:
+		return cloneStringMap(value)
+	case []any:
+		clone := make([]any, len(value))
+		for index, item := range value {
+			clone[index] = cloneMetadataValue(item)
+		}
+		return clone
+	case []string:
+		return append([]string(nil), value...)
+	default:
+		return value
+	}
+}
+
 // NodeBase contains fields common to both NodeStatus (callback payload)
 // and NodeResult (full execution record). All fields have JSON tags so
 // they can be serialized directly without manual map construction.
