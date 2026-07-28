@@ -93,3 +93,48 @@ func TestBestEffortJoinUsesStableBranchIDs(t *testing.T) {
 		t.Error("failed best-effort branch was written to PrevResults")
 	}
 }
+
+func TestContextManagerFreezesParentSnapshot(t *testing.T) {
+	parent := types.NewWorkflowContext()
+	parent.Vars["source"] = "parent"
+	manager := NewContextManager(parent)
+
+	parent.Vars["source"] = "mutated-parent"
+	left := manager.NewBranchContext("left", BranchRuntime{})
+	right := manager.NewBranchContext("right", BranchRuntime{})
+	left.Workflow.Vars["source"] = "mutated-left"
+
+	if left.BranchID != "left" || right.BranchID != "right" {
+		t.Fatalf("branch IDs = %q, %q", left.BranchID, right.BranchID)
+	}
+	if got := right.Workflow.Vars["source"]; got != "parent" {
+		t.Errorf("right branch inherited %q, want frozen parent", got)
+	}
+	if got := parent.Vars["source"]; got != "mutated-parent" {
+		t.Errorf("parent was changed through branch context: %q", got)
+	}
+}
+
+func TestForkCoordinatorPassesBranchRuntime(t *testing.T) {
+	runtime := BranchRuntime{SessionID: "session-1", Role: "reviewer", AccountID: "account-1"}
+	manager := NewContextManager(types.NewWorkflowContext())
+	coordinator := ForkCoordinator{}
+	results, err := coordinator.RunWithContextManager(context.Background(), manager, []Spec{{
+		ID: "review", NodeID: "review", Runtime: runtime,
+		Execute: func(_ context.Context, branch *BranchContext) (string, error) {
+			if branch.BranchID != "review" {
+				t.Fatalf("branch ID = %q", branch.BranchID)
+			}
+			if branch.Runtime.Role != runtime.Role || branch.Runtime.AccountID != runtime.AccountID {
+				t.Fatalf("runtime = %#v, want injected role/account", branch.Runtime)
+			}
+			return branch.Runtime.Role + ":" + branch.Runtime.AccountID, nil
+		},
+	}})
+	if err != nil {
+		t.Fatalf("RunWithContextManager() error = %v", err)
+	}
+	if len(results) != 1 || results[0].Output == "" {
+		t.Fatalf("results = %#v", results)
+	}
+}

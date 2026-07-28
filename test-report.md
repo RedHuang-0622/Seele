@@ -46,3 +46,22 @@ go test ./workplan/runtime/scheduler ./workplan/sugar/fork -run 'Test(SchedulerF
 
 go test -race ./workplan/runtime/forkexec ./workplan/runtime/scheduler ./workplan/sugar/fork ./agent/core/tool/builtin -run 'Test(RunRecoversPanicAndCancelsSibling|BestEffortJoinUsesStableBranchIDs|Run_UsesInjectedBranchRuntimeAndEmitsBranchEvents|PlanRunFailureIncludesKnownNodeResults|NestedForkDependencyJoin|RunWithForkDivergent|SchedulerForkRespectsMaxForkConcurrency|SchedulerForkFailFastCancelsSiblings|ForkJoinContextInheritance)' -count=3 -timeout=3m
 ```
+
+## Design Contract Follow-up (2026-07-28)
+
+| Dimension | Result | Evidence |
+|---|:---:|---|
+| Context boundary | Passed | `ParentSnapshot`, `ContextManager`, `BranchContext`, and `BranchResult` now model snapshot, branch ownership, and join output explicitly. |
+| Unified execution | Passed | Scheduler fan-out and explicit `ForkNode` both execute through `ForkCoordinator` with the same cancellation, limiter, event, and join semantics. |
+| Join policy | Passed | Unset join policy derives from fork policy: fail-fast requires all results; explicit best-effort joins successful results. |
+| End-to-end injection | Passed | WorkPlan E2E verifies branch-bound AgentFactory injection and branch lifecycle events. |
+| Race detector | Environment blocked | `go test -race` on `forkexec` reached ThreadSanitizer but failed before tests with Windows error 87 while reserving 72 MiB; no data-race result was emitted. |
+
+Commands executed:
+
+```powershell
+go test -p 1 -vet=off ./workplan/runtime/forkexec -count=3
+go test -p 1 -vet=off ./workplan/runtime/scheduler ./workplan/sugar/fork ./agent/core/tool/builtin -run 'Test(NestedForkDependencyJoin|RunWithForkDivergent|ForkJoinContextInheritance|SchedulerForkRespectsMaxForkConcurrency|SchedulerForkFailFastCancelsSiblings|Run_BestEffortJoinSuccessful|Run_UsesInjectedBranchRuntimeAndEmitsBranchEvents|PlanRunFailureIncludesKnownNodeResults)' -count=10 -timeout=3m
+go test -p 1 -vet=off ./workplan -run 'TestWorkPlan_ForkE2EUsesInjectedRuntimeAndEvents' -count=1 -timeout=2m
+go test -p 1 -vet=off -race ./workplan/runtime/forkexec -run 'Test(ContextManagerFreezesParentSnapshot|ForkCoordinatorPassesBranchRuntime|RunRecoversPanicAndCancelsSibling|BestEffortJoinUsesStableBranchIDs)' -count=3 -timeout=2m
+```

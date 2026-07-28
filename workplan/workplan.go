@@ -45,6 +45,7 @@ type WorkPlan struct {
 	BranchEventHook    func(forkexec.Event)
 	BranchRuntimeFor   func(string) forkexec.BranchRuntime
 	ForkPolicy         forkexec.Policy
+	ForkJoinPolicy     forkexec.JoinPolicy
 	MaxForkConcurrency int
 }
 
@@ -74,6 +75,11 @@ func WithBranchRuntimeResolver(resolver func(string) forkexec.BranchRuntime) Opt
 // WithForkPolicy explicitly enables the requested fork policy.
 func WithForkPolicy(policy forkexec.Policy) Option {
 	return func(wp *WorkPlan) { wp.ForkPolicy = policy }
+}
+
+// WithForkJoinPolicy configures automatic and explicit fork merge behavior.
+func WithForkJoinPolicy(policy forkexec.JoinPolicy) Option {
+	return func(wp *WorkPlan) { wp.ForkJoinPolicy = policy }
 }
 
 // WithMaxForkConcurrency configures automatic fork parallelism.
@@ -174,6 +180,7 @@ func (wp *WorkPlan) Retry(id, bodyID string, maxIter int, successCond func(strin
 func (wp *WorkPlan) Fork(id string, branches []node.ForkBranch, maxConcurrent int) *WorkPlan {
 	forkNode := fork.Add(wp.graph, id, branches, maxConcurrent, wp.factory)
 	forkNode.SetPolicy(wp.ForkPolicy)
+	forkNode.SetJoinPolicy(wp.ForkJoinPolicy)
 	if wp.BranchRuntimeFor != nil {
 		forkNode.SetRuntimeResolver(func(branch node.ForkBranch) forkexec.BranchRuntime {
 			return wp.BranchRuntimeFor(branch.Label)
@@ -258,6 +265,7 @@ func (wp *WorkPlan) Run(ctx context.Context) (*types.WorkPlanResult, error) {
 	wp.runner.SetBranchEventHook(wp.BranchEventHook)
 	wp.runner.SetBranchRuntimeResolver(wp.BranchRuntimeFor)
 	wp.runner.SetForkPolicy(wp.ForkPolicy)
+	wp.runner.SetForkJoinPolicy(wp.ForkJoinPolicy)
 	wp.runner.SetMaxForkConcurrency(wp.MaxForkConcurrency)
 	return wp.runner.Run(ctx)
 }

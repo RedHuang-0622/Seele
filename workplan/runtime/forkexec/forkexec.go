@@ -13,14 +13,34 @@ import (
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 )
 
-// Policy controls how a fork responds to branch failures.
-type Policy string
+// ForkPolicy controls how a fork responds to branch failures.
+type ForkPolicy string
+
+// Policy is retained as a compatibility alias for ForkPolicy.
+type Policy = ForkPolicy
 
 const (
 	// PolicyFailFast cancels sibling branches and prevents Join after a failure.
 	PolicyFailFast Policy = "fail_fast"
 	// PolicyBestEffort allows Join to aggregate successful branch results.
 	PolicyBestEffort Policy = "best_effort"
+)
+
+const (
+	// ForkPolicyFailFast is the explicit ForkPolicy name for fail-fast mode.
+	ForkPolicyFailFast = PolicyFailFast
+	// ForkPolicyBestEffort is the explicit ForkPolicy name for best-effort mode.
+	ForkPolicyBestEffort = PolicyBestEffort
+)
+
+// JoinPolicy controls which branch results may be merged.
+type JoinPolicy string
+
+const (
+	// JoinRequireAll rejects a Join whenever any branch does not complete.
+	JoinRequireAll JoinPolicy = "require_all"
+	// JoinSuccessful merges successful results and preserves failed states.
+	JoinSuccessful JoinPolicy = "successful"
 )
 
 // BranchState describes a branch lifecycle state.
@@ -54,10 +74,57 @@ type BranchRuntime struct {
 	Limiter      Limiter
 }
 
+// ParentSnapshot is an immutable deep copy of a parent workflow context.
+// Branch execution never receives a pointer to the mutable parent context.
+type ParentSnapshot struct {
+	workflow *types.WorkflowContext
+}
+
+// NewParentSnapshot freezes parent state for a fork.
+func NewParentSnapshot(parent *types.WorkflowContext) ParentSnapshot {
+	if parent == nil {
+		parent = types.NewWorkflowContext()
+	}
+	return ParentSnapshot{workflow: parent.Clone()}
+}
+
+// CloneWorkflow returns an independent mutable context for one branch.
+func (s ParentSnapshot) CloneWorkflow() *types.WorkflowContext {
+	if s.workflow == nil {
+		return types.NewWorkflowContext()
+	}
+	return s.workflow.Clone()
+}
+
 // BranchContext is exclusively owned by one branch.
 type BranchContext struct {
+	BranchID string
 	Workflow *types.WorkflowContext
 	Runtime  BranchRuntime
+}
+
+// ContextManager owns the immutable parent snapshot and all context boundary
+// operations used by a fork: branch creation and deterministic join merging.
+type ContextManager struct {
+	parent ParentSnapshot
+}
+
+// NewContextManager freezes parent before any branch goroutine starts.
+func NewContextManager(parent *types.WorkflowContext) *ContextManager {
+	return &ContextManager{parent: NewParentSnapshot(parent)}
+}
+
+// ParentSnapshot returns the isolated fork baseline.
+func (m *ContextManager) ParentSnapshot() ParentSnapshot {
+	if m == nil {
+		return NewParentSnapshot(nil)
+	}
+	return m.parent
+}
+
+// NewBranchContext creates an independently owned branch context.
+func (m *ContextManager) NewBranchContext(branchID string, runtime BranchRuntime) *BranchContext {
+	return &BranchContext{BranchID: branchID, Workflow: m.ParentSnapshot().CloneWorkflow(), Runtime: runtime}
 }
 
 // Event is emitted for each observable branch lifecycle transition.
@@ -78,8 +145,8 @@ type Spec struct {
 	Execute func(context.Context, *BranchContext) (string, error)
 }
 
-// Result is the stable result of one branch execution.
-type Result struct {
+// BranchResult is the stable result of one branch execution.
+type BranchResult struct {
 	ID        string
 	NodeID    string
 	Output    string
@@ -90,25 +157,41 @@ type Result struct {
 	Context   *BranchContext
 }
 
-// Coordinator executes parallel branches and owns cancellation, panic recovery,
-// concurrency limiting, and stable result ordering.
-type Coordinator struct {
+// Result is retained as a compatibility alias for BranchResult.
+type Result = BranchResult
+
+// ForkCoordinator is the sole executor for automatic and explicit forks. It
+// owns cancellation, panic recovery, concurrency limiting, and stable result
+// ordering; contexts are supplied exclusively by ContextManager.
+type ForkCoordinator struct {
 	MaxConcurrent int
-	Policy        Policy
+	Policy        ForkPolicy
+	JoinPolicy    JoinPolicy
 	OnEvent       func(Event)
 	eventMu       sync.Mutex
 }
 
-// Run executes all specs from a frozen parent snapshot.
-func (c *Coordinator) Run(ctx context.Context, parent *types.WorkflowContext, specs []Spec) ([]Result, error) {
+// Coordinator is retained as a compatibility alias for ForkCoordinator.
+type Coordinator = ForkCoordinator
+
+// Run executes all specs through an explicit ContextManager boundary.
+// New code should prefer RunWithContextManager when it already owns one.
+func (c *ForkCoordinator) Run(ctx context.Context, parent *types.WorkflowContext, specs []Spec) ([]BranchResult, error) {
+	return c.RunWithContextManager(ctx, NewContextManager(parent), specs)
+}
+
+// RunWithContextManager executes all specs from one frozen parent snapshot.
+func (c *ForkCoordinator) RunWithContextManager(ctx context.Context, contexts *ContextManager, specs []Spec) ([]BranchResult, error) {
 	if len(specs) == 0 {
 		return nil, nil
+	}
+	if contexts == nil {
+		return nil, fmt.Errorf("nil context manager")
 	}
 	specs = append([]Spec(nil), specs...)
 	sort.Slice(specs, func(i, j int) bool { return specs[i].ID < specs[j].ID })
 
-	snapshot := parent.Clone()
-	results := make([]Result, len(specs))
+	results := make([]BranchResult, len(specs))
 	forkCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	sem := make(chan struct{}, c.maxConcurrent())
@@ -135,8 +218,8 @@ func (c *Coordinator) Run(ctx context.Context, parent *types.WorkflowContext, sp
 		wg.Add(1)
 		go func(index int, spec Spec) {
 			defer wg.Done()
-			branch := &BranchContext{Workflow: snapshot.Clone(), Runtime: spec.Runtime}
-			results[index] = Result{ID: spec.ID, NodeID: spec.NodeID, State: StateQueued, Context: branch}
+			branch := contexts.NewBranchContext(spec.ID, spec.Runtime)
+			results[index] = BranchResult{ID: spec.ID, NodeID: spec.NodeID, State: StateQueued, Context: branch}
 			if spec.Prepare != nil {
 				spec.Prepare(branch)
 			}
@@ -196,19 +279,39 @@ func (c *Coordinator) Run(ctx context.Context, parent *types.WorkflowContext, sp
 }
 
 // Join writes successful results to the parent execution flow in stable order.
-func (c *Coordinator) Join(parent *types.WorkflowContext, results []Result) error {
-	return c.join(parent, results, false)
+func (c *ForkCoordinator) Join(parent *types.WorkflowContext, results []BranchResult) error {
+	return c.JoinWithContextManager(NewContextManager(parent), parent, results)
 }
 
 // JoinAggregate always writes a branch-ID keyed aggregate, including for one branch.
-func (c *Coordinator) JoinAggregate(parent *types.WorkflowContext, results []Result) error {
-	return c.join(parent, results, true)
+func (c *ForkCoordinator) JoinAggregate(parent *types.WorkflowContext, results []BranchResult) error {
+	return c.JoinAggregateWithContextManager(NewContextManager(parent), parent, results)
 }
 
-func (c *Coordinator) join(parent *types.WorkflowContext, results []Result, forceAggregate bool) error {
-	results = append([]Result(nil), results...)
+// JoinWithContextManager merges scheduler branch results through their context boundary.
+func (c *ForkCoordinator) JoinWithContextManager(contexts *ContextManager, parent *types.WorkflowContext, results []BranchResult) error {
+	if contexts == nil {
+		return fmt.Errorf("nil context manager")
+	}
+	return contexts.Join(parent, results, c.joinPolicy(), false)
+}
+
+// JoinAggregateWithContextManager merges explicit ForkNode results as an aggregate.
+func (c *ForkCoordinator) JoinAggregateWithContextManager(contexts *ContextManager, parent *types.WorkflowContext, results []BranchResult) error {
+	if contexts == nil {
+		return fmt.Errorf("nil context manager")
+	}
+	return contexts.Join(parent, results, c.joinPolicy(), true)
+}
+
+// Join merges results in stable branch-ID order.
+func (m *ContextManager) Join(parent *types.WorkflowContext, results []BranchResult, policy JoinPolicy, forceAggregate bool) error {
+	if parent == nil {
+		return fmt.Errorf("nil parent workflow context")
+	}
+	results = append([]BranchResult(nil), results...)
 	sort.Slice(results, func(i, j int) bool { return results[i].ID < results[j].ID })
-	if c.policy() == PolicyFailFast {
+	if policy == JoinRequireAll {
 		for _, result := range results {
 			if result.State != StateCompleted {
 				return fmt.Errorf("fork branch %q: %w", result.ID, result.Err)
@@ -245,21 +348,31 @@ func (c *Coordinator) join(parent *types.WorkflowContext, results []Result, forc
 	return nil
 }
 
-func (c *Coordinator) maxConcurrent() int {
+func (c *ForkCoordinator) maxConcurrent() int {
 	if c.MaxConcurrent <= 0 {
 		return 3
 	}
 	return c.MaxConcurrent
 }
 
-func (c *Coordinator) policy() Policy {
-	if c.Policy == PolicyBestEffort {
-		return PolicyBestEffort
+func (c *ForkCoordinator) policy() ForkPolicy {
+	if c.Policy == ForkPolicyBestEffort {
+		return ForkPolicyBestEffort
 	}
-	return PolicyFailFast
+	return ForkPolicyFailFast
 }
 
-func (c *Coordinator) emit(event Event) {
+func (c *ForkCoordinator) joinPolicy() JoinPolicy {
+	if c.JoinPolicy == JoinRequireAll || c.JoinPolicy == JoinSuccessful {
+		return c.JoinPolicy
+	}
+	if c.policy() == ForkPolicyBestEffort {
+		return JoinSuccessful
+	}
+	return JoinRequireAll
+}
+
+func (c *ForkCoordinator) emit(event Event) {
 	if c.OnEvent != nil {
 		c.eventMu.Lock()
 		defer c.eventMu.Unlock()

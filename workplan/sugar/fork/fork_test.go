@@ -39,6 +39,19 @@ func (a taggedAgent) Chat(context.Context, string) (string, error) {
 	return a.tag, nil
 }
 
+type selectiveFactory struct{}
+
+func (selectiveFactory) NewAgent(_ string) node.Agent { return selectiveAgent{} }
+
+type selectiveAgent struct{}
+
+func (selectiveAgent) Chat(_ context.Context, input string) (string, error) {
+	if input == "fail" {
+		return "", context.Canceled
+	}
+	return input, nil
+}
+
 type blockingFactory struct {
 	started chan<- struct{}
 	release <-chan struct{}
@@ -278,6 +291,30 @@ func TestRun_UsesInjectedBranchRuntimeAndEmitsBranchEvents(t *testing.T) {
 				t.Errorf("branch %q missing %q event", branchID, eventType)
 			}
 		}
+	}
+}
+
+func TestRun_BestEffortJoinSuccessful(t *testing.T) {
+	n := NewNode("best-effort", []node.ForkBranch{
+		{Label: "good", Input: "good"},
+		{Label: "failed", Input: "fail"},
+	}, 2, selectiveFactory{})
+	n.SetPolicy(forkexec.ForkPolicyBestEffort)
+	n.SetJoinPolicy(forkexec.JoinSuccessful)
+
+	workflow := types.NewWorkflowContext()
+	output, err := n.Run(context.Background(), workflow)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(output, "good") || !strings.Contains(output, "failed") {
+		t.Errorf("aggregate output = %q, want both branch IDs", output)
+	}
+	if got := workflow.PrevResults["good"]; got == "" {
+		t.Error("successful explicit fork result was not joined")
+	}
+	if _, found := workflow.PrevResults["failed"]; found {
+		t.Error("failed best-effort branch was joined as successful")
 	}
 }
 

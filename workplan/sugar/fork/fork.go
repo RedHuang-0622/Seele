@@ -19,6 +19,7 @@ type ForkNode struct {
 	factory       node.AgentFactory
 	DefaultPrompt string
 	Policy        forkexec.Policy
+	JoinPolicy    forkexec.JoinPolicy
 	RuntimeFor    func(node.ForkBranch) forkexec.BranchRuntime
 	OnEvent       func(forkexec.Event)
 }
@@ -44,6 +45,15 @@ func (n *ForkNode) SetPolicy(policy forkexec.Policy) {
 		return
 	}
 	n.Policy = forkexec.PolicyFailFast
+}
+
+// SetJoinPolicy changes explicit fork merge behavior.
+func (n *ForkNode) SetJoinPolicy(policy forkexec.JoinPolicy) {
+	if policy == forkexec.JoinRequireAll || policy == forkexec.JoinSuccessful {
+		n.JoinPolicy = policy
+		return
+	}
+	n.JoinPolicy = ""
 }
 
 // SetRuntimeResolver accepts branch-bound Seelex runtime injection.
@@ -87,8 +97,9 @@ func (n *ForkNode) Run(ctx context.Context, ec *types.WorkflowContext) (string, 
 		})
 	}
 
-	coordinator := forkexec.Coordinator{MaxConcurrent: n.MaxConcurrent, Policy: n.Policy, OnEvent: n.OnEvent}
-	results, runErr := coordinator.Run(ctx, ec, specs)
+	contexts := forkexec.NewContextManager(ec)
+	coordinator := forkexec.ForkCoordinator{MaxConcurrent: n.MaxConcurrent, Policy: n.Policy, JoinPolicy: n.JoinPolicy, OnEvent: n.OnEvent}
+	results, runErr := coordinator.RunWithContextManager(ctx, contexts, specs)
 	for _, result := range results {
 		nr := &types.NodeResult{NodeBase: types.NodeBase{
 			NodeID: result.ID, Kind: node.KindFork.String(), Status: string(result.State),
@@ -99,7 +110,7 @@ func (n *ForkNode) Run(ctx context.Context, ec *types.WorkflowContext) (string, 
 	if runErr != nil {
 		return "", runErr
 	}
-	if err := coordinator.JoinAggregate(ec, results); err != nil {
+	if err := coordinator.JoinAggregateWithContextManager(contexts, ec, results); err != nil {
 		return "", err
 	}
 	return ec.PrevOutput, nil

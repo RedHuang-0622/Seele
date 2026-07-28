@@ -23,6 +23,11 @@ func (r *Runner) SetForkPolicy(policy forkexec.Policy) {
 	r.sched.SetForkPolicy(policy)
 }
 
+// SetForkJoinPolicy configures automatic fork merge behavior.
+func (r *Runner) SetForkJoinPolicy(policy forkexec.JoinPolicy) {
+	r.sched.SetForkJoinPolicy(policy)
+}
+
 // SetMaxForkConcurrency configures automatic fork parallelism.
 func (r *Runner) SetMaxForkConcurrency(maxConcurrent int) {
 	r.sched.SetMaxForkConcurrency(maxConcurrent)

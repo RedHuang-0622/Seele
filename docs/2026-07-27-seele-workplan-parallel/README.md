@@ -8,7 +8,15 @@ This change makes every fork branch own an isolated deep copy of the parent
 
 ## Design
 
-- `runtime/forkexec.Coordinator` is the only parallel branch executor. Both
+- `ParentSnapshot` freezes a deep-copied parent `WorkflowContext` before any
+  branch starts. `ContextManager` is the only component that creates isolated
+  `BranchContext` values and merges `BranchResult` values at a join boundary.
+- `ForkCoordinator` is the single execution type for Scheduler fan-out and
+  explicit `ForkNode`; `Coordinator` remains only as a compatibility alias.
+- `ForkPolicy` defaults to fail-fast. `JoinPolicy` is derived as require-all
+  for fail-fast and successful-only for explicit best-effort unless callers
+  explicitly override it.
+- `runtime/forkexec.ForkCoordinator` is the only parallel branch executor. Both
   Scheduler automatic forks and explicit `ForkNode` delegate to it.
 - The default policy is `fail_fast`. `best_effort` is available only by an
   explicit policy setting.

@@ -19,6 +19,7 @@ type Scheduler struct {
 	executor           *executor.Executor
 	MaxForkConcurrency int
 	ForkPolicy         forkexec.Policy
+	ForkJoinPolicy     forkexec.JoinPolicy
 	RuntimeFor         func(branchID string) forkexec.BranchRuntime
 	OnNodeDone         func(nr *types.NodeResult)
 	OnBranchEvent      func(forkexec.Event)
@@ -50,6 +51,15 @@ func (s *Scheduler) SetForkPolicy(policy forkexec.Policy) {
 		return
 	}
 	s.ForkPolicy = forkexec.PolicyFailFast
+}
+
+// SetForkJoinPolicy configures how automatic fork results are merged.
+func (s *Scheduler) SetForkJoinPolicy(policy forkexec.JoinPolicy) {
+	if policy == forkexec.JoinRequireAll || policy == forkexec.JoinSuccessful {
+		s.ForkJoinPolicy = policy
+		return
+	}
+	s.ForkJoinPolicy = ""
 }
 
 // SetBranchRuntimeResolver accepts read-only Seelex branch runtime injection.
@@ -128,19 +138,21 @@ func (s *Scheduler) run(ctx context.Context, captureCheckpoints bool) (*types.Wo
 			})
 		}
 
-		coordinator := forkexec.Coordinator{
+		contexts := forkexec.NewContextManager(wc)
+		coordinator := forkexec.ForkCoordinator{
 			MaxConcurrent: s.MaxForkConcurrency,
 			Policy:        s.ForkPolicy,
+			JoinPolicy:    s.ForkJoinPolicy,
 			OnEvent:       s.OnBranchEvent,
 		}
-		results, runErr := coordinator.Run(ctx, wc, specs)
+		results, runErr := coordinator.RunWithContextManager(ctx, contexts, specs)
 		s.recordResults(wc, results, captureCheckpoints, checkpoints)
 		if runErr != nil && s.ForkPolicy != forkexec.PolicyBestEffort {
 			wc.Result.TotalElapsed = time.Since(start)
 			wc.Result.Vars = wc.Vars
 			return wc.Result, checkpoints, runErr
 		}
-		if err := coordinator.Join(wc, results); err != nil {
+		if err := coordinator.JoinWithContextManager(contexts, wc, results); err != nil {
 			wc.Result.TotalElapsed = time.Since(start)
 			wc.Result.Vars = wc.Vars
 			return wc.Result, checkpoints, err
