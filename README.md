@@ -1045,3 +1045,5 @@ Provider 数量不是 Seele 的目标——专注把 Go 原生框架的架构和
 
 - [GitHub 仓库](https://github.com/RedHuang-0622/Seele)
 - [License: MIT](./LICENSE)
+- [文档标准](./docs/DOCUMENTATION_STANDARD.md)
+- [跨模块文档索引](./docs/README.md)
