@@ -10,6 +10,7 @@ import (
 	"github.com/RedHuang-0622/Seele/workplan"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	workplanTypes "github.com/RedHuang-0622/Seele/workplan/core/types"
+	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
 	"github.com/RedHuang-0622/Seele/workplan/sugar/approve"
 )
 
@@ -84,7 +85,12 @@ type WorkPlanTool struct {
 
 	// ProgressCallback 每节点完成时回调，按需选填。
 	// seelex plan visualization 通过此回调实时更新 TUI Plan 面板。
-	ProgressCallback func(nr *workplanTypes.NodeResult)
+	ProgressCallback   func(nr *workplanTypes.NodeResult)
+	BranchEventHook    func(forkexec.Event)
+	BranchRuntimeFor   func(string) forkexec.BranchRuntime
+	ForkPolicy         forkexec.Policy
+	ForkJoinPolicy     forkexec.JoinPolicy
+	MaxForkConcurrency int
 }
 
 // NewWorkPlanTool 创建 WorkPlan 工具。factory 用于子 Agent 创建。
@@ -93,7 +99,58 @@ func NewWorkPlanTool(factory node.AgentFactory) *WorkPlanTool {
 }
 
 // SetGate 设置审批门控，用于 kind:manual 节点的 human-in-the-loop 审批。
-func (w *WorkPlanTool) SetGate(g approve.ApprovalGate) { w.Gate = g }
+func (w *WorkPlanTool) SetGate(g approve.ApprovalGate) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.Gate = g
+}
+
+// SetBranchEventHook configures plan_load-created WorkPlans to emit branch events.
+func (w *WorkPlanTool) SetBranchEventHook(hook func(forkexec.Event)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.BranchEventHook = hook
+}
+
+// SetBranchRuntimeResolver injects Seelex-owned branch runtime metadata.
+func (w *WorkPlanTool) SetBranchRuntimeResolver(resolver func(string) forkexec.BranchRuntime) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.BranchRuntimeFor = resolver
+}
+
+// SetForkPolicy configures the failure policy for plan_load-created WorkPlans.
+func (w *WorkPlanTool) SetForkPolicy(policy forkexec.Policy) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ForkPolicy = policy
+}
+
+// SetForkJoinPolicy configures the merge policy for plan_load-created WorkPlans.
+func (w *WorkPlanTool) SetForkJoinPolicy(policy forkexec.JoinPolicy) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ForkJoinPolicy = policy
+}
+
+// SetMaxForkConcurrency configures branch concurrency for loaded WorkPlans.
+func (w *WorkPlanTool) SetMaxForkConcurrency(maxConcurrent int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.MaxForkConcurrency = maxConcurrent
+}
+
+// newWorkPlanLocked creates a WorkPlan from the tool's injected runtime config.
+// The caller must hold w.mu.
+func (w *WorkPlanTool) newWorkPlanLocked() *workplan.WorkPlan {
+	return workplan.New(w.factory,
+		workplan.WithBranchEventHook(w.BranchEventHook),
+		workplan.WithBranchRuntimeResolver(w.BranchRuntimeFor),
+		workplan.WithForkPolicy(w.ForkPolicy),
+		workplan.WithForkJoinPolicy(w.ForkJoinPolicy),
+		workplan.WithMaxForkConcurrency(w.MaxForkConcurrency),
+	)
+}
 
 func (w *WorkPlanTool) ProviderName() string { return "workplan" }
 

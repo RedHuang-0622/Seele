@@ -35,6 +35,19 @@ func (n *StrategyNode) Run(ctx context.Context, wc *types.WorkflowContext) (stri
 	return n.Strategy.Execute(ctx, wc)
 }
 
+// RunWithAgentFactory executes AgentStrategy with a branch-bound factory.
+// Non-agent strategies keep their normal execution path.
+func (n *StrategyNode) RunWithAgentFactory(ctx context.Context, wc *types.WorkflowContext, factory node.AgentFactory) (string, error) {
+	strategy, ok := n.Strategy.(*AgentStrategy)
+	if !ok || factory == nil {
+		return n.Run(ctx, wc)
+	}
+	if n.Input != "" {
+		wc.PrevOutput = types.RenderTemplate(n.Input, wc)
+	}
+	return strategy.ExecuteWithAgentFactory(ctx, wc, factory)
+}
+
 // MethodStrategy executes a plain Go function.
 type MethodStrategy struct {
 	Fn func(ctx context.Context, input string) (string, error)
@@ -99,6 +112,34 @@ func (s *AgentStrategy) Execute(ctx context.Context, wc *types.WorkflowContext) 
 		prompt = "You are a helpful assistant."
 	}
 	agt := s.Factory.NewAgent(prompt)
+	if f, ok := agt.(interface{ SetToolFilter([]string) }); ok && len(s.ToolFilter) > 0 {
+		f.SetToolFilter(s.ToolFilter)
+	}
+	if sa, ok := agt.(node.StreamAgent); ok && s.OnChunk != nil {
+		out, err := sa.ChatStream(ctx, wc.PrevOutput, s.OnChunk)
+		if err != nil {
+			return "", err
+		}
+		return types.ToJSON(out), nil
+	}
+	out, err := agt.Chat(ctx, wc.PrevOutput)
+	if err != nil {
+		return "", err
+	}
+	return types.ToJSON(out), nil
+}
+
+// ExecuteWithAgentFactory runs this strategy with a branch-local factory
+// without mutating the strategy's construction-time Factory field.
+func (s *AgentStrategy) ExecuteWithAgentFactory(ctx context.Context, wc *types.WorkflowContext, factory node.AgentFactory) (string, error) {
+	if factory == nil {
+		return s.Execute(ctx, wc)
+	}
+	prompt := s.SystemPrompt
+	if prompt == "" {
+		prompt = "You are a helpful assistant."
+	}
+	agt := factory.NewAgent(prompt)
 	if f, ok := agt.(interface{ SetToolFilter([]string) }); ok && len(s.ToolFilter) > 0 {
 		f.SetToolFilter(s.ToolFilter)
 	}

@@ -86,6 +86,18 @@ func (n *ApproveNode) BuildKVS() map[string]any {
 
 // Run presents the question and waits for an answer.
 func (n *ApproveNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, error) {
+	return n.run(ctx, wc, n.factory)
+}
+
+// RunWithAgentFactory executes the approved work with a branch-bound factory.
+func (n *ApproveNode) RunWithAgentFactory(ctx context.Context, wc *types.WorkflowContext, factory node.AgentFactory) (string, error) {
+	if factory == nil {
+		factory = n.factory
+	}
+	return n.run(ctx, wc, factory)
+}
+
+func (n *ApproveNode) run(ctx context.Context, wc *types.WorkflowContext, factory node.AgentFactory) (string, error) {
 	q := Question{
 		ID:      n.ID(),
 		Content: wc.PrevOutput,
@@ -110,7 +122,7 @@ func (n *ApproveNode) Run(ctx context.Context, wc *types.WorkflowContext) (strin
 		if prompt == "" {
 			prompt = "You are a helpful assistant."
 		}
-		agt := n.factory.NewAgent(prompt)
+		agt := factory.NewAgent(prompt)
 		out, err := agt.Chat(ctx, input)
 		if err != nil {
 			return "", err

@@ -11,13 +11,23 @@ import (
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/executor"
+	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
+	"github.com/RedHuang-0622/Seele/workplan/sugar/auto"
 )
 
 type testNode struct {
 	node.BaseNode
 	runFn func(ctx context.Context, wc *types.WorkflowContext) (string, error)
 }
+
+type runtimeFactory struct{ output string }
+
+func (f runtimeFactory) NewAgent(string) node.Agent { return runtimeAgent{output: f.output} }
+
+type runtimeAgent struct{ output string }
+
+func (a runtimeAgent) Chat(context.Context, string) (string, error) { return a.output, nil }
 
 func newTestNode(id string, kind node.NodeKind) *testNode {
 	return &testNode{BaseNode: node.NewBaseNode(id, kind)}
@@ -539,6 +549,34 @@ func TestNestedForkDependencyJoin(t *testing.T) {
 	}
 	if _, ok := reviewContext.PrevResults["tests-check"]; !ok {
 		t.Error("review context is missing tests-check output")
+	}
+}
+
+func TestAutomaticForkUsesBranchBoundAgentFactory(t *testing.T) {
+	g := graph.New()
+	start := newTestNode("start", node.KindMethod)
+	start.runFn = func(context.Context, *types.WorkflowContext) (string, error) { return "start", nil }
+	g.AddNode(start)
+	auto.Add(g, "left", "left input", runtimeFactory{output: "shared-left"})
+	auto.Add(g, "right", "right input", runtimeFactory{output: "shared-right"})
+	g.SetEntry("start")
+	g.AddEdge(edge.Edge{From: "start", To: "left"})
+	g.AddEdge(edge.Edge{From: "start", To: "right"})
+
+	s := New(g, executor.New())
+	s.SetBranchRuntimeResolver(func(branchID string) forkexec.BranchRuntime {
+		return forkexec.BranchRuntime{AgentFactory: runtimeFactory{output: branchID + "-runtime"}}
+	})
+	result, err := s.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	outputs := make(map[string]string)
+	for _, nodeResult := range result.NodeResults {
+		outputs[nodeResult.NodeID] = types.FromJSON(nodeResult.Output)
+	}
+	if outputs["left"] != "left-runtime" || outputs["right"] != "right-runtime" {
+		t.Errorf("automatic fork outputs = %#v, want branch-bound factories", outputs)
 	}
 }
 

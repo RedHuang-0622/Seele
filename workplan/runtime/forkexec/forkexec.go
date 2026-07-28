@@ -220,6 +220,16 @@ func (c *ForkCoordinator) RunWithContextManager(ctx context.Context, contexts *C
 			defer wg.Done()
 			branch := contexts.NewBranchContext(spec.ID, spec.Runtime)
 			results[index] = BranchResult{ID: spec.ID, NodeID: spec.NodeID, State: StateQueued, Context: branch}
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					err := fmt.Errorf("panic: %v", recovered)
+					results[index].State = StatePanicked
+					results[index].Err = err
+					results[index].EndedAt = time.Now()
+					c.emit(Event{Type: StatePanicked, BranchID: spec.ID, NodeID: spec.NodeID, Err: err, At: results[index].EndedAt})
+					recordFailure(err)
+				}
+			}()
 			if spec.Prepare != nil {
 				spec.Prepare(branch)
 			}
@@ -236,17 +246,6 @@ func (c *ForkCoordinator) RunWithContextManager(ctx context.Context, contexts *C
 			results[index].State = StateStarted
 			results[index].StartedAt = time.Now()
 			c.emit(Event{Type: StateStarted, BranchID: spec.ID, NodeID: spec.NodeID, At: results[index].StartedAt})
-			defer func() {
-				if recovered := recover(); recovered != nil {
-					err := fmt.Errorf("panic: %v", recovered)
-					results[index].State = StatePanicked
-					results[index].Err = err
-					results[index].EndedAt = time.Now()
-					c.emit(Event{Type: StatePanicked, BranchID: spec.ID, NodeID: spec.NodeID, Err: err, At: results[index].EndedAt})
-					recordFailure(err)
-				}
-			}()
-
 			output, err := spec.Execute(forkCtx, branch)
 			results[index].Output = types.ToJSON(output)
 			results[index].EndedAt = time.Now()

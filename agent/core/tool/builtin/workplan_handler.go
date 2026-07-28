@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/RedHuang-0622/Seele/workplan"
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	workplanTypes "github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/sugar/approve"
@@ -75,7 +74,7 @@ func (h *planLoadHandler) Execute(ctx context.Context, argsJSON string) (string,
 	defer h.tool.mu.Unlock()
 
 	// 构建新图
-	wp := workplan.New(h.tool.factory)
+	wp := h.tool.newWorkPlanLocked()
 	g := wp.Graph()
 
 	// 1. 添加所有节点
@@ -221,7 +220,7 @@ type planClearHandler struct{ tool *WorkPlanTool }
 
 func (h *planClearHandler) Execute(ctx context.Context, argsJSON string) (string, error) {
 	h.tool.mu.Lock()
-	h.tool.wp = workplan.New(h.tool.factory)
+	h.tool.wp = h.tool.newWorkPlanLocked()
 	h.tool.mu.Unlock()
 	return `{"status":"cleared"}`, nil
 }

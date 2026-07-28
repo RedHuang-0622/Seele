@@ -25,6 +25,14 @@ This change makes every fork branch own an isolated deep copy of the parent
   and lifecycle event delivery.
 - A panic becomes a `panicked` branch result. In fail-fast mode it cancels
   sibling work; in best-effort mode successful branch results can still join.
+- Panic recovery is installed before `Prepare`, so a panic from context setup,
+  limiter acquisition, or branch execution always becomes a `panicked` result.
+- Scheduler passes a branch-bound `AgentFactory` to Auto strategy nodes at
+  execution time; it never mutates or uses the shared factory captured while
+  the graph was built.
+- Approval nodes use the same branch-bound `AgentFactory` after their gate
+  permits execution, so `kind: "manual"` cannot fall back to the shared
+  construction-time account.
 - Scheduler execution is dependency-count based. A join node is eligible only
   after all activated incoming branches finish, so multi-level DAG joins do
   not end when paths diverge.
@@ -53,10 +61,15 @@ When `plan_run` fails, its JSON response remains `status: failed` and also
 contains every NodeResult known at the failure point. This preserves branch
 state for callers that need diagnostics or recovery decisions.
 
+`WorkPlanTool` accepts injected branch event hooks, runtime resolvers, fork and
+join policies, and a concurrency limit. Both `plan_load` and `plan_clear`
+create WorkPlans through the same configured construction path.
+
 ## Verification
 
 The accompanying tests cover context isolation, panic conversion, fail-fast
 cancelation, explicit best-effort aggregation, lifecycle events, injected
-runtime factories, stable joins, nested DAG joins, failure responses, race
-detection, and bounded branch concurrency. See `test-report.md` at repository
-root for the executed command log and results.
+runtime factories for both automatic and approval nodes, stable joins, nested
+DAG joins, failure responses, race detection, and bounded branch concurrency.
+See `test-report.md` at repository root for the executed command log and
+results.

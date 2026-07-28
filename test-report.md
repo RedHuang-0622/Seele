@@ -65,3 +65,23 @@ go test -p 1 -vet=off ./workplan/runtime/scheduler ./workplan/sugar/fork ./agent
 go test -p 1 -vet=off ./workplan -run 'TestWorkPlan_ForkE2EUsesInjectedRuntimeAndEvents' -count=1 -timeout=2m
 go test -p 1 -vet=off -race ./workplan/runtime/forkexec -run 'Test(ContextManagerFreezesParentSnapshot|ForkCoordinatorPassesBranchRuntime|RunRecoversPanicAndCancelsSibling|BestEffortJoinUsesStableBranchIDs)' -count=3 -timeout=2m
 ```
+
+## Execution Chain Follow-up (2026-07-28)
+
+| Dimension | Result | Evidence |
+|---|:---:|---|
+| Prepare panic recovery | Passed | A `Prepare` panic is converted to `panicked`, returned from Run, and cannot escape its branch goroutine. |
+| Automatic factory injection | Passed | Scheduler fan-out executes Auto nodes through the branch-bound `AgentFactory`, not the shared construction-time factory. |
+| Manual approval factory injection | Passed | `plan_load` builds a `kind: "manual"` node with a real Gate; its approved branch uses the injected runtime factory instead of the shared construction-time factory. |
+| plan_load configuration | Passed | Loaded WorkPlans retain injected event/runtime resolvers, fork/join policies, and concurrency limits; Tool-level E2E verifies branch outputs and events. |
+| `go vet` | Passed | `go vet ./agent/core/tool/builtin` accepts the corrected JSON tags. |
+| Race detector | Environment blocked | The default environment has `CGO_ENABLED=0`; with CGO explicitly enabled, the race build fails before test execution because Windows reports insufficient paging-file memory. No race result was emitted. |
+
+```powershell
+go test -p 1 -vet=off ./workplan/runtime/forkexec ./workplan/runtime/executor ./workplan/sugar/approve ./workplan/sugar/auto ./workplan/runtime/scheduler ./agent/core/tool/builtin -run 'Test(RunRecoversPreparePanic|RunRecoversPanicAndCancelsSibling|AutomaticForkUsesBranchBoundAgentFactory|PlanLoadManualNodeUsesBranchRuntimeFactory|PlanLoadPropagatesBranchRuntimeConfiguration|PlanRunFailureIncludesKnownNodeResults|ContextManagerFreezesParentSnapshot|ForkCoordinatorPassesBranchRuntime|NestedForkDependencyJoin|RunWithForkDivergent)' -count=10 -timeout=3m
+
+go test -p 1 -vet=off -race ./workplan/runtime/forkexec ./workplan/runtime/scheduler ./agent/core/tool/builtin -run 'Test(RunRecoversPreparePanic|AutomaticForkUsesBranchBoundAgentFactory|PlanLoadPropagatesBranchRuntimeConfiguration)' -count=3 -timeout=3m
+
+$env:CGO_ENABLED = '1'
+go test -p 1 -vet=off -race ./workplan/runtime/forkexec -run 'Test(ContextManagerFreezesParentSnapshot|ForkCoordinatorPassesBranchRuntime|RunRecoversPreparePanic|RunRecoversPanicAndCancelsSibling|BestEffortJoinUsesStableBranchIDs)' -count=3 -timeout=3m
+```

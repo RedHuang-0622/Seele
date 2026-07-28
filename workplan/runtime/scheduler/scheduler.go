@@ -133,7 +133,7 @@ func (s *Scheduler) run(ctx context.Context, captureCheckpoints bool) (*types.Wo
 					if n == nil {
 						return "", fmt.Errorf("node %q not found", nodeID)
 					}
-					return s.executor.RunNode(branchCtx, n, branch.Workflow)
+					return s.executor.RunNodeWithAgentFactory(branchCtx, n, branch.Workflow, branch.Runtime.AgentFactory)
 				},
 			})
 		}

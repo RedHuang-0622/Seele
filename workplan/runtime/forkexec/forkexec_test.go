@@ -70,6 +70,24 @@ func TestRunRecoversPanicAndCancelsSibling(t *testing.T) {
 	}
 }
 
+func TestRunRecoversPreparePanic(t *testing.T) {
+	coordinator := ForkCoordinator{}
+	results, err := coordinator.Run(context.Background(), types.NewWorkflowContext(), []Spec{{
+		ID: "prepare-panics", NodeID: "prepare-panics",
+		Prepare: func(*BranchContext) { panic("prepare boom") },
+		Execute: func(context.Context, *BranchContext) (string, error) {
+			t.Fatal("Execute must not run after Prepare panic")
+			return "", nil
+		},
+	}})
+	if err == nil {
+		t.Fatal("Run() error = nil, want Prepare panic failure")
+	}
+	if len(results) != 1 || results[0].State != StatePanicked {
+		t.Fatalf("results = %#v, want panicked branch result", results)
+	}
+}
+
 func TestBestEffortJoinUsesStableBranchIDs(t *testing.T) {
 	coordinator := Coordinator{Policy: PolicyBestEffort}
 	parent := types.NewWorkflowContext()
