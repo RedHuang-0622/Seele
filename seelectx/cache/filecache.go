@@ -27,8 +27,8 @@ type FileCache struct {
 	cfg     Config
 	baseDir string
 
-	index     sync.Map    // key → *cacheIndexEntry
-	indexMu   sync.Mutex  // 保护索引批量写入 + 元数据并发读写
+	index     sync.Map   // key → *cacheIndexEntry
+	indexMu   sync.Mutex // 保护索引批量写入 + 元数据并发读写
 	hits      atomic.Int64
 	misses    atomic.Int64
 	totalSize atomic.Int64

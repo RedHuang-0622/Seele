@@ -46,11 +46,11 @@ var DefaultContextConfig = ctx_manager.DefaultConfig
 // ── 历史函数委托（保持向后兼容）─────────────────────────────────
 
 var (
-	EstimateTokens         = ctx_manager.EstimateTokens
-	EstimateMessageTokens  = ctx_manager.EstimateMessageTokens
-	EstimateHistoryTokens  = ctx_manager.EstimateHistoryTokens
-	TruncateToolResult     = ctx_manager.TruncateToolResult
-	TrimHistory            = ctx_manager.TrimHistory
-	NeedCompression        = ctx_manager.NeedCompression
-	CompressHistory        = ctx_manager.CompressHistory
+	EstimateTokens        = ctx_manager.EstimateTokens
+	EstimateMessageTokens = ctx_manager.EstimateMessageTokens
+	EstimateHistoryTokens = ctx_manager.EstimateHistoryTokens
+	TruncateToolResult    = ctx_manager.TruncateToolResult
+	TrimHistory           = ctx_manager.TrimHistory
+	NeedCompression       = ctx_manager.NeedCompression
+	CompressHistory       = ctx_manager.CompressHistory
 )

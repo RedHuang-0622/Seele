@@ -129,7 +129,7 @@ func TestEstimateTokens_Short(t *testing.T) {
 		{"abcd", 2},
 		{"hello", 2},
 		{"Hello, World!", 5}, // 13 bytes -> (13+2)/3 = 5
-		{"a\nb", 1},           // 3 bytes -> (3+2)/3 = 1
+		{"a\nb", 1},          // 3 bytes -> (3+2)/3 = 1
 	}
 	for _, tc := range tests {
 		got := EstimateTokens(tc.input)
@@ -487,8 +487,8 @@ func TestTrimHistory_SystemPreserved(t *testing.T) {
 func TestTrimHistory_OrphanToolsStripped(t *testing.T) {
 	msgs := []types.Message{
 		{Role: "system", Content: strPtr("sys")},
-		{Role: "tool", Content: strPtr("r1"), ToolCallID: "c1"},  // leading orphan in rest
-		{Role: "tool", Content: strPtr("r2"), ToolCallID: "c2"},  // leading orphan in rest
+		{Role: "tool", Content: strPtr("r1"), ToolCallID: "c1"}, // leading orphan in rest
+		{Role: "tool", Content: strPtr("r2"), ToolCallID: "c2"}, // leading orphan in rest
 		{Role: "user", Content: strPtr("hello")},
 		{Role: "assistant", Content: strPtr("world")},
 	}

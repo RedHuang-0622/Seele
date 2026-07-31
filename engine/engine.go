@@ -11,28 +11,36 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/seelectx/cache"
 	"github.com/RedHuang-0622/Seele/seelectx/storage"
 	"github.com/RedHuang-0622/Seele/seelectx/tracer"
+	"github.com/RedHuang-0622/Seele/telemetry"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
+// Runtime is the minimal assembled Agent surface consumed by Engine. Engine
+// does not depend on the concrete agent package or any tool provider.
+type Runtime interface {
+	ToolRuntime
+	LLM() types.ChatCompleter
+}
+
 // Engine 封装 Agent 与 LLM 客户端，提供便捷的 ReAct 循环。
 type Engine struct {
-	agent     *agent.Agent
+	agent     Runtime
 	llm       types.ChatCompleter
 	loop      Loop
 	tracer    tracer.Tracer
 	lastTrace *tracer.Tree
 
-	cfg       SessionConfig
-	history   []types.Message
-	sessionID string
-	cache     cache.Provider
-	store     storage.Storage
-	modelName string
-	hooks     *LoopHooks
+	cfg           SessionConfig
+	history       []types.Message
+	sessionID     string
+	cache         cache.Provider
+	store         storage.Storage
+	modelName     string
+	hooks         *LoopHooks
+	telemetryHook telemetry.Hook
 }
 
 // Option 配置 Engine 的创建参数。
@@ -72,22 +80,22 @@ func WithHooks(hooks *LoopHooks) Option {
 	return func(e *Engine) { e.hooks = hooks }
 }
 
-// New 创建 Engine。
-func New(a *agent.Agent, opts ...Option) *Engine {
-	modelName := ""
-	if pool := a.AccountPool(); pool != nil {
-		if accts := pool.All(); len(accts) > 0 {
-			modelName = accts[0].Model
-		}
-	}
+// WithTelemetryHook installs structured OTel-aligned lifecycle hooks on the
+// default ReAct loop.
+func WithTelemetryHook(hook telemetry.Hook) Option {
+	return func(e *Engine) { e.telemetryHook = hook }
+}
 
+// New 创建 Engine。
+func New(a Runtime, opts ...Option) *Engine {
 	e := &Engine{
 		agent:     a,
-		llm:       a.LLM(),
 		cfg:       DefaultSessionConfig(),
 		sessionID: fmt.Sprintf("sess_%d", time.Now().UnixNano()),
-		modelName: modelName,
 		tracer:    &tracer.NoopTracer{},
+	}
+	if a != nil {
+		e.llm = a.LLM()
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -103,6 +111,7 @@ func New(a *agent.Agent, opts ...Option) *Engine {
 		rl.respCache = cache.NewResponseCache(e.cache)
 		rl.store = e.store
 		rl.hooks = e.hooks
+		rl.telemetryHook = e.telemetryHook
 		if e.cfg.MaxLoops != DefaultSessionConfig().MaxLoops {
 			rl.cfg.MaxLoops = e.cfg.MaxLoops
 		}
@@ -115,8 +124,8 @@ func New(a *agent.Agent, opts ...Option) *Engine {
 	return e
 }
 
-// Agent 返回底层的 Agent 实例。
-func (e *Engine) Agent() *agent.Agent { return e.agent }
+// Agent returns the assembled runtime used by Engine.
+func (e *Engine) Agent() Runtime { return e.agent }
 
 // History 返回当前对话历史。
 func (e *Engine) History() []types.Message {

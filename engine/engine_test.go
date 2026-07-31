@@ -11,10 +11,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/agent"
+	"github.com/RedHuang-0622/Seele/seelectx/cache"
+	"github.com/RedHuang-0622/Seele/seelectx/storage"
 	"github.com/RedHuang-0622/Seele/seelectx/tracer"
 	"github.com/RedHuang-0622/Seele/types"
 )
@@ -40,6 +44,30 @@ type mockLLMServer struct {
 	mu          sync.Mutex
 	queue       []mockLLMResponse
 	defaultText string
+	seen        [][]types.Message
+}
+
+// seenPrompt is a snapshot wrapper for type-safe access from the test.
+type seenPrompt struct {
+	Messages []types.Message
+}
+
+func (m *mockLLMServer) Seen() []seenPrompt {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]seenPrompt, len(m.seen))
+	for i, msgs := range m.seen {
+		out[i] = seenPrompt{Messages: msgs}
+	}
+	return out
+}
+
+func (m *mockLLMServer) record(msgs []types.Message) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copyMsgs := make([]types.Message, len(msgs))
+	copy(copyMsgs, msgs)
+	m.seen = append(m.seen, copyMsgs)
 }
 
 func newMockLLMServer() *mockLLMServer {
@@ -86,6 +114,7 @@ func (m *mockLLMServer) handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", 400)
 		return
 	}
+	m.record(req.Messages)
 
 	resp := m.pop()
 
@@ -516,4 +545,181 @@ func TestEngine_Tracer_NoopIsDefault(t *testing.T) {
 	if tree.Root != nil {
 		t.Error("NoopTracer should return nil Root")
 	}
+}
+
+// =============================================================================
+// Explicit history compression tests
+// =============================================================================
+
+// fillLongHistory fills the engine with enough body to exceed the legacy 6144
+// threshold. The caller decides whether to compress it.
+func fillLongHistory(eng *Engine) {
+	for i := 0; i < 30; i++ {
+		body := make([]byte, 600)
+		for j := range body {
+			body[j] = byte('a' + (j % 26))
+		}
+		s := string(body)
+		eng.AppendHistory(types.Message{Role: "user", Content: &s})
+		eng.AppendHistory(types.Message{Role: "assistant", Content: &s})
+	}
+}
+
+// TestEngine_RunDoesNotCompressLongHistory verifies that the main ReAct loop
+// forwards caller-owned history exactly once without hidden transformation.
+func TestEngine_RunDoesNotCompressLongHistory(t *testing.T) {
+	mockSrv := newMockLLMServer()
+	defer mockSrv.Close()
+
+	a, err := newTestAgent(mockSrv.URL())
+	if err != nil {
+		t.Fatalf("agent.New() failed: %v", err)
+	}
+	defer a.Shutdown()
+
+	eng := New(a)
+	fillLongHistory(eng)
+	before := eng.History()
+	userInput := "next user input"
+
+	mockSrv.EnqueueText("long-context response")
+	if _, err := eng.Chat(context.Background(), userInput); err != nil {
+		t.Fatalf("Chat() failed: %v", err)
+	}
+	seen := mockSrv.Seen()
+	if len(seen) != 1 {
+		t.Fatalf("model calls = %d, want 1 (no hidden compression call)", len(seen))
+	}
+	want := append([]types.Message(nil), before...)
+	want = append(want, types.Message{Role: "user", Content: &userInput})
+	if !reflect.DeepEqual(seen[0].Messages, want) {
+		t.Fatal("main ReAct loop rewrote or truncated caller-owned history")
+	}
+}
+
+// TestEngine_CompressNowTriggersOnDemand verifies the explicit CompressNow
+// helper replaces history only when the caller invokes it.
+func TestEngine_CompressNowTriggersOnDemand(t *testing.T) {
+	mockSrv := newMockLLMServer()
+	defer mockSrv.Close()
+	a, err := newTestAgent(mockSrv.URL())
+	if err != nil {
+		t.Fatalf("agent.New() failed: %v", err)
+	}
+	defer a.Shutdown()
+
+	eng := New(a)
+	fillLongHistory(eng)
+	loop := NewReActLoop(a, a.LLM())
+	for i := range eng.History() {
+		loop.AppendHistory(eng.History()[i])
+	}
+	// CompressHistory makes an LLM call. Pre-stage the response so the mock
+	// echoes a summary string that the helper will splice into history.
+	mockSrv.EnqueueText("everything trimmed")
+	if err := loop.CompressNow(context.Background()); err != nil {
+		t.Fatalf("CompressNow error = %v", err)
+	}
+	// After compression, the loop's history must contain a system message
+	// carrying the bracketed summary sentinel.
+	for _, msg := range loop.History() {
+		if msg.Content != nil && strings.Contains(*msg.Content, "Context summary of earlier execution") {
+			return
+		}
+	}
+	t.Fatal("CompressNow must inject the legacy summary message into history")
+}
+
+func TestEngine_CompressNowPersistsBeforeNextRun(t *testing.T) {
+	mockSrv := newMockLLMServer()
+	defer mockSrv.Close()
+	a, err := newTestAgent(mockSrv.URL())
+	if err != nil {
+		t.Fatalf("agent.New() failed: %v", err)
+	}
+	defer a.Shutdown()
+
+	fileCache, err := cache.NewFileCache(cache.Config{BaseDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("cache.NewFileCache() failed: %v", err)
+	}
+	loop := NewReActLoop(a, a.LLM(), WithSessionID("compressed-session"))
+	loop.cache = fileCache
+	seed := New(a)
+	fillLongHistory(seed)
+	for _, msg := range seed.History() {
+		loop.AppendHistory(msg)
+	}
+	if err := loop.persistHistory(loop.History()); err != nil {
+		t.Fatalf("persist initial history: %v", err)
+	}
+
+	mockSrv.EnqueueText("everything trimmed")
+	if err := loop.CompressNow(context.Background()); err != nil {
+		t.Fatalf("CompressNow error = %v", err)
+	}
+	compressed := loop.History()
+	value, ok := fileCache.Get("compressed-session")
+	if !ok {
+		t.Fatal("compressed history was not written to cache")
+	}
+	var cached []types.Message
+	if err := json.Unmarshal([]byte(value), &cached); err != nil {
+		t.Fatalf("unmarshal cached history: %v", err)
+	}
+	if !reflect.DeepEqual(cached, compressed) {
+		t.Fatal("cache does not contain the compressed history snapshot")
+	}
+
+	mockSrv.EnqueueText("next response")
+	if _, err := loop.Run(context.Background(), "continue", nil); err != nil {
+		t.Fatalf("Run after CompressNow failed: %v", err)
+	}
+	if !historyContains(loop.History(), "Context summary of earlier execution") {
+		t.Fatal("next Run restored stale uncompressed history")
+	}
+}
+
+type rejectingStorage struct{}
+
+func (rejectingStorage) Save(string, []types.Message) error { return fmt.Errorf("write rejected") }
+func (rejectingStorage) Load(string) ([]types.Message, error) {
+	return nil, fmt.Errorf("not found")
+}
+func (rejectingStorage) List() []storage.SessionMeta { return nil }
+func (rejectingStorage) Delete(string) error         { return nil }
+
+func TestEngine_CompressNowKeepsHistoryWhenPersistenceFails(t *testing.T) {
+	mockSrv := newMockLLMServer()
+	defer mockSrv.Close()
+	a, err := newTestAgent(mockSrv.URL())
+	if err != nil {
+		t.Fatalf("agent.New() failed: %v", err)
+	}
+	defer a.Shutdown()
+
+	loop := NewReActLoop(a, a.LLM())
+	loop.store = rejectingStorage{}
+	seed := New(a)
+	fillLongHistory(seed)
+	for _, msg := range seed.History() {
+		loop.AppendHistory(msg)
+	}
+	before := loop.History()
+	mockSrv.EnqueueText("everything trimmed")
+	if err := loop.CompressNow(context.Background()); err == nil || !strings.Contains(err.Error(), "persist compressed history") {
+		t.Fatalf("CompressNow error = %v, want persistence error", err)
+	}
+	if !reflect.DeepEqual(loop.History(), before) {
+		t.Fatal("CompressNow mutated history after persistence failure")
+	}
+}
+
+func historyContains(history []types.Message, needle string) bool {
+	for _, msg := range history {
+		if msg.Content != nil && strings.Contains(*msg.Content, needle) {
+			return true
+		}
+	}
+	return false
 }

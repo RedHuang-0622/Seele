@@ -752,7 +752,7 @@ func TestSaveIndex_Persists(t *testing.T) {
 
 	s.mu.Lock()
 	s.index["test-session"] = &SessionMeta{
-		SessionID: "test-session",
+		SessionID:  "test-session",
 		TokenCount: 42,
 		ShardCount: 1,
 		CreatedAt:  time.Now(),

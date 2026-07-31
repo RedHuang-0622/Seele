@@ -13,8 +13,8 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockChatCompleter struct {
-	completeFunc            func(ctx context.Context, messages []types.Message, tools []types.Tool) (types.Message, error)
-	completeStreamFunc      func(ctx context.Context, messages []types.Message, tools []types.Tool, onChunk func(delta string)) (content string, reasoningContent string, toolCalls []types.ToolCall, err error)
+	completeFunc             func(ctx context.Context, messages []types.Message, tools []types.Tool) (types.Message, error)
+	completeStreamFunc       func(ctx context.Context, messages []types.Message, tools []types.Tool, onChunk func(delta string)) (content string, reasoningContent string, toolCalls []types.ToolCall, err error)
 	completeStreamEventsFunc func(ctx context.Context, messages []types.Message, tools []types.Tool, onEvent func(types.StreamEvent)) (content string, reasoningContent string, toolCalls []types.ToolCall, err error)
 }
 

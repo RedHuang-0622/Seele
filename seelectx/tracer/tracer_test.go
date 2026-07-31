@@ -148,6 +148,17 @@ func TestSimpleTracer_EndSpan_RecordsDuration(t *testing.T) {
 	}
 }
 
+func TestNormalizedSpanTimingAdvancesEqualClockSamples(t *testing.T) {
+	start := time.Unix(100, 0)
+	end, duration := normalizedSpanTiming(start, start)
+	if !end.After(start) {
+		t.Fatalf("end = %v, want after %v", end, start)
+	}
+	if duration != time.Nanosecond {
+		t.Fatalf("duration = %v, want 1ns", duration)
+	}
+}
+
 func TestSimpleTracer_EndSpan_WithError(t *testing.T) {
 	st := NewSimpleTracer()
 	ctx := context.Background()

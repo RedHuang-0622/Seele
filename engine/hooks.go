@@ -12,11 +12,11 @@ import (
 // LLMInfo 描述一次 LLM 调用的上下文信息。
 // LLMStart 时仅 Turn/ToolCount 有效，LLMComplete 时 Response/ToolCalls/Usage 补充。
 type LLMInfo struct {
-	Turn      int               // 当前是第几次 LLM 调用（0-based）
-	ToolCount int               // 本次调用可用的工具数
-	Response  string            // LLM 返回的纯文本（tool_calls 时为空）
-	ToolCalls []types.ToolCall  // LLM 返回的工具调用（文本回复时为 nil）
-	Usage     *types.Usage      // token 用量（可能为 nil）
+	Turn      int              // 当前是第几次 LLM 调用（0-based）
+	ToolCount int              // 本次调用可用的工具数
+	Response  string           // LLM 返回的纯文本（tool_calls 时为空）
+	ToolCalls []types.ToolCall // LLM 返回的工具调用（文本回复时为 nil）
+	Usage     *types.Usage     // token 用量（可能为 nil）
 }
 
 // ToolCallInfo 描述一次工具调用的完整信息。

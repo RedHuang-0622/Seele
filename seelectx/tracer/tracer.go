@@ -197,10 +197,10 @@ type Tracer interface {
 
 type noopSpan struct{}
 
-func (noopSpan) End(_ ...SpanOption)                        {}
-func (noopSpan) ID() string                                 { return "" }
-func (noopSpan) SetAttr(_, _ string)                        {}
-func (noopSpan) AddEvent(_ string, _ map[string]string)     {}
+func (noopSpan) End(_ ...SpanOption)                    {}
+func (noopSpan) ID() string                             { return "" }
+func (noopSpan) SetAttr(_, _ string)                    {}
+func (noopSpan) AddEvent(_ string, _ map[string]string) {}
 
 // =============================================================================
 // NoopTracer — Tracer 的空实现（编译器零开销）
@@ -251,8 +251,8 @@ type SimpleTracer struct {
 	seq     int
 
 	// OTel（可选）：非 nil 时在 span.End() 时额外发射 OTel span
-	otelTracer  oteltrace.Tracer  // nil = 不发射 OTel
-	otelTp      oteltrace.TracerProvider
+	otelTracer oteltrace.Tracer // nil = 不发射 OTel
+	otelTp     oteltrace.TracerProvider
 }
 
 // WithOTelTracerProvider 设置可选的 OTel TracerProvider。
@@ -337,8 +337,7 @@ func (t *SimpleTracer) Export(_ context.Context) *Tree {
 	}
 	// 构建 Children 树（根 span 的 End 可能还未调用，补上 end time）
 	if root.End.IsZero() {
-		root.End = time.Now()
-		root.Duration = root.End.Sub(root.Start)
+		root.End, root.Duration = normalizedSpanTiming(root.Start, time.Now())
 	}
 	t.buildChildren(root)
 
@@ -364,8 +363,7 @@ func (t *SimpleTracer) buildChildren(parent *Node) {
 		if span.ParentID == parent.ID && span.ID != parent.ID {
 			// 子 span 的 End 可能还未调用，补上 end time
 			if span.End.IsZero() {
-				span.End = time.Now()
-				span.Duration = span.End.Sub(span.Start)
+				span.End, span.Duration = normalizedSpanTiming(span.Start, time.Now())
 			}
 			parent.Children = append(parent.Children, span)
 		}
@@ -400,9 +398,7 @@ func (s *simpleSpan) End(opts ...SpanOption) {
 		return
 	}
 
-	now := time.Now()
-	node.End = now
-	node.Duration = now.Sub(node.Start)
+	node.End, node.Duration = normalizedSpanTiming(node.Start, time.Now())
 
 	for _, opt := range opts {
 		opt(node)
@@ -412,6 +408,13 @@ func (s *simpleSpan) End(opts ...SpanOption) {
 	if s.tracer.otelTracer != nil {
 		s.emitOTelSpan(node)
 	}
+}
+
+func normalizedSpanTiming(start, end time.Time) (time.Time, time.Duration) {
+	if !end.After(start) {
+		end = start.Add(time.Nanosecond)
+	}
+	return end, end.Sub(start)
 }
 
 // emitOTelSpan 将本地 span 发射为 OTel span（低精度模式）。

@@ -34,9 +34,9 @@ type Config struct {
 //	MaxToolResultChars:  4000
 func DefaultConfig() Config {
 	return Config{
-		MaxTokens:           8192,
-		CompressThreshold:   6144,
-		MaxToolResultChars:  4000,
+		MaxTokens:          8192,
+		CompressThreshold:  6144,
+		MaxToolResultChars: 4000,
 	}
 }
 

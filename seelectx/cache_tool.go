@@ -176,9 +176,9 @@ func RegisterCacheTools(register ToolRegistrar, cache CacheProvider, schemaOf Sc
 				deleted = cache.ClearByPrefix(input.Prefix)
 			}
 			result := map[string]any{
-				"deleted":    deleted,
-				"prefix":     input.Prefix,
-				"message":    fmt.Sprintf("cleared %d cache entries", deleted),
+				"deleted": deleted,
+				"prefix":  input.Prefix,
+				"message": fmt.Sprintf("cleared %d cache entries", deleted),
 			}
 			b, _ := json.MarshalIndent(result, "", "  ")
 			return string(b), nil
