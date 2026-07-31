@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
+	rootpool "github.com/RedHuang-0622/Seele/accountpool"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
@@ -23,8 +25,9 @@ import (
 //
 // 无第三方依赖，纯标准库 net/http。
 type ChatClient struct {
-	Cfg    types.LLMConfig
-	Client *http.Client
+	Cfg             types.LLMConfig
+	Client          *http.Client
+	selectedAccount string
 	pool            *AccountPool     // 账号池，非必填
 	strategy        ProviderStrategy // 传输层策略，nil 时通过 effectiveStrategy 自动选择
 	provider        ProviderType     // llm_config.provider: 锁死本轮消息格式，优先于 account.Provider
@@ -58,8 +61,19 @@ func (c *ChatClient) SelectAccount(name string) bool {
 	if c.pool == nil {
 		return false
 	}
-	return c.pool.Select(name) != nil
+	account, ok := c.pool.Lookup(name)
+	if !ok || account.Disabled {
+		return false
+	}
+	c.selectedAccount = name
+	return true
 }
+
+// ClearSelectedAccount removes the account pin and restores P2C selection.
+func (c *ChatClient) ClearSelectedAccount() { c.selectedAccount = "" }
+
+// SelectedAccount returns the account ID pinned on this client instance.
+func (c *ChatClient) SelectedAccount() string { return c.selectedAccount }
 
 // Provider 返回当前会话级 provider，空值表示默认 "openai" 格式。
 func (c *ChatClient) Provider() ProviderType {
@@ -101,13 +115,36 @@ func NewChatClient(cfg types.LLMConfig) *ChatClient {
 // 否则 round-robin（Get）。
 // 没有 pool 或没有可用账号时返回 nil。
 func (c *ChatClient) effectiveAccount() *Account {
-	if c.pool != nil {
-		if c.providerFilter != "" {
-			return c.pool.GetByProvider(c.providerFilter)
-		}
-		return c.pool.Get()
+	if c.pool == nil {
+		return nil
 	}
-	return nil
+	lease, err := c.pool.Acquire(context.Background(), c.acquireRequest())
+	if err != nil {
+		return nil
+	}
+	defer lease.Release()
+	return lease.Client()
+}
+
+func (c *ChatClient) acquireRequest() rootpool.AcquireRequest {
+	request := rootpool.AcquireRequest{AccountID: c.selectedAccount}
+	if c.providerFilter != "" {
+		request.Metadata = map[string]string{"provider": string(c.providerFilter)}
+	}
+	return request
+}
+
+func (c *ChatClient) acquireAccount(
+	ctx context.Context,
+) (*Account, *rootpool.Lease[*Account], error) {
+	if c.pool == nil {
+		return nil, nil, nil
+	}
+	lease, err := c.pool.Acquire(ctx, c.acquireRequest())
+	if err != nil {
+		return nil, nil, fmt.Errorf("ChatClient: acquire account: %w", err)
+	}
+	return lease.Client(), lease, nil
 }
 
 // effectiveStrategy 根据会话级 provider（由 llm_config.provider 设置）选择传输层策略。
@@ -148,9 +185,12 @@ func (c *ChatClient) effectiveStrategy(acct *Account) ProviderStrategy {
 //   - 若模型发起 tool_calls，Message.ToolCalls 非空，Message.Content 可能为空。
 //   - 若模型直接回复，Message.Content 为文本，Message.ToolCalls 为空。
 func (c *ChatClient) Complete(ctx context.Context, messages []types.Message, tools []types.Tool) (types.Message, error) {
-	acct := c.effectiveAccount()
-	if acct == nil && c.pool != nil {
-		return types.Message{}, fmt.Errorf("ChatClient: all accounts rate-limited or disabled")
+	acct, lease, err := c.acquireAccount(ctx)
+	if err != nil {
+		return types.Message{}, err
+	}
+	if lease != nil {
+		defer lease.Release()
 	}
 	strategy := c.effectiveStrategy(acct)
 
@@ -201,7 +241,7 @@ type sseState struct {
 	tcMap       map[int]*types.ToolCall // tool_call index → 累积的工具调用
 	sb          strings.Builder         // 累积纯文本回复
 	reasoningSB strings.Builder         // 累积思索文段
-	isToolMode  bool                   // 是否已收到 tool_call 帧
+	isToolMode  bool                    // 是否已收到 tool_call 帧
 }
 
 func newSSEState() *sseState {
@@ -261,12 +301,25 @@ func buildToolCalls(tcMap map[int]*types.ToolCall) []types.ToolCall {
 // doStreamRequest 构造并发送流式 HTTP 请求，返回响应 body。
 // 调用方负责关闭 body。
 func (c *ChatClient) doStreamRequest(ctx context.Context, messages []types.Message, tools []types.Tool) (io.ReadCloser, error) {
-	acct := c.effectiveAccount()
-	if acct == nil && c.pool != nil {
-		return nil, fmt.Errorf("ChatClient: all accounts rate-limited or disabled")
+	body, _, err := c.openStream(ctx, messages, tools)
+	return body, err
+}
+
+func (c *ChatClient) openStream(
+	ctx context.Context,
+	messages []types.Message,
+	tools []types.Tool,
+) (io.ReadCloser, ProviderStrategy, error) {
+	acct, lease, err := c.acquireAccount(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	releaseOnError := func() {
+		if lease != nil {
+			_ = lease.Release()
+		}
 	}
 	strategy := c.effectiveStrategy(acct)
-
 	baseURL := c.Cfg.BaseURL
 	apiKey := c.Cfg.APIKey
 	if acct != nil {
@@ -276,33 +329,71 @@ func (c *ChatClient) doStreamRequest(ctx context.Context, messages []types.Messa
 
 	raw, err := strategy.BuildRequest(effectiveModel(c.Cfg, acct), messages, tools, true, requestOpts(c.Cfg, acct))
 	if err != nil {
-		return nil, fmt.Errorf("marshal stream request: %w", err)
+		releaseOnError()
+		return nil, nil, fmt.Errorf("marshal stream request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		baseURL+strategy.Endpoint(), bytes.NewReader(raw))
 	if err != nil {
-		return nil, fmt.Errorf("build stream request: %w", err)
+		releaseOnError()
+		return nil, nil, fmt.Errorf("build stream request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	hdrKey, hdrVal := strategy.AuthHeader(apiKey)
 	httpReq.Header.Set(hdrKey, hdrVal)
-	for k, v := range strategy.SSEHeaders() {
-		httpReq.Header.Set(k, v)
+	for key, value := range strategy.SSEHeaders() {
+		httpReq.Header.Set(key, value)
 	}
 
-	resp, err := c.Client.Do(httpReq)
+	response, err := c.Client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("HTTP stream: %w", err)
+		releaseOnError()
+		return nil, nil, fmt.Errorf("HTTP stream: %w", err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return nil, fmt.Errorf("HTTP %d: %.512s", resp.StatusCode, body)
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		releaseOnError()
+		return nil, nil, fmt.Errorf("HTTP %d: %.512s", response.StatusCode, body)
 	}
 
-	return resp.Body, nil
+	return newLeasedReadCloser(response.Body, lease), strategy, nil
+}
+
+type leasedReadCloser struct {
+	body    io.ReadCloser
+	once    sync.Once
+	release func()
+}
+
+func newLeasedReadCloser(
+	body io.ReadCloser,
+	lease *rootpool.Lease[*Account],
+) *leasedReadCloser {
+	return &leasedReadCloser{
+		body: body,
+		release: func() {
+			if lease != nil {
+				_ = lease.Release()
+			}
+		},
+	}
+}
+
+func (body *leasedReadCloser) Read(buffer []byte) (int, error) {
+	read, err := body.body.Read(buffer)
+	if err != nil {
+		body.once.Do(body.release)
+	}
+	return read, err
+}
+
+func (body *leasedReadCloser) Close() error {
+	err := body.body.Close()
+	body.once.Do(body.release)
+	return err
 }
 
 // CompleteStream 发起流式 chat completion 请求。
@@ -342,10 +433,7 @@ func (c *ChatClient) completeStreamInternal(
 	tools []types.Tool,
 	onChunk func(string),
 ) (content string, reasoningContent string, toolCalls []types.ToolCall, err error) {
-
-	strategy := c.effectiveStrategy(c.effectiveAccount())
-
-	body, err := c.doStreamRequest(ctx, messages, tools)
+	body, strategy, err := c.openStream(ctx, messages, tools)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("ChatClient stream: %w", err)
 	}

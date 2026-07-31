@@ -40,11 +40,11 @@ type anthropicUsage struct {
 }
 
 type anthropicResponse struct {
-	ID      string                   `json:"id"`
-	Type    string                   `json:"type"`
-	Role    string                   `json:"role"`
-	Content []anthropicContentBlock  `json:"content"`
-	Usage   *anthropicUsage          `json:"usage,omitempty"`
+	ID      string                  `json:"id"`
+	Type    string                  `json:"type"`
+	Role    string                  `json:"role"`
+	Content []anthropicContentBlock `json:"content"`
+	Usage   *anthropicUsage         `json:"usage,omitempty"`
 	Error   *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
@@ -53,8 +53,8 @@ type anthropicResponse struct {
 
 type AnthropicStrategy struct{}
 
-func (s *AnthropicStrategy) Name() string              { return "anthropic" }
-func (s *AnthropicStrategy) Endpoint() string           { return "/v1/messages" }
+func (s *AnthropicStrategy) Name() string                              { return "anthropic" }
+func (s *AnthropicStrategy) Endpoint() string                          { return "/v1/messages" }
 func (s *AnthropicStrategy) AuthHeader(apiKey string) (string, string) { return "x-api-key", apiKey }
 func (s *AnthropicStrategy) SSEHeaders() map[string]string {
 	return map[string]string{"Accept": "text/event-stream", "anthropic-version": "2023-06-01"}

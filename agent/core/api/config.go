@@ -10,17 +10,18 @@ import (
 
 // AccountEntry 是 YAML 中单个账号的条目。
 type AccountEntry struct {
-	Name        string  `yaml:"name"`
-	Provider    string  `yaml:"provider"`
-	BaseURL     string  `yaml:"base_url"`
-	APIKey      string  `yaml:"api_key"`
-	Model       string  `yaml:"model"`
-	Priority    int     `yaml:"priority"`
-	MaxRPM      int     `yaml:"max_rpm"`
-	Disabled    bool    `yaml:"disabled"`
-	MaxTokens   int     `yaml:"max_tokens,omitempty"`   // 覆盖全局
-	Timeout     int     `yaml:"timeout,omitempty"`       // 覆盖全局
-	Temperature float64 `yaml:"temperature,omitempty"`    // 覆盖全局
+	Name           string  `yaml:"name"`
+	Provider       string  `yaml:"provider"`
+	BaseURL        string  `yaml:"base_url"`
+	APIKey         string  `yaml:"api_key"`
+	Model          string  `yaml:"model"`
+	Priority       int     `yaml:"priority"`
+	MaxRPM         int     `yaml:"max_rpm"`
+	Disabled       bool    `yaml:"disabled"`
+	MaxConcurrency int     `yaml:"max_concurrency,omitempty"`
+	MaxTokens      int     `yaml:"max_tokens,omitempty"`  // 覆盖全局
+	Timeout        int     `yaml:"timeout,omitempty"`     // 覆盖全局
+	Temperature    float64 `yaml:"temperature,omitempty"` // 覆盖全局
 }
 
 // ── 旧格式（仅 accounts 列表）───────────────────────────────────
@@ -63,7 +64,7 @@ func LoadAccountsConfigBytes(data []byte) (*AccountPool, error) {
 // Provider 决定整个 session 的消息格式（传输层策略 + 工具编码策略）。
 // 设好后不应在 session 内切换，否则历史消息格式不一致。
 type LLMConfigEntry struct {
-	Provider    ProviderType `yaml:"provider"`    // 必填: "openai" | "anthropic"，锁死格式
+	Provider    ProviderType `yaml:"provider"` // 必填: "openai" | "anthropic"，锁死格式
 	MaxTokens   int          `yaml:"max_tokens"`
 	Timeout     int          `yaml:"timeout"`
 	Temperature float64      `yaml:"temperature"`
@@ -119,7 +120,9 @@ func LoadFullAccountsConfigBytes(data []byte) (*LoadResult, error) {
 	accounts := make([]*Account, 0, len(cfg.Accounts))
 	for _, entry := range cfg.Accounts {
 		acct := entryToAccount(entry)
-			if acct.Provider == "" { acct.Provider = llmDef.Provider }
+		if acct.Provider == "" {
+			acct.Provider = llmDef.Provider
+		}
 		// 未在账号级设置时继承全局默认值
 		if acct.MaxTokens <= 0 {
 			acct.MaxTokens = llmDef.MaxTokens
@@ -144,16 +147,17 @@ func LoadFullAccountsConfigBytes(data []byte) (*LoadResult, error) {
 // entryToAccount 将 YAML 条目转换为 Account 结构体。
 func entryToAccount(e AccountEntry) *Account {
 	return &Account{
-		Name:        e.Name,
-		Provider:    ProviderType(e.Provider),
-		BaseURL:     e.BaseURL,
-		APIKey:      e.APIKey,
-		Model:       e.Model,
-		Priority:    e.Priority,
-		MaxRPM:      e.MaxRPM,
-		Disabled:    e.Disabled,
-		MaxTokens:   e.MaxTokens,
-		Timeout:     e.Timeout,
-		Temperature: e.Temperature,
+		Name:           e.Name,
+		Provider:       ProviderType(e.Provider),
+		BaseURL:        e.BaseURL,
+		APIKey:         e.APIKey,
+		Model:          e.Model,
+		Priority:       e.Priority,
+		MaxRPM:         e.MaxRPM,
+		Disabled:       e.Disabled,
+		MaxConcurrency: e.MaxConcurrency,
+		MaxTokens:      e.MaxTokens,
+		Timeout:        e.Timeout,
+		Temperature:    e.Temperature,
 	}
 }

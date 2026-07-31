@@ -1,186 +1,175 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"sort"
-	"sync"
-	"time"
+
+	rootpool "github.com/RedHuang-0622/Seele/accountpool"
 )
 
-// ProviderType 模型供应商类型
+// ProviderType identifies an LLM wire-protocol provider.
 type ProviderType string
 
 const (
 	ProviderOpenAI    ProviderType = "openai"
 	ProviderAnthropic ProviderType = "anthropic"
+
+	// DefaultMaxConcurrency is used when an account entry omits
+	// max_concurrency. A conservative default prevents accidental unlimited
+	// fan-out; callers can raise it per account.
+	DefaultMaxConcurrency = 1
 )
 
-// Account 单个 API 账号
+// Account is the client-specific opaque value stored in the root accountpool.
+// Runtime load and enabled state live only in rootpool.P2CPool.
 type Account struct {
-	Name        string       // 账号名称，唯一标识
-	Provider    ProviderType // 供应商
-	BaseURL     string       // API 地址
-	APIKey      string       // API 密钥
-	Model       string       // 默认模型
-	Priority    int          // 优先级（数字越小优先级越高）
-	MaxRPM      int          // 每分钟最大请求数
-	Disabled    bool         // 是否禁用
-	MaxTokens   int          // 覆盖全局 llm_config.max_tokens（0=使用全局）
-	Timeout     int          // 覆盖全局 llm_config.timeout（0=使用全局）
-	Temperature float64      // 覆盖全局 llm_config.temperature（0=使用全局）
-
-	// 运行时限流状态
-	mu     sync.Mutex
-	window []time.Time // 滑动窗口：当前分钟内各请求的时间戳
+	Name           string
+	Provider       ProviderType
+	BaseURL        string
+	APIKey         string
+	Model          string
+	Priority       int
+	MaxRPM         int // Deprecated: request-rate policy belongs outside accountpool.
+	Disabled       bool
+	MaxConcurrency int
+	MaxTokens      int
+	Timeout        int
+	Temperature    float64
 }
 
-// allow 检查是否允许发送请求（基于 RPM 限流）。
-// 返回 true 表示允许，false 表示超过限制。
-func (a *Account) allow() bool {
-	if a.MaxRPM <= 0 {
-		return true // 不限流
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	now := time.Now()
-	// 移除窗口外（超过 1 分钟）的旧记录
-	cutoff := now.Add(-time.Minute)
-	j := 0
-	for _, t := range a.window {
-		if t.After(cutoff) {
-			a.window[j] = t
-			j++
-		}
-	}
-	a.window = a.window[:j]
-	if len(a.window) >= a.MaxRPM {
-		return false // 超限
-	}
-	a.window = append(a.window, now)
-	return true
-}
-
-// AccountPool 账号池
+// AccountPool is a client-specific adapter over the root P2C lease pool. It
+// owns no account slice, round-robin cursor, limiter, or duplicate load state.
 type AccountPool struct {
-	accounts []*Account
-	current  int // round-robin 索引
-	mu       sync.Mutex
+	inner *rootpool.P2CPool[*Account]
 }
 
-// NewAccountPool 创建账号池，按 Priority 升序排序
 func NewAccountPool(accounts ...*Account) *AccountPool {
+	pool := &AccountPool{inner: rootpool.New[*Account]()}
+	for _, account := range accounts {
+		_ = pool.Register(account)
+	}
+	return pool
+}
+
+// Register adds an account and applies its initial disabled state.
+func (p *AccountPool) Register(account *Account) error {
+	if account == nil {
+		return fmt.Errorf("%w: account is nil", rootpool.ErrInvalidAccount)
+	}
+	capacity := account.MaxConcurrency
+	if capacity <= 0 {
+		capacity = DefaultMaxConcurrency
+	}
+	account.MaxConcurrency = capacity
+	if err := p.inner.Register(rootpool.Account[*Account]{
+		ID:             account.Name,
+		Value:          account,
+		MaxConcurrency: capacity,
+		Metadata: map[string]string{
+			"provider": string(account.Provider),
+			"base_url": account.BaseURL,
+			"model":    account.Model,
+		},
+	}); err != nil {
+		return err
+	}
+	if account.Disabled {
+		return p.inner.Disable(account.Name)
+	}
+	return nil
+}
+
+// Add is the legacy void adapter. New code should use Register and handle its
+// error. It does not create a second state source.
+func (p *AccountPool) Add(account *Account) { _ = p.Register(account) }
+
+// Acquire reserves one account slot until the returned lease is closed.
+func (p *AccountPool) Acquire(
+	ctx context.Context,
+	request rootpool.AcquireRequest,
+) (*rootpool.Lease[*Account], error) {
+	return p.inner.Acquire(ctx, request)
+}
+
+func (p *AccountPool) Enable(name string) error  { return p.inner.Enable(name) }
+func (p *AccountPool) Disable(name string) error { return p.inner.Disable(name) }
+
+func (p *AccountPool) Stats() rootpool.Stats { return p.inner.Stats() }
+
+// Core exposes the root pool for adapters that already consume its contracts.
+func (p *AccountPool) Core() *rootpool.P2CPool[*Account] { return p.inner }
+
+// All returns client configuration copies for inspection, sorted by legacy
+// priority then name. Dispatch must use Acquire instead.
+func (p *AccountPool) All() []*Account {
+	entries := p.inner.Entries()
+	accounts := make([]*Account, 0, len(entries))
+	for _, entry := range entries {
+		copy := *entry.Value
+		copy.Disabled = entry.Snapshot.Disabled
+		copy.MaxConcurrency = entry.Snapshot.MaxConcurrency
+		accounts = append(accounts, &copy)
+	}
 	sort.Slice(accounts, func(i, j int) bool {
+		if accounts[i].Priority == accounts[j].Priority {
+			return accounts[i].Name < accounts[j].Name
+		}
 		return accounts[i].Priority < accounts[j].Priority
 	})
-	return &AccountPool{
-		accounts: accounts,
-	}
+	return accounts
 }
 
-// Add 添加账号，添加后重新按优先级排序
-func (ap *AccountPool) Add(a *Account) {
-	ap.mu.Lock()
-	defer ap.mu.Unlock()
-	ap.accounts = append(ap.accounts, a)
-	sort.Slice(ap.accounts, func(i, j int) bool {
-		return ap.accounts[i].Priority < ap.accounts[j].Priority
+// Lookup returns an inspection copy without reserving capacity.
+func (p *AccountPool) Lookup(name string) (*Account, bool) {
+	account, snapshot, err := p.inner.Lookup(name)
+	if err != nil {
+		return nil, false
+	}
+	copy := *account
+	copy.Disabled = snapshot.Disabled
+	copy.MaxConcurrency = snapshot.MaxConcurrency
+	return &copy, true
+}
+
+// Get is a compatibility inspection helper. It briefly acquires and releases a
+// lease; request execution must retain the lease itself via Acquire.
+func (p *AccountPool) Get() *Account {
+	lease, err := p.Acquire(context.Background(), rootpool.AcquireRequest{})
+	if err != nil {
+		return nil
+	}
+	defer lease.Release()
+	return lease.Client()
+}
+
+func (p *AccountPool) GetByProvider(provider ProviderType) *Account {
+	lease, err := p.Acquire(context.Background(), rootpool.AcquireRequest{
+		Metadata: map[string]string{"provider": string(provider)},
 	})
-}
-
-// nextIndex 从 current 位置开始查找下一个可用账号的索引。
-// 返回 -1 表示无可用账号。
-func (ap *AccountPool) nextIndex() int {
-	n := len(ap.accounts)
-	if n == 0 {
-		return -1
-	}
-	for i := 0; i < n; i++ {
-		idx := (ap.current + i) % n
-		if !ap.accounts[idx].Disabled {
-			ap.current = (idx + 1) % n
-			return idx
-		}
-	}
-	return -1
-}
-
-// Get 获取下一个可用且未被限流的账号（round-robin 轮询，按优先级排序）。
-// 所有账号都被限流或禁用时返回 nil。
-func (ap *AccountPool) Get() *Account {
-	ap.mu.Lock()
-	defer ap.mu.Unlock()
-	n := len(ap.accounts)
-	if n == 0 {
+	if err != nil {
 		return nil
 	}
-	for i := 0; i < n; i++ {
-		idx := (ap.current + i) % n
-		a := ap.accounts[idx]
-		if !a.Disabled && a.allow() {
-			ap.current = (idx + 1) % n
-			return a
-		}
-	}
-	return nil
+	defer lease.Release()
+	return lease.Client()
 }
 
-// GetByProvider 获取指定供应商的可用且未被限流的账号。
-// 没有匹配的可用账号时返回 nil。
-func (ap *AccountPool) GetByProvider(provider ProviderType) *Account {
-	ap.mu.Lock()
-	defer ap.mu.Unlock()
-	n := len(ap.accounts)
-	if n == 0 {
+// Select validates a legacy account name but no longer mutates global pool
+// routing. ChatClient.SelectAccount stores the pin on that client instance.
+func (p *AccountPool) Select(name string) *Account {
+	account, ok := p.Lookup(name)
+	if !ok || account.Disabled {
 		return nil
 	}
-	for i := 0; i < n; i++ {
-		idx := (ap.current + i) % n
-		a := ap.accounts[idx]
-		if !a.Disabled && a.Provider == provider && a.allow() {
-			ap.current = (idx + 1) % n
-			return a
-		}
-	}
-	return nil
+	return account
 }
 
-// All 返回所有账号的副本
-func (ap *AccountPool) All() []*Account {
-	ap.mu.Lock()
-	defer ap.mu.Unlock()
-	result := make([]*Account, len(ap.accounts))
-	copy(result, ap.accounts)
-	return result
-}
-
-// Select 按名称切换当前账号。
-// 找到时定位到该账号（下一次 Get 返回它），返回账号本身。
-// 找不到或已禁用时返回 nil，current 不动。
-func (ap *AccountPool) Select(name string) *Account {
-	ap.mu.Lock()
-	defer ap.mu.Unlock()
-	for i, a := range ap.accounts {
-		if a.Name == name && !a.Disabled {
-			ap.current = i // 定位
-			return a
-		}
-	}
-	return nil
-}
-
-// Current 返回当前指向的账号（下一次 Get 会返回的账号）。
-// 没有可用账号时返回 nil。
-func (ap *AccountPool) Current() *Account {
-	ap.mu.Lock()
-	defer ap.mu.Unlock()
-	if len(ap.accounts) == 0 {
-		return nil
-	}
-	// 从 current 位置开始找第一个非 disabled 的账号
-	n := len(ap.accounts)
-	for i := 0; i < n; i++ {
-		idx := (ap.current + i) % n
-		if !ap.accounts[idx].Disabled {
-			return ap.accounts[idx]
+// Current returns the first enabled inspection entry for compatibility. P2C
+// has no global current cursor.
+func (p *AccountPool) Current() *Account {
+	for _, account := range p.All() {
+		if !account.Disabled {
+			return account
 		}
 	}
 	return nil

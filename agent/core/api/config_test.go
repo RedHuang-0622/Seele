@@ -398,3 +398,31 @@ temperature: 0.5
 		t.Errorf("expected Temperature 0.5, got %f", entry.Temperature)
 	}
 }
+
+func TestAccountEntryMaxConcurrency(t *testing.T) {
+	result, err := LoadAccountsConfigBytes([]byte(`
+accounts:
+  - name: concurrent
+    provider: openai
+    max_concurrency: 7
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts := result.All()
+	if len(accounts) != 1 || accounts[0].MaxConcurrency != 7 {
+		t.Fatalf("loaded accounts = %+v", accounts)
+	}
+
+	defaults, err := LoadAccountsConfigBytes([]byte(`
+accounts:
+  - name: default
+    provider: openai
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := defaults.All()[0].MaxConcurrency; got != DefaultMaxConcurrency {
+		t.Fatalf("default max_concurrency = %d, want %d", got, DefaultMaxConcurrency)
+	}
+}

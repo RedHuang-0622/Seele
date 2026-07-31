@@ -44,14 +44,18 @@ func (m *mockCompleter) CompleteStreamEvents(ctx context.Context, messages []typ
 // errorBuildStrategy returns an error from BuildRequest.
 type errorBuildStrategy struct{}
 
-func (e *errorBuildStrategy) Name() string                                { return "error-build" }
-func (e *errorBuildStrategy) Endpoint() string                             { return "/v1/test" }
-func (e *errorBuildStrategy) AuthHeader(apiKey string) (string, string)    { return "Authorization", "Bearer " + apiKey }
-func (e *errorBuildStrategy) SSEHeaders() map[string]string                { return nil }
+func (e *errorBuildStrategy) Name() string     { return "error-build" }
+func (e *errorBuildStrategy) Endpoint() string { return "/v1/test" }
+func (e *errorBuildStrategy) AuthHeader(apiKey string) (string, string) {
+	return "Authorization", "Bearer " + apiKey
+}
+func (e *errorBuildStrategy) SSEHeaders() map[string]string { return nil }
 func (e *errorBuildStrategy) BuildRequest(string, []types.Message, []types.Tool, bool, RequestOptions) ([]byte, error) {
 	return nil, fmt.Errorf("build error")
 }
-func (e *errorBuildStrategy) ParseResponse(body []byte) (types.Message, error) { return types.Message{}, nil }
+func (e *errorBuildStrategy) ParseResponse(body []byte) (types.Message, error) {
+	return types.Message{}, nil
+}
 func (e *errorBuildStrategy) ParseSSEEvent(string, string) ([]SSEEvent, error) { return nil, nil }
 
 // captureRequestStrategy records HTTP request details for inspection.
@@ -60,10 +64,14 @@ type captureRequestStrategy struct {
 	mu      sync.Mutex
 }
 
-func (c *captureRequestStrategy) Name() string                                           { return "capture" }
-func (c *captureRequestStrategy) Endpoint() string                                        { return "/chat/completions" }
-func (c *captureRequestStrategy) AuthHeader(apiKey string) (string, string)               { return "Authorization", "Bearer " + apiKey }
-func (c *captureRequestStrategy) SSEHeaders() map[string]string                           { return map[string]string{"Accept": "text/event-stream"} }
+func (c *captureRequestStrategy) Name() string     { return "capture" }
+func (c *captureRequestStrategy) Endpoint() string { return "/chat/completions" }
+func (c *captureRequestStrategy) AuthHeader(apiKey string) (string, string) {
+	return "Authorization", "Bearer " + apiKey
+}
+func (c *captureRequestStrategy) SSEHeaders() map[string]string {
+	return map[string]string{"Accept": "text/event-stream"}
+}
 func (c *captureRequestStrategy) BuildRequest(string, []types.Message, []types.Tool, bool, RequestOptions) ([]byte, error) {
 	return json.Marshal(map[string]string{"test": "true"})
 }
@@ -82,14 +90,18 @@ func (c *captureRequestStrategy) ParseSSEEvent(string, string) ([]SSEEvent, erro
 // errorParseStrategy returns an error from ParseSSEEvent.
 type errorParseStrategy struct{}
 
-func (e *errorParseStrategy) Name() string                                { return "error-parse" }
-func (e *errorParseStrategy) Endpoint() string                             { return "/chat/completions" }
-func (e *errorParseStrategy) AuthHeader(apiKey string) (string, string)    { return "Authorization", "Bearer " + apiKey }
-func (e *errorParseStrategy) SSEHeaders() map[string]string                { return nil }
+func (e *errorParseStrategy) Name() string     { return "error-parse" }
+func (e *errorParseStrategy) Endpoint() string { return "/chat/completions" }
+func (e *errorParseStrategy) AuthHeader(apiKey string) (string, string) {
+	return "Authorization", "Bearer " + apiKey
+}
+func (e *errorParseStrategy) SSEHeaders() map[string]string { return nil }
 func (e *errorParseStrategy) BuildRequest(string, []types.Message, []types.Tool, bool, RequestOptions) ([]byte, error) {
 	return json.Marshal(map[string]string{"test": "true"})
 }
-func (e *errorParseStrategy) ParseResponse(body []byte) (types.Message, error) { return types.Message{}, nil }
+func (e *errorParseStrategy) ParseResponse(body []byte) (types.Message, error) {
+	return types.Message{}, nil
+}
 func (e *errorParseStrategy) ParseSSEEvent(string, string) ([]SSEEvent, error) {
 	return nil, fmt.Errorf("parse SSE error")
 }

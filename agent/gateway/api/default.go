@@ -16,7 +16,8 @@ func NewDefaultGateway(pool *api.AccountPool) *DefaultGateway {
 	return &DefaultGateway{pool: pool}
 }
 
-// Select 从账号池中 round-robin 选取下一个可用账号。
+// Select 从账号池中通过其当前选择策略获取一个可用账号。
+// 该兼容网关不持有租约；真实请求必须由 ChatClient.Acquire 路径持有租约。
 func (g *DefaultGateway) Select(ctx context.Context) (*api.Account, error) {
 	return g.pool.Get(), nil
 }

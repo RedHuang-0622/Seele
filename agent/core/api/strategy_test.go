@@ -16,9 +16,9 @@ type mockStrategy struct {
 }
 
 func (m *mockStrategy) Name() string                              { return m.name }
-func (m *mockStrategy) Endpoint() string                           { return m.endpoint }
-func (m *mockStrategy) AuthHeader(apiKey string) (string, string)  { return m.authKey, m.authValue }
-func (m *mockStrategy) SSEHeaders() map[string]string              { return m.sseHeaders }
+func (m *mockStrategy) Endpoint() string                          { return m.endpoint }
+func (m *mockStrategy) AuthHeader(apiKey string) (string, string) { return m.authKey, m.authValue }
+func (m *mockStrategy) SSEHeaders() map[string]string             { return m.sseHeaders }
 func (m *mockStrategy) BuildRequest(model string, messages []types.Message, tools []types.Tool, stream bool, opts RequestOptions) ([]byte, error) {
 	return nil, nil
 }

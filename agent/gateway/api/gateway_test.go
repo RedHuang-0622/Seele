@@ -29,8 +29,8 @@ func TestDefaultGatewaySelect(t *testing.T) {
 	if acct == nil {
 		t.Fatal("Select returned nil account")
 	}
-	if acct.Name != "acct1" {
-		t.Errorf("expected first account 'acct1', got %q", acct.Name)
+	if acct.Name != "acct1" && acct.Name != "acct2" {
+		t.Errorf("Select returned unknown account %q", acct.Name)
 	}
 }
 
@@ -73,20 +73,19 @@ func TestDefaultGatewayRegister(t *testing.T) {
 	}
 }
 
-func TestDefaultGatewaySelectRoundRobin(t *testing.T) {
+func TestDefaultGatewaySelectSkipsDisabledAccounts(t *testing.T) {
 	pool := api.NewAccountPool(
-		&api.Account{Name: "a", Provider: api.ProviderOpenAI, Priority: 1},
+		&api.Account{Name: "a", Provider: api.ProviderOpenAI, Priority: 1, Disabled: true},
 		&api.Account{Name: "b", Provider: api.ProviderOpenAI, Priority: 2},
 	)
 	g := NewDefaultGateway(pool)
 
-	first, _ := g.Select(context.Background())
-	second, _ := g.Select(context.Background())
-	if first == nil || second == nil {
-		t.Fatal("Select returned nil on round-robin")
+	selected, err := g.Select(context.Background())
+	if err != nil {
+		t.Fatalf("Select() error = %v", err)
 	}
-	if first.Name == second.Name {
-		t.Error("expected different accounts across round-robin calls")
+	if selected == nil || selected.Name != "b" {
+		t.Fatalf("Select() = %#v, want enabled account b", selected)
 	}
 }
 
