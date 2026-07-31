@@ -23,7 +23,7 @@ func NewLLMNode(id string, provider LLMProvider) *LLMNode {
 
 // Run executes the LLM call with PrevOutput as input.
 func (n *LLMNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, error) {
-	input := wc.PrevOutput
+	input := wc.PrevText()
 	if n.onChunk != nil {
 		if sa, ok := n.provider.(interface {
 			ChatStream(ctx context.Context, input string, onChunk func(string)) (string, error)

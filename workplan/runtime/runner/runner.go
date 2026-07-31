@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 
+	seeleerrors "github.com/RedHuang-0622/Seele/errors"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
@@ -52,7 +53,9 @@ func WithCheckpoint(store checkpoint.Store) Option {
 // Run validates and executes the graph from the beginning.
 func (r *Runner) Run(ctx context.Context) (*types.WorkPlanResult, error) {
 	if err := validate.Plan(r.plan); err != nil {
-		return nil, fmt.Errorf("graph validation: %w", err)
+		return nil, seeleerrors.Wrap(err, seeleerrors.Context{
+			Code: "workplan.runner.validate", Struct: "runner.Runner", Function: "Run", Step: "validate",
+		})
 	}
 	return r.sched.Run(ctx)
 }
@@ -60,11 +63,13 @@ func (r *Runner) Run(ctx context.Context) (*types.WorkPlanResult, error) {
 // Resume continues execution from a saved checkpoint.
 func (r *Runner) Resume(ctx context.Context, snapshotID string) (*types.WorkPlanResult, error) {
 	if r.checkMgr == nil {
-		return nil, fmt.Errorf("checkpoint not enabled: use WithCheckpoint option")
+		return nil, seeleerrors.New("workplan.runner.checkpoint", "checkpoint not enabled: use WithCheckpoint option")
 	}
 	wc, err := r.checkMgr.Load(snapshotID)
 	if err != nil {
-		return nil, fmt.Errorf("resume: %w", err)
+		return nil, seeleerrors.Wrap(err, seeleerrors.Context{
+			Code: "workplan.runner.resume", Struct: "runner.Runner", Function: "Resume", Step: "load", Raw: snapshotID,
+		})
 	}
 
 	// Continue from the checkpoint node
@@ -82,7 +87,7 @@ func (r *Runner) Resume(ctx context.Context, snapshotID string) (*types.WorkPlan
 
 		n := r.plan.GetNode(currentID)
 		if n == nil {
-			return wc.Result, fmt.Errorf("resume: node %q not found", currentID)
+			return wc.Result, seeleerrors.New("workplan.runner.node", fmt.Sprintf("node %q not found", currentID))
 		}
 
 		output, err := r.exec.RunNode(ctx, n, wc)
@@ -101,14 +106,18 @@ func (r *Runner) Resume(ctx context.Context, snapshotID string) (*types.WorkPlan
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
 		// Record output for multi-upstream reference via {{.PrevResults.nodeID}}
 		if output != "" {
-			wc.PrevResults[currentID] = output
+			wc.SetResultRaw(currentID, output)
+			nodeValue := types.RawValue(output)
+			nr.Value = &nodeValue
 		}
 		if err != nil {
 			wc.Result.TotalElapsed = start
-			return wc.Result, fmt.Errorf("resume node %q: %w", currentID, err)
+			return wc.Result, seeleerrors.Wrap(err, seeleerrors.Context{
+				Code: "workplan.runner.node", Struct: "runner.Runner", Function: "Resume", Step: currentID, Raw: currentID,
+			})
 		}
 		if output != "" {
-			wc.PrevOutput = output
+			wc.SetPrevRaw(output)
 		}
 		currentID = r.plan.Resolve(currentID, wc)
 	}

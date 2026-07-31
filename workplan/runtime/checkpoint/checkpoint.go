@@ -63,7 +63,7 @@ func (m *Manager) Save(nodeID string, wc *types.WorkflowContext) (*types.Snapsho
 		return nil, fmt.Errorf("checkpoint save: %w", err)
 	}
 	if wc.Result.Checkpoints != nil {
-		wc.Result.Checkpoints[nodeID] = wc.PrevOutput
+		wc.Result.Checkpoints[nodeID] = wc.PrevRaw()
 	}
 	return snap, nil
 }

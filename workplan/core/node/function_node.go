@@ -20,9 +20,10 @@ func NewFunctionNode(id string, fn func(ctx context.Context, input string) (stri
 	}
 }
 
-// Run executes the wrapped function with PrevOutput as input.
+// Run executes the wrapped function with the structured previous value rendered
+// as text for this legacy function signature.
 func (n *FunctionNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, error) {
-	out, err := n.fn(ctx, wc.PrevOutput)
+	out, err := n.fn(ctx, wc.PrevText())
 	if err != nil {
 		return "", err
 	}

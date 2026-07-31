@@ -22,13 +22,13 @@ func NewNode(id, key string) *EmitNode {
 
 // Run writes PrevOutput to Vars[key] and passes it through.
 func (n *EmitNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, error) {
-	if wc.Vars != nil {
-		wc.Vars[n.Key] = wc.PrevOutput
+	if wc != nil {
+		wc.SetVariableRaw(n.Key, wc.PrevText())
 	}
 	if wc.Result != nil {
 		wc.Result.Vars = wc.Vars
 	}
-	return wc.PrevOutput, nil
+	return wc.PrevRaw(), nil
 }
 
 // Add registers an emit node in the graph.

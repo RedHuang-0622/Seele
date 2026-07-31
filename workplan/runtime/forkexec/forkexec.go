@@ -257,8 +257,8 @@ func (c *ForkCoordinator) RunWithContextManager(ctx context.Context, contexts *C
 				return
 			}
 
-			branch.Workflow.PrevOutput = results[index].Output
-			branch.Workflow.PrevResults[spec.ID] = results[index].Output
+			branch.Workflow.SetPrevRaw(results[index].Output)
+			branch.Workflow.SetResultRaw(spec.ID, results[index].Output)
 			results[index].State = StateCompleted
 			c.emit(Event{Type: StateCompleted, BranchID: spec.ID, NodeID: spec.NodeID, At: results[index].EndedAt})
 		}(index, spec)
@@ -320,7 +320,7 @@ func (m *ContextManager) Join(parent *types.WorkflowContext, results []BranchRes
 			continue
 		}
 		successes++
-		parent.PrevResults[result.ID] = result.Output
+		parent.SetResultRaw(result.ID, result.Output)
 		var value any
 		if json.Unmarshal([]byte(result.Output), &value) == nil {
 			merged[result.ID] = value
@@ -330,14 +330,17 @@ func (m *ContextManager) Join(parent *types.WorkflowContext, results []BranchRes
 	}
 	if successes == 1 && len(results) == 1 && !forceAggregate {
 		branch := results[0].Context.Workflow.Clone()
+		parent.Prev = branch.Prev
 		parent.PrevOutput = branch.PrevOutput
+		parent.Results = branch.Results
 		parent.PrevResults = branch.PrevResults
+		parent.Variables = branch.Variables
 		parent.Vars = branch.Vars
 		parent.Metadata = branch.Metadata
 		return nil
 	}
 	output, _ := json.Marshal(merged)
-	parent.PrevOutput = string(output)
+	parent.SetPrevRaw(string(output))
 	return nil
 }
 

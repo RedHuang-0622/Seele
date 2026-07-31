@@ -15,7 +15,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	eng "github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/session"
 	tool "github.com/RedHuang-0622/Seele/tools"
 
 	"github.com/RedHuang-0622/Seele/types"
@@ -23,15 +23,15 @@ import (
 )
 
 // =============================================================================
-// EngineFactory：适配 workplan.AgentFactory
+// SessionFactory：适配 workplan.AgentFactory
 // =============================================================================
 
-type EngineFactory struct {
-	engine *agent.Agent
+type SessionFactory struct {
+	runtime *agent.Agent
 }
 
-func (f *EngineFactory) NewAgent(systemPrompt string) workplan.Agent {
-	return eng.New(f.engine, eng.WithSystemPrompt(systemPrompt))
+func (f *SessionFactory) NewAgent(systemPrompt string) workplan.Agent {
+	return session.New(f.runtime, session.WithSystemPrompt(systemPrompt))
 }
 
 // =============================================================================
@@ -67,7 +67,7 @@ func main() {
 	flag.Parse()
 	ctx := context.Background()
 
-	// ── 1. 初始化 Engine ──────────────────────────────────────────────
+	// ── 1. 初始化 Agent runtime ───────────────────────────────────────
 	result, err := api.LoadFullAccountsConfig(*configPath)
 	if err != nil {
 		log.Fatalf("load %s: %v", *configPath, err)
@@ -84,26 +84,26 @@ func main() {
 		Timeout:     ls.Timeout,
 		Temperature: ls.Temperature,
 	}
-	engine, err := agent.New(agent.Options{
+	runtime, err := agent.New(agent.Options{
 		LLMConfig:       llmCfg,
 		ToolCallTimeOut: 120 * time.Second,
 		HubStartupDelay: 10,
 	})
 	if err != nil {
-		log.Fatalf("engine init failed: %v", err)
+		log.Fatalf("agent init failed: %v", err)
 	}
-	defer engine.Shutdown()
+	defer runtime.Shutdown()
 
-	chatClient := engine.LLM().(*api.ChatClient)
+	chatClient := runtime.LLM().(*api.ChatClient)
 	chatClient.WithAccountPool(pool)
 	if ls.Provider != "" {
 		chatClient.SetProvider(ls.Provider)
 	}
 
-	factory := &EngineFactory{engine: engine}
+	factory := &SessionFactory{runtime: runtime}
 
 	// ── 2. 注册工具：fork_agents ─────────────────────────────────────
-	engine.RegisterTool(
+	runtime.RegisterTool(
 		"fork_agents",
 		"并发启动多个 Agent 执行不同任务，适合多角色并行分析、多角度调研等场景。每个分支独立执行，结果合并为 JSON。",
 		tool.SchemaOf(ForkInput{}),
@@ -138,7 +138,7 @@ func main() {
 	)
 
 	// ── 3. 注册工具：run_pipeline ────────────────────────────────────
-	engine.RegisterTool(
+	runtime.RegisterTool(
 		"run_pipeline",
 		"按顺序执行多个步骤，后一步接收前一步的输出作为输入。适合需要逐步推进的复杂任务。",
 		tool.SchemaOf(PipelineInput{}),
@@ -173,7 +173,7 @@ func main() {
 	)
 
 	// ── 4. 注册工具：loop_task ───────────────────────────────────────
-	engine.RegisterTool(
+	runtime.RegisterTool(
 		"loop_task",
 		"反复执行一个任务直到满足条件。每次迭代的结果会作为下次的输入。适合迭代优化、渐进式改进等场景。",
 		tool.SchemaOf(LoopInput{}),
@@ -206,7 +206,7 @@ func main() {
 
 	// ── 5. 查看已注册工具 ────────────────────────────────────────────
 	fmt.Println("=== Graph-as-Tools: 已注册工具 ===")
-	for _, t := range engine.Tools().Tools() {
+	for _, t := range runtime.Tools().Tools() {
 		fmt.Printf("  • %s — %s\n", t.Function.Name, truncate(t.Function.Description, 70))
 	}
 
@@ -215,7 +215,7 @@ func main() {
 	fmt.Println("  🤖 Graph-as-Tools 对话演示")
 	fmt.Println(strings.Repeat("═", 60))
 
-	sess := eng.New(engine, eng.WithSystemPrompt(`你是工作流编排专家。
+	sess := session.New(runtime, session.WithSystemPrompt(`你是工作流编排专家。
 你可以使用以下工具来执行复杂任务：
 1. fork_agents — 并发执行多个任务（多角色并行）
 2. run_pipeline — 按顺序执行多步骤流水线

@@ -28,6 +28,13 @@ func (e *Executor) runNode(ctx context.Context, n node.Node, wc *types.WorkflowC
 	// (rendering is done by the node itself via RenderTemplate)
 
 	// Execute the node
+	if typed, ok := n.(node.ValueNode); ok {
+		value, err := typed.RunValue(ctx, wc)
+		if err != nil {
+			return "", err
+		}
+		return value.RawString(), nil
+	}
 	output, err := n.Run(ctx, wc)
 	if err != nil {
 		return "", err

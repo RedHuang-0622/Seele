@@ -4,13 +4,71 @@ package types
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"time"
 )
 
+// Value is the JSON-backed transport unit used by WorkPlan internals. It
+// avoids forcing every node boundary through an untyped string while keeping
+// snapshots and product adapters language-neutral.
+type Value struct {
+	Raw json.RawMessage `json:"raw,omitempty"`
+}
+
+// NewValue encodes a typed value into the transport representation.
+func NewValue[T any](value T) (Value, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return Value{}, fmt.Errorf("encode workflow value: %w", err)
+	}
+	return Value{Raw: raw}, nil
+}
+
+// RawValue creates a Value from an existing JSON payload or a plain string.
+func RawValue(value string) Value {
+	if json.Valid([]byte(value)) {
+		return Value{Raw: json.RawMessage(value)}
+	}
+	raw, _ := json.Marshal(value)
+	return Value{Raw: raw}
+}
+
+// DecodeValue decodes a transport value into a caller-selected Go type.
+func DecodeValue[T any](value Value) (T, error) {
+	var decoded T
+	if len(value.Raw) == 0 {
+		return decoded, nil
+	}
+	if err := json.Unmarshal(value.Raw, &decoded); err != nil {
+		return decoded, fmt.Errorf("decode workflow value: %w", err)
+	}
+	return decoded, nil
+}
+
+// RawString returns the JSON representation used for persistence and legacy
+// string fields.
+func (v Value) RawString() string { return string(v.Raw) }
+
+// Text returns a readable value for prompt/template rendering. JSON strings
+// are unquoted; objects and arrays remain JSON.
+func (v Value) Text() string {
+	if len(v.Raw) == 0 {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(v.Raw, &text) == nil {
+		return text
+	}
+	return string(v.Raw)
+}
+
 // WorkflowContext carries shared state during graph execution.
 // Named WorkflowContext to avoid collision with stdlib context.Context.
 type WorkflowContext struct {
+	Prev        Value             `json:"prev,omitempty"`
+	Results     map[string]Value  `json:"results,omitempty"`
+	Variables   map[string]Value  `json:"variables,omitempty"`
 	PrevOutput  string            // JSON output from the immediately previous node
 	PrevResults map[string]string // nodeID → output for all executed nodes (multi-upstream reference)
 	Vars        map[string]string // Named variables written by Emit nodes
@@ -21,6 +79,8 @@ type WorkflowContext struct {
 // NewWorkflowContext creates an empty workflow context.
 func NewWorkflowContext() *WorkflowContext {
 	return &WorkflowContext{
+		Results:     make(map[string]Value),
+		Variables:   make(map[string]Value),
 		PrevResults: make(map[string]string),
 		Vars:        make(map[string]string),
 		Result:      &WorkPlanResult{Checkpoints: make(map[string]string)},
@@ -37,12 +97,106 @@ func (wc *WorkflowContext) Clone() *WorkflowContext {
 	}
 
 	return &WorkflowContext{
+		Prev:        cloneValue(wc.Prev),
+		Results:     cloneValues(wc.Results),
+		Variables:   cloneValues(wc.Variables),
 		PrevOutput:  wc.PrevOutput,
 		PrevResults: cloneStringMap(wc.PrevResults),
 		Vars:        cloneStringMap(wc.Vars),
 		Result:      cloneWorkPlanResult(wc.Result),
 		Metadata:    cloneMetadata(wc.Metadata),
 	}
+}
+
+// SetPrevValue updates the structured previous output and its legacy mirror.
+func (wc *WorkflowContext) SetPrevValue(value Value) {
+	if wc == nil {
+		return
+	}
+	wc.Prev = cloneValue(value)
+	wc.PrevOutput = value.RawString()
+}
+
+// SetPrevRaw stores a JSON or plain-text node output.
+func (wc *WorkflowContext) SetPrevRaw(output string) { wc.SetPrevValue(RawValue(output)) }
+
+// PrevRaw returns the transport representation of the previous output. It is
+// intended for the legacy Node.Run contract; prompt-facing code should use
+// PrevText instead.
+func (wc *WorkflowContext) PrevRaw() string {
+	if wc == nil {
+		return ""
+	}
+	if len(wc.Prev.Raw) > 0 {
+		return wc.Prev.RawString()
+	}
+	return wc.PrevOutput
+}
+
+// SetResultRaw records a node result in both structured and compatibility maps.
+func (wc *WorkflowContext) SetResultRaw(nodeID, output string) {
+	if wc == nil {
+		return
+	}
+	if wc.Results == nil {
+		wc.Results = make(map[string]Value)
+	}
+	value := RawValue(output)
+	wc.Results[nodeID] = value
+	if wc.PrevResults == nil {
+		wc.PrevResults = make(map[string]string)
+	}
+	wc.PrevResults[nodeID] = value.RawString()
+}
+
+// SetVariableRaw records a named variable in both structured and compatibility maps.
+func (wc *WorkflowContext) SetVariableRaw(key, value string) {
+	if wc == nil {
+		return
+	}
+	if wc.Variables == nil {
+		wc.Variables = make(map[string]Value)
+	}
+	transport := RawValue(value)
+	wc.Variables[key] = transport
+	if wc.Vars == nil {
+		wc.Vars = make(map[string]string)
+	}
+	wc.Vars[key] = transport.RawString()
+}
+
+// PrevText returns the structured previous output and falls back to the
+// legacy field for contexts created by older callers.
+func (wc *WorkflowContext) PrevText() string {
+	if wc == nil {
+		return ""
+	}
+	if len(wc.Prev.Raw) > 0 {
+		return wc.Prev.Text()
+	}
+	return FromJSON(wc.PrevOutput)
+}
+
+// ResultText returns a node result in prompt-friendly form.
+func (wc *WorkflowContext) ResultText(nodeID string) string {
+	if wc == nil {
+		return ""
+	}
+	if value, ok := wc.Results[nodeID]; ok {
+		return value.Text()
+	}
+	return FromJSON(wc.PrevResults[nodeID])
+}
+
+// VariableText returns a named variable in prompt-friendly form.
+func (wc *WorkflowContext) VariableText(key string) string {
+	if wc == nil {
+		return ""
+	}
+	if value, ok := wc.Variables[key]; ok {
+		return value.Text()
+	}
+	return FromJSON(wc.Vars[key])
 }
 
 func cloneStringMap(source map[string]string) map[string]string {
@@ -53,6 +207,24 @@ func cloneStringMap(source map[string]string) map[string]string {
 	clone := make(map[string]string, len(source))
 	for key, value := range source {
 		clone[key] = value
+	}
+	return clone
+}
+
+func cloneValue(source Value) Value {
+	if source.Raw == nil {
+		return Value{}
+	}
+	return Value{Raw: append(json.RawMessage(nil), source.Raw...)}
+}
+
+func cloneValues(source map[string]Value) map[string]Value {
+	if source == nil {
+		return nil
+	}
+	clone := make(map[string]Value, len(source))
+	for key, value := range source {
+		clone[key] = cloneValue(value)
 	}
 	return clone
 }
@@ -79,6 +251,10 @@ func cloneWorkPlanResult(source *WorkPlanResult) *WorkPlanResult {
 			continue
 		}
 		resultClone := *result
+		if result.Value != nil {
+			value := cloneValue(*result.Value)
+			resultClone.Value = &value
+		}
 		clone.NodeResults[index] = &resultClone
 	}
 	return clone
@@ -185,7 +361,8 @@ type NodeStatus struct {
 // It embeds NodeBase so all JSON-tagged fields are promoted.
 type NodeResult struct {
 	NodeBase
-	Err error `json:"-"`
+	Value *Value `json:"value,omitempty"`
+	Err   error  `json:"-"`
 }
 
 // WorkPlanResult is the execution summary of the entire WorkPlan.
@@ -244,12 +421,26 @@ func RenderTemplate(tmpl string, ec *WorkflowContext) string {
 		return tmpl
 	}
 	result := tmpl
-	result = replaceAll(result, "{{.PrevResult}}", FromJSON(ec.PrevOutput))
-	for nodeID, output := range ec.PrevResults {
-		result = replaceAll(result, "{{.PrevResults."+nodeID+"}}", FromJSON(output))
+	result = replaceAll(result, "{{.PrevResult}}", ec.PrevText())
+	nodeIDs := make(map[string]struct{}, len(ec.PrevResults)+len(ec.Results))
+	for nodeID := range ec.PrevResults {
+		nodeIDs[nodeID] = struct{}{}
 	}
-	for key, jsonVal := range ec.Vars {
-		result = replaceAll(result, "{{.Vars."+key+"}}", FromJSON(jsonVal))
+	for nodeID := range ec.Results {
+		nodeIDs[nodeID] = struct{}{}
+	}
+	for nodeID := range nodeIDs {
+		result = replaceAll(result, "{{.PrevResults."+nodeID+"}}", ec.ResultText(nodeID))
+	}
+	variableKeys := make(map[string]struct{}, len(ec.Vars)+len(ec.Variables))
+	for key := range ec.Vars {
+		variableKeys[key] = struct{}{}
+	}
+	for key := range ec.Variables {
+		variableKeys[key] = struct{}{}
+	}
+	for key := range variableKeys {
+		result = replaceAll(result, "{{.Vars."+key+"}}", ec.VariableText(key))
 	}
 	return result
 }

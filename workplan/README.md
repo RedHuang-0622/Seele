@@ -1,32 +1,39 @@
 # workplan
 
-`workplan` 提供无产品语义的 Plan 执行内核：Plan 是唯一图状态源，Node 是最小执行接口，Scheduler/Executor 只负责拓扑、并发、取消和结果合并。
+`workplan` 是无产品语义的 DAG 执行内核。`Plan` 持有节点、边和入口；`Node` 是最小执行单位；runtime 负责校验、调度、并发、取消、分支合并和 checkpoint。
 
 ## 职责边界
 
-- `core/plan` 持有节点、边、入口和 `Build → Validate → Seal → Run` 生命周期。
-- `core/node` 提供最小 `Node` 合约及可选的 Auto、Function、LLM 等抽象实现。
-- `runtime` 提供校验、执行、调度、分支和 checkpoint 原语；不识别 AgentFactory、Task 或产品 DSL。
-- `codec` 提供邻接表、0/1 邻接矩阵的导入导出；节点如何 materialize 由调用方注入 `NodeEncoder`/`NodeDecoder`。
-- `sugar` 只是可选的构建辅助 API，不是 Plan 内核的第二个状态源。
+- `core/plan`：Plan 的构建、拓扑校验和 Seal。
+- `core/node`：最小 `Node` 接口、可选 `ValueNode` 以及通用节点实现。
+- `core/edge`：无状态边和条件解析。
+- `runtime`：Executor、Scheduler、Runner、Fork 和 checkpoint。
+- `codec`：产品 DSL、邻接表和邻接矩阵的导入导出；节点语义由调用方注入。
+- `sugar`：可选的构建辅助，不是第二个状态源。
 
-## 公开入口
+## 公共接口
 
 | API | 用途 |
 | --- | --- |
-| `core/plan.New` / `core/plan.Build` | 创建或构建 Plan |
-| `core/plan.Validate` / `Seal` | 检查并封存可执行拓扑 |
-| `core/node.Node` | 自定义节点的最小执行接口 |
-| `codec.ImportAdjacencyList` / `ExportAdjacencyList` | 邻接表 JSON 导入导出 |
-| `codec.ImportAdjacencyMatrix` / `ExportAdjacencyMatrix` | 邻接矩阵 JSON 导入导出 |
-| `runtime/runner.Runner` | 执行和恢复 Plan |
+| `core/plan.New` / `Build` | 创建空 Plan 或从 Definition 构建并 Seal |
+| `core/node.Node` | 自定义节点的最小执行契约 |
+| `core/node.ValueNode` | 使用 JSON-backed `types.Value` 的结构化节点扩展 |
+| `core/node.NewTypedFunctionNode[I,O]` | 泛型输入/输出的函数节点 |
+| `codec.Document[T]` | 产品友好的 `nodes + edges` DSL |
+| `runtime/runner.Runner` | 从入口执行或从 checkpoint 恢复 |
 
-## 数据格式边界
+## 数据传输
 
-Seele 只验证通用拓扑和节点编解码结果，不解释 `task`、`auto`、`agent` 等产品字段。Seelex 或其他调用方可以在 `NodeDecoder` 中解释自己的 JSON，并获得包含字段路径、行列和原因的结构化 codec 错误。
+WorkPlan 内部优先维护 `WorkflowContext.Prev`、`Results` 和 `Variables` 这三个 `types.Value` 容器。`PrevOutput`、`PrevResults`、`Vars` 仍作为兼容镜像，旧节点可以继续实现字符串接口；新节点应优先实现 `ValueNode` 或使用 `NewTypedFunctionNode`。
+
+## 与 Seelex 协作
+
+Seele 不解释 `task`、`auto`、`agent`、文件或工作区语义。Seelex 通过 `codec.NodeFactory[T]` 将产品 JSON 装配成 Node，再交给 `Plan` 和 runtime 执行。
 
 ## 验证
 
-```text
-go test ./workplan/...
+```powershell
+go test ./workplan/... -count=1
 ```
+
+详细 DSL 说明见 [codec README](codec/README.md)。

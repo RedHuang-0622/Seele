@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	seeleerrors "github.com/RedHuang-0622/Seele/errors"
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
@@ -74,23 +75,9 @@ type NodeCodec interface {
 	NodeDecoder
 }
 
-// Error is a semantic or syntax error with a JSON path whenever available.
-type Error struct {
-	Path   string
-	Reason string
-	Line   int
-	Column int
-	Cause  error
-}
-
-func (e *Error) Error() string {
-	if e.Line > 0 {
-		return fmt.Sprintf("workplan codec error at %s (line %d, column %d): %s", e.Path, e.Line, e.Column, e.Reason)
-	}
-	return fmt.Sprintf("workplan codec error at %s: %s", e.Path, e.Reason)
-}
-
-func (e *Error) Unwrap() error { return e.Cause }
+// Error is retained as a compatibility alias. New codec errors use the root
+// structured envelope with struct/function/step/raw/path fields.
+type Error = seeleerrors.Error
 
 // ExportAdjacencyList encodes a Plan as a deterministic adjacency-list JSON
 // document. Conditional edges cannot be represented and are rejected with a

@@ -30,10 +30,10 @@ type NodeStrategy interface {
 // Run implements node.Node.
 func (n *StrategyNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, error) {
 	if n.Input != "" {
-		wc.PrevOutput = types.RenderTemplate(n.Input, wc)
+		wc.SetPrevRaw(types.RenderTemplate(n.Input, wc))
 	}
 	if n.Strategy == nil {
-		return wc.PrevOutput, nil
+		return wc.PrevRaw(), nil
 	}
 	return n.Strategy.Execute(ctx, wc)
 }
@@ -46,7 +46,7 @@ func (n *StrategyNode) RunWithAgentFactory(ctx context.Context, wc *types.Workfl
 		return n.Run(ctx, wc)
 	}
 	if n.Input != "" {
-		wc.PrevOutput = types.RenderTemplate(n.Input, wc)
+		wc.SetPrevRaw(types.RenderTemplate(n.Input, wc))
 	}
 	return strategy.ExecuteWithAgentFactory(ctx, wc, factory)
 }
@@ -61,7 +61,7 @@ func NewMethodStrategy(fn func(ctx context.Context, input string) (string, error
 }
 
 func (s *MethodStrategy) Execute(ctx context.Context, wc *types.WorkflowContext) (string, error) {
-	out, err := s.Fn(ctx, wc.PrevOutput)
+	out, err := s.Fn(ctx, wc.PrevText())
 	if err != nil {
 		return "", err
 	}
@@ -83,14 +83,14 @@ func (s *LLMStrategy) Execute(ctx context.Context, wc *types.WorkflowContext) (s
 		if sa, ok := s.Provider.(interface {
 			ChatStream(ctx context.Context, input string, onChunk func(string)) (string, error)
 		}); ok {
-			out, err := sa.ChatStream(ctx, wc.PrevOutput, s.OnChunk)
+			out, err := sa.ChatStream(ctx, wc.PrevText(), s.OnChunk)
 			if err != nil {
 				return "", err
 			}
 			return types.ToJSON(out), nil
 		}
 	}
-	out, err := s.Provider.Chat(ctx, wc.PrevOutput)
+	out, err := s.Provider.Chat(ctx, wc.PrevText())
 	if err != nil {
 		return "", err
 	}
@@ -119,13 +119,13 @@ func (s *AgentStrategy) Execute(ctx context.Context, wc *types.WorkflowContext) 
 		f.SetToolFilter(s.ToolFilter)
 	}
 	if sa, ok := agt.(node.StreamAgent); ok && s.OnChunk != nil {
-		out, err := sa.ChatStream(ctx, wc.PrevOutput, s.OnChunk)
+		out, err := sa.ChatStream(ctx, wc.PrevText(), s.OnChunk)
 		if err != nil {
 			return "", err
 		}
 		return types.ToJSON(out), nil
 	}
-	out, err := agt.Chat(ctx, wc.PrevOutput)
+	out, err := agt.Chat(ctx, wc.PrevText())
 	if err != nil {
 		return "", err
 	}
@@ -147,13 +147,13 @@ func (s *AgentStrategy) ExecuteWithAgentFactory(ctx context.Context, wc *types.W
 		f.SetToolFilter(s.ToolFilter)
 	}
 	if sa, ok := agt.(node.StreamAgent); ok && s.OnChunk != nil {
-		out, err := sa.ChatStream(ctx, wc.PrevOutput, s.OnChunk)
+		out, err := sa.ChatStream(ctx, wc.PrevText(), s.OnChunk)
 		if err != nil {
 			return "", err
 		}
 		return types.ToJSON(out), nil
 	}
-	out, err := agt.Chat(ctx, wc.PrevOutput)
+	out, err := agt.Chat(ctx, wc.PrevText())
 	if err != nil {
 		return "", err
 	}

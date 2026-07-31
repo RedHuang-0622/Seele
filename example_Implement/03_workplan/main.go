@@ -22,22 +22,22 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/session"
 
 	"github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
 
 // =============================================================================
-// EngineFactory：将 *agent.Agent 适配为 workplan.AgentFactory
+// SessionFactory：将 *agent.Agent 适配为 workplan.AgentFactory。
 // =============================================================================
 
-type EngineFactory struct {
-	engine *agent.Agent
+type SessionFactory struct {
+	runtime *agent.Agent
 }
 
-func (f *EngineFactory) NewAgent(systemPrompt string) workplan.Agent {
-	return engine.New(f.engine, engine.WithSystemPrompt(systemPrompt))
+func (f *SessionFactory) NewAgent(systemPrompt string) workplan.Agent {
+	return session.New(f.runtime, session.WithSystemPrompt(systemPrompt))
 }
 
 // =============================================================================
@@ -278,22 +278,22 @@ func main() {
 		Temperature: ls.Temperature,
 	}
 
-	engine, err := agent.New(agent.Options{
+	runtime, err := agent.New(agent.Options{
 		LLMConfig:       llmCfg,
 		HubStartupDelay: 10,
 	})
 	if err != nil {
-		log.Fatalf("engine init failed: %v", err)
+		log.Fatalf("agent init failed: %v", err)
 	}
-	defer engine.Shutdown()
+	defer runtime.Shutdown()
 
-	chatClient := engine.LLM().(*api.ChatClient)
+	chatClient := runtime.LLM().(*api.ChatClient)
 	chatClient.WithAccountPool(pool)
 	if ls.Provider != "" {
 		chatClient.SetProvider(ls.Provider)
 	}
 
-	factory := &EngineFactory{engine: engine}
+	factory := &SessionFactory{runtime: runtime}
 	ExampleLinear(factory)
 	// ExampleBranching(factory)
 	// ExampleLoop(factory)

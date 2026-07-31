@@ -126,7 +126,7 @@ func (s *Scheduler) run(ctx context.Context, captureCheckpoints bool) (*types.Wo
 				Prepare: func(branch *forkexec.BranchContext) {
 					if dependencies[nodeID] == 1 {
 						if output, ok := upstreamOutput[nodeID]; ok {
-							branch.Workflow.PrevOutput = output
+							branch.Workflow.SetPrevRaw(output)
 						}
 					}
 				},
@@ -205,6 +205,10 @@ func (s *Scheduler) recordResults(wc *types.WorkflowContext, results []forkexec.
 			NodeID: result.NodeID, Kind: kind, Status: string(result.State), Output: result.Output,
 			StartedAt: result.StartedAt, EndedAt: result.EndedAt,
 		}, Err: result.Err}
+		if result.Output != "" {
+			value := types.RawValue(result.Output)
+			nr.Value = &value
+		}
 		wc.Result.NodeResults = append(wc.Result.NodeResults, nr)
 		if s.OnNodeDone != nil {
 			s.OnNodeDone(nr)

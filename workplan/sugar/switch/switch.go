@@ -23,7 +23,7 @@ func NewNode(id string, kind node.NodeKind) *ControlNode {
 
 // Run passes through PrevOutput unchanged.
 func (n *ControlNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, error) {
-	return wc.PrevOutput, nil
+	return wc.PrevRaw(), nil
 }
 
 // If adds a binary conditional branch node.
@@ -33,13 +33,13 @@ func If(g *coreplan.Plan, id string, cond func(string) bool, trueID, falseID str
 	g.AddNode(n)
 	g.AddEdge(edge.Edge{
 		From: id, To: trueID, Priority: 0, Label: "true",
-		Condition: func(wc *types.WorkflowContext) bool { return cond(types.FromJSON(wc.PrevOutput)) },
+		Condition: func(wc *types.WorkflowContext) bool { return cond(wc.PrevText()) },
 	})
 	if falseID != "" {
 		g.AddEdge(edge.Edge{
 			From: id, To: falseID, Priority: 1, Label: "false",
 			Condition: func(wc *types.WorkflowContext) bool {
-				return !cond(types.FromJSON(wc.PrevOutput))
+				return !cond(wc.PrevText())
 			},
 		})
 	}
@@ -58,7 +58,7 @@ func Switch(g *coreplan.Plan, id string, cases ...node.SwitchCase) *ControlNode 
 				if cc.Match == nil {
 					return true // default case
 				}
-				return cc.Match(types.FromJSON(wc.PrevOutput))
+				return cc.Match(wc.PrevText())
 			},
 		})
 	}

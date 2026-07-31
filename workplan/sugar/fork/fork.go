@@ -110,7 +110,7 @@ func (n *ForkNode) Run(ctx context.Context, ec *types.WorkflowContext) (string, 
 	if err := coordinator.JoinAggregateWithContextManager(contexts, ec, results); err != nil {
 		return "", err
 	}
-	return ec.PrevOutput, nil
+	return ec.PrevText(), nil
 }
 
 // Add registers a fork node in the graph.

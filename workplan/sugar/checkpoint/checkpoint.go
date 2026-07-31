@@ -22,9 +22,9 @@ func NewNode(id string) *CheckpointNode {
 // Run records PrevOutput to Result.Checkpoints.
 func (n *CheckpointNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, error) {
 	if wc.Result != nil && wc.Result.Checkpoints != nil {
-		wc.Result.Checkpoints[n.ID()] = wc.PrevOutput
+		wc.Result.Checkpoints[n.ID()] = wc.PrevRaw()
 	}
-	return wc.PrevOutput, nil
+	return wc.PrevRaw(), nil
 }
 
 // Add registers a checkpoint node in the graph.

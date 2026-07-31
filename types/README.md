@@ -14,10 +14,10 @@
 ## 实现细节
 
 - 模型以 JSON/YAML 标签定义稳定的外部表示，具体 Provider 在边界层负责转换。
-- `ChatCompleter` 使 `engine`、上下文压缩和 WorkPlan 能依赖抽象，而不是 `api.ChatClient` 的具体实现。
-- 共享类型不引入 `agent`、`engine` 或 `workplan` 依赖，从而保持无循环依赖。
+- `ChatCompleter` 使 `session`、上下文压缩和 WorkPlan 能依赖抽象，而不是 `api.ChatClient` 的具体实现。
+- 共享类型不引入 `agent`、`session` 或 `workplan` 依赖，从而保持无循环依赖。
 
 ## 依赖与验证
 
-- 使用方：[agent/core/api](../agent/core/api/README.md)、[engine](../engine/README.md)、[seelectx](../seelectx/README.md)
+- 使用方：[agent/core/api](../agent/core/api/README.md)、[session](../session/README.md)、[seelectx](../seelectx/README.md)
 - 验证：`go test ./types/...`

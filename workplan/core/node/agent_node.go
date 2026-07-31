@@ -34,7 +34,7 @@ func (n *AgentNode) Run(ctx context.Context, wc *types.WorkflowContext) (string,
 	if f, ok := agt.(interface{ SetToolFilter([]string) }); ok && len(n.toolFilter) > 0 {
 		f.SetToolFilter(n.toolFilter)
 	}
-	input := types.RenderTemplate(wc.PrevOutput, wc)
+	input := types.RenderTemplate(wc.PrevText(), wc)
 	if sa, ok := agt.(StreamAgent); ok && n.onChunk != nil {
 		return sa.ChatStream(ctx, input, n.onChunk)
 	}

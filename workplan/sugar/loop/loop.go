@@ -87,7 +87,7 @@ func NewNode(id, bodyID string, factory node.AgentFactory) *LoopNode {
 // Run executes the loop body repeatedly.
 func (n *LoopNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, error) {
 	defer n.Signal.Close()
-	current := wc.PrevOutput
+	current := wc.PrevText()
 	prompt := n.bodyPrompt
 	if prompt == "" {
 		prompt = "You are a helpful assistant."

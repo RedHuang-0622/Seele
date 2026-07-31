@@ -49,6 +49,13 @@ type Node interface {
 	Run(ctx context.Context, wc *types.WorkflowContext) (string, error)
 }
 
+// ValueNode is an optional typed transport extension. Runtimes prefer
+// RunValue when available and keep Node.Run as a compatibility fallback.
+type ValueNode interface {
+	Node
+	RunValue(ctx context.Context, wc *types.WorkflowContext) (types.Value, error)
+}
+
 // Kinded is an optional metadata contract implemented by Seele's built-in
 // nodes. Runtimes must not require it in order to execute a Node.
 type Kinded interface {

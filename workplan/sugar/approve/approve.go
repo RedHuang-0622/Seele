@@ -100,7 +100,7 @@ func (n *ApproveNode) RunWithAgentFactory(ctx context.Context, wc *types.Workflo
 func (n *ApproveNode) run(ctx context.Context, wc *types.WorkflowContext, factory node.AgentFactory) (string, error) {
 	q := Question{
 		ID:      n.ID(),
-		Content: wc.PrevOutput,
+		Content: wc.PrevText(),
 		Options: n.Options,
 		KVS:     n.BuildKVS(),
 		Timeout: n.Timeout,
@@ -112,7 +112,7 @@ func (n *ApproveNode) run(ctx context.Context, wc *types.WorkflowContext, factor
 	choice, _ := decision.(string)
 	switch choice {
 	case "skip":
-		return wc.PrevOutput, nil
+		return wc.PrevText(), nil
 	case "abort":
 		return "", fmt.Errorf("aborted at approve node %q", n.ID())
 	default:

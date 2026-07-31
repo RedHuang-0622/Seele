@@ -10,7 +10,7 @@ go run ./example_Implement/05_graph_tools
 
 ## 实现细节
 
-- 示例定义图构建所需的输入结构，并以 `EngineFactory` 提供节点执行依赖。
+- 示例定义图构建所需的输入结构，并以 `workplan/agent.NewFactory` 提供节点执行依赖。
 - Pipeline、循环和 Fork 的参数模型展示工作流如何从工具调用中被动态构造。
 
 ## 验证
