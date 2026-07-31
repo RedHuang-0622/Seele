@@ -4,81 +4,151 @@ on:
   push:
     branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      run_real_api_smoke:
+        description: Run the real API builtin smoke suite
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 env:
-  GO_VERSION: '1.25'
+  GOFLAGS: -mod=readonly
+
+# 同一分支只保留最新提交，避免 develop 连续 push 浪费 runner 时间。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  # ── 静态分析 + 编译 ─────────────────────────────────
-  vet:
-    name: Static Analysis
+  quality:
+    name: Quality Gates
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
 
-      - name: go mod verify
+      - name: Verify modules
         run: go mod verify
 
-      - name: go vet
+      - name: Verify architecture boundaries
+        shell: bash
+        run: |
+          if git grep -n -E 'agent/core/tool|agent/gateway/tool|workplan/runtime/graph|workplan/runtime/serialize|workplan/dsl' -- '*.go'; then
+            echo 'legacy Go package reference detected'
+            exit 1
+          fi
+
+          if go list -deps ./tools/... | grep -Eq '^github.com/RedHuang-0622/Seele/(agent|workplan|seelectx|accountpool)(/|$)'; then
+            echo 'tools has a forbidden reverse dependency'
+            exit 1
+          fi
+
+          if go list -deps ./workplan/... | grep -Eq '^github.com/RedHuang-0622/Seele/(agent|seelectx)(/|$)'; then
+            echo 'workplan has a forbidden product/runtime dependency'
+            exit 1
+          fi
+
+      - name: Vet
         run: go vet ./...
 
-      - name: go build
+      - name: Build all packages and examples
         run: go build ./...
 
-  # ── 单元测试 + 竞态检测 ─────────────────────────────
-  unit-test:
-    name: Unit Tests
+  test:
+    name: Test / ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - shard: agent-api
+            packages: ./accountpool/... ./agent/... ./config/... ./types/...
+            test_timeout: 5m
+          - shard: engine
+            packages: ./engine/...
+            test_timeout: 8m
+          - shard: context
+            packages: ./seelectx/...
+            test_timeout: 5m
+          - shard: tools-telemetry
+            packages: ./tools/... ./telemetry/...
+            test_timeout: 5m
+          - shard: workplan
+            packages: ./workplan/...
+            test_timeout: 5m
+          - shard: integration
+            packages: ./test/... ./cmd/smoke
+            test_timeout: 6m
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
 
-      - name: go test (race)
-        run: go test -race ./... -count=1 -timeout 180s
-
-      - name: go test (coverage)
+      - name: Race, test, and collect coverage
+        shell: bash
+        env:
+          CGO_ENABLED: '1'
         run: |
-          go test -cover ./agent/core/... ./engine/... ./seelectx/... ./test/... -count=1 -timeout 120s
+          profile="${RUNNER_TEMP}/coverage-${{ matrix.shard }}.out"
+          go test \
+            -race \
+            -covermode=atomic \
+            -coverprofile="${profile}" \
+            -count=1 \
+            -timeout '${{ matrix.test_timeout }}' \
+            ${{ matrix.packages }}
+          go tool cover -func="${profile}" | tail -n 1
 
-  # ── 冒烟测试（mock LLM，无需真实 API key）────────────
-  smoke-test:
-    name: Smoke Tests (Mock)
+  ci-success:
+    name: CI Passed
+    if: always()
+    needs: [quality, test]
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: build examples
-        run: go build ./example_Implement/...
-
-      - name: run mock integration tests
+      - name: Verify required jobs
+        shell: bash
         run: |
-          go test ./test/... -count=1 -timeout 120s -v -run "TestRetry|TestMaxLoops|TestHistory"
-          echo "---"
-          go test ./agent/core/tool/... -count=1 -timeout 60s -v
+          [[ '${{ needs.quality.result }}' == 'success' ]]
+          [[ '${{ needs.test.result }}' == 'success' ]]
 
-  # ── 示例编译检查（验证示例可编译但不运行）─────────────
-  examples:
-    name: Example Compilation
+  real-api-smoke:
+    name: Real API Smoke
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_real_api_smoke }}
+    needs: [quality, test]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
 
-      - name: build all examples
-        run: go build ./example_Implement/...
-
+      - name: Run real builtin Function Calling smoke
+        env:
+          RUN_REAL_API_SMOKE: 'true'
+          SEELE_SMOKE_BASE_URL: ${{ secrets.SEELE_SMOKE_BASE_URL }}
+          SEELE_SMOKE_API_KEY: ${{ secrets.SEELE_SMOKE_API_KEY }}
+          SEELE_SMOKE_MODEL: ${{ secrets.SEELE_SMOKE_MODEL }}
+          SEELE_SMOKE_PROVIDER: ${{ secrets.SEELE_SMOKE_PROVIDER }}
+        run: go test ./cmd/smoke -run TestRealAPIBuiltinSmoke -v -count=1 -timeout 8m
