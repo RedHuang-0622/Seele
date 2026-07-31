@@ -6,7 +6,7 @@
 
 | API | 用途 |
 | --- | --- |
-| `New` | 绑定 `core/plan.Plan`、AgentFactory 和可选能力 |
+| `New` | 绑定 `core/plan.Plan` 和可选能力 |
 | `Runner.Plan` | 获取绑定的执行内核 |
 | `Runner.Run` | 校验并执行完整 Plan |
 | `Runner.Resume` | 从已保存检查点继续 |
@@ -14,7 +14,7 @@
 
 ## 实现细节
 
-- Runner 校验并传递 Plan 给 Scheduler，不依赖 Graph 外观。
+- Runner 校验并传递 Plan 给 Scheduler，不接收或保存 AgentFactory；节点自行持有执行依赖。
 - 检查点由 Manager 独立处理，Scheduler 不感知存储后端。
 
 ## 依赖与验证

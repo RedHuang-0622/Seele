@@ -9,10 +9,10 @@ import (
 
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/executor"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 	"github.com/RedHuang-0622/Seele/workplan/sugar/auto"
 )
 
@@ -41,13 +41,13 @@ func (n *testNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, 
 }
 
 func TestNew(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	exec := executor.New()
-	s := New(g.Plan(), exec)
+	s := New(g, exec)
 	if s == nil {
 		t.Fatal("New() returned nil")
 	}
-	if s.plan != g.Plan() {
+	if s.plan != g {
 		t.Error("plan not set")
 	}
 	if s.executor != exec {
@@ -67,7 +67,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestRunBasicLinearExecution(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("start", node.KindMethod))
 	g.AddNode(newTestNode("mid", node.KindMethod))
 	g.AddNode(newTestNode("end", node.KindMethod))
@@ -76,7 +76,7 @@ func TestRunBasicLinearExecution(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "mid", To: "end"})
 
 	exec := executor.New()
-	s := New(g.Plan(), exec)
+	s := New(g, exec)
 
 	result, err := s.Run(context.Background())
 	if err != nil {
@@ -103,12 +103,12 @@ func TestRunBasicLinearExecution(t *testing.T) {
 }
 
 func TestRunWithSingleNode(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("only", node.KindMethod))
 	g.SetEntry("only")
 
 	exec := executor.New()
-	s := New(g.Plan(), exec)
+	s := New(g, exec)
 
 	result, err := s.Run(context.Background())
 	if err != nil {
@@ -123,7 +123,7 @@ func TestRunWithSingleNode(t *testing.T) {
 }
 
 func TestRunWithBranchConditionalEdge(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("start", node.KindMethod))
 	g.AddNode(newTestNode("branchA", node.KindMethod))
 	g.AddNode(newTestNode("branchB", node.KindMethod))
@@ -135,7 +135,7 @@ func TestRunWithBranchConditionalEdge(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "start", To: "branchB", Condition: falseCond})
 
 	exec := executor.New()
-	s := New(g.Plan(), exec)
+	s := New(g, exec)
 
 	result, err := s.Run(context.Background())
 	if err != nil {
@@ -151,7 +151,7 @@ func TestRunWithBranchConditionalEdge(t *testing.T) {
 }
 
 func TestRunWithFork(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("start", node.KindMethod))
 	g.AddNode(newTestNode("b1", node.KindMethod))
 	g.AddNode(newTestNode("b2", node.KindMethod))
@@ -166,7 +166,7 @@ func TestRunWithFork(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "b2", To: "merge"})
 
 	exec := executor.New()
-	s := New(g.Plan(), exec)
+	s := New(g, exec)
 
 	result, err := s.Run(context.Background())
 	if err != nil {
@@ -190,7 +190,7 @@ func TestForkJoinContextInheritance(t *testing.T) {
 		metadata    string
 	}
 
-	g := graph.New()
+	g := coreplan.New()
 	branchSnapshots := make(chan branchSnapshot, 2)
 	var joinOutput string
 	var joinResults map[string]string
@@ -243,7 +243,7 @@ func TestForkJoinContextInheritance(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "b1", To: "merge"})
 	g.AddEdge(edge.Edge{From: "b2", To: "merge"})
 
-	result, err := New(g.Plan(), executor.New()).Run(context.Background())
+	result, err := New(g, executor.New()).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestSchedulerForkRespectsMaxForkConcurrency(t *testing.T) {
 	started := make(chan struct{}, 4)
 	release := make(chan struct{})
 
-	g := graph.New()
+	g := coreplan.New()
 	start := newTestNode("start", node.KindMethod)
 	newBranch := func(id string) *testNode {
 		branch := newTestNode(id, node.KindMethod)
@@ -318,7 +318,7 @@ func TestSchedulerForkRespectsMaxForkConcurrency(t *testing.T) {
 	}
 	g.SetEntry("start")
 
-	scheduler := New(g.Plan(), executor.New())
+	scheduler := New(g, executor.New())
 	scheduler.SetMaxForkConcurrency(2)
 	done := make(chan error, 1)
 	go func() {
@@ -346,7 +346,7 @@ func TestSchedulerForkRespectsMaxForkConcurrency(t *testing.T) {
 }
 
 func TestSchedulerForkFailFastCancelsSiblings(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	failureReady := make(chan struct{}, 1)
 	siblingReady := make(chan struct{}, 1)
 	releaseFailure := make(chan struct{})
@@ -385,7 +385,7 @@ func TestSchedulerForkFailFastCancelsSiblings(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := New(g.Plan(), executor.New()).Run(context.Background())
+		_, err := New(g, executor.New()).Run(context.Background())
 		done <- err
 	}()
 
@@ -404,7 +404,7 @@ func TestSchedulerForkFailFastCancelsSiblings(t *testing.T) {
 }
 
 func TestForkCreatesIndependentBranchContexts(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	branchContexts := make(chan *types.WorkflowContext, 2)
 	var mergeContext *types.WorkflowContext
 
@@ -442,7 +442,7 @@ func TestForkCreatesIndependentBranchContexts(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "b1", To: "merge"})
 	g.AddEdge(edge.Edge{From: "b2", To: "merge"})
 
-	if _, err := New(g.Plan(), executor.New()).Run(context.Background()); err != nil {
+	if _, err := New(g, executor.New()).Run(context.Background()); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -483,7 +483,7 @@ func TestForkCreatesIndependentBranchContexts(t *testing.T) {
 }
 
 func TestRunWithForkDivergent(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("start", node.KindMethod))
 	g.AddNode(newTestNode("b1", node.KindMethod))
 	g.AddNode(newTestNode("b2", node.KindMethod))
@@ -499,7 +499,7 @@ func TestRunWithForkDivergent(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "b2", To: "end2"})
 
 	exec := executor.New()
-	s := New(g.Plan(), exec)
+	s := New(g, exec)
 
 	result, err := s.Run(context.Background())
 	if err != nil {
@@ -511,7 +511,7 @@ func TestRunWithForkDivergent(t *testing.T) {
 }
 
 func TestNestedForkDependencyJoin(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	var reviewContext *types.WorkflowContext
 	start := newTestNode("start", node.KindMethod)
 	backend := newTestNode("backend", node.KindMethod)
@@ -534,7 +534,7 @@ func TestNestedForkDependencyJoin(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "backend-check", To: "review"})
 	g.AddEdge(edge.Edge{From: "tests-check", To: "review"})
 
-	result, err := New(g.Plan(), executor.New()).Run(context.Background())
+	result, err := New(g, executor.New()).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -552,8 +552,8 @@ func TestNestedForkDependencyJoin(t *testing.T) {
 	}
 }
 
-func TestAutomaticForkUsesBranchBoundAgentFactory(t *testing.T) {
-	g := graph.New()
+func TestAutomaticForkUsesNodeOwnedFactory(t *testing.T) {
+	g := coreplan.New()
 	start := newTestNode("start", node.KindMethod)
 	start.runFn = func(context.Context, *types.WorkflowContext) (string, error) { return "start", nil }
 	g.AddNode(start)
@@ -563,9 +563,9 @@ func TestAutomaticForkUsesBranchBoundAgentFactory(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "start", To: "left"})
 	g.AddEdge(edge.Edge{From: "start", To: "right"})
 
-	s := New(g.Plan(), executor.New())
+	s := New(g, executor.New())
 	s.SetBranchRuntimeResolver(func(branchID string) forkexec.BranchRuntime {
-		return forkexec.BranchRuntime{AgentFactory: runtimeFactory{output: branchID + "-runtime"}}
+		return forkexec.BranchRuntime{Metadata: map[string]string{"branch": branchID}}
 	})
 	result, err := s.Run(context.Background())
 	if err != nil {
@@ -575,17 +575,17 @@ func TestAutomaticForkUsesBranchBoundAgentFactory(t *testing.T) {
 	for _, nodeResult := range result.NodeResults {
 		outputs[nodeResult.NodeID] = types.FromJSON(nodeResult.Output)
 	}
-	if outputs["left"] != "left-runtime" || outputs["right"] != "right-runtime" {
-		t.Errorf("automatic fork outputs = %#v, want branch-bound factories", outputs)
+	if outputs["left"] != "shared-left" || outputs["right"] != "shared-right" {
+		t.Errorf("automatic fork outputs = %#v, want node-owned factories", outputs)
 	}
 }
 
 func TestRunNodeNotFound(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.SetEntry("nonexistent")
 
 	exec := executor.New()
-	s := New(g.Plan(), exec)
+	s := New(g, exec)
 
 	_, err := s.Run(context.Background())
 	if err == nil {
@@ -594,12 +594,12 @@ func TestRunNodeNotFound(t *testing.T) {
 }
 
 func TestRunContextCancellation(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("start", node.KindMethod))
 	g.SetEntry("start")
 
 	exec := executor.New()
-	s := New(g.Plan(), exec)
+	s := New(g, exec)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Immediately cancel
@@ -617,14 +617,14 @@ func TestRunContextCancellation(t *testing.T) {
 }
 
 func TestRunWithCheckpointCreatesSnapshots(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("a", node.KindMethod))
 	g.AddNode(newTestNode("b", node.KindMethod))
 	g.SetEntry("a")
 	g.AddEdge(edge.Edge{From: "a", To: "b"})
 
 	exec := executor.New()
-	s := New(g.Plan(), exec)
+	s := New(g, exec)
 
 	result, checkpoints, err := s.RunWithCheckpoint(context.Background())
 	if err != nil {

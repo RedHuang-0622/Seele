@@ -15,9 +15,7 @@ import (
 	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/runner"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/serialize"
 	"github.com/RedHuang-0622/Seele/workplan/sugar/approve"
 	sauto "github.com/RedHuang-0622/Seele/workplan/sugar/auto"
 	scheckpoint "github.com/RedHuang-0622/Seele/workplan/sugar/checkpoint"
@@ -30,7 +28,6 @@ import (
 // WorkPlan is the workflow definition and execution engine.
 type WorkPlan struct {
 	plan          *coreplan.Plan
-	graph         *graph.Graph
 	runner        *runner.Runner
 	factory       node.AgentFactory
 	defaultPrompt string
@@ -100,11 +97,9 @@ func NewFromPlan(p *coreplan.Plan, factory node.AgentFactory, opts ...Option) *W
 	if p == nil {
 		p = coreplan.New()
 	}
-	g := graph.NewWithPlan(p)
 	wp := &WorkPlan{
 		plan:    p,
-		graph:   g,
-		runner:  runner.New(p, factory),
+		runner:  runner.New(p),
 		factory: factory,
 	}
 	for _, o := range opts {
@@ -113,9 +108,6 @@ func NewFromPlan(p *coreplan.Plan, factory node.AgentFactory, opts ...Option) *W
 	return wp
 }
 
-// Graph returns the underlying graph structure.
-func (wp *WorkPlan) Graph() *graph.Graph { return wp.graph }
-
 // Plan returns the executable WorkPlan kernel.
 func (wp *WorkPlan) Plan() *coreplan.Plan { return wp.plan }
 
@@ -123,8 +115,8 @@ func (wp *WorkPlan) Plan() *coreplan.Plan { return wp.plan }
 
 // Auto adds an agent (Auto) strategy node with auto-linking.
 func (wp *WorkPlan) Auto(id, input string) *WorkPlan {
-	sauto.Add(wp.graph, id, input, wp.factory)
-	wp.autoLink(wp.graph.GetNode(id))
+	sauto.Add(wp.plan, id, input, wp.factory)
+	wp.autoLink(wp.plan.GetNode(id))
 	return wp
 }
 
@@ -135,15 +127,15 @@ func (wp *WorkPlan) Step(id, input string) *WorkPlan {
 
 // Method adds a Go function node with auto-linking.
 func (wp *WorkPlan) Method(id string, fn func(ctx context.Context, input string) (string, error)) *WorkPlan {
-	sauto.AddMethod(wp.graph, id, fn)
-	wp.autoLink(wp.graph.GetNode(id))
+	sauto.AddMethod(wp.plan, id, fn)
+	wp.autoLink(wp.plan.GetNode(id))
 	return wp
 }
 
 // LLM adds a pure LLM call node with auto-linking.
 func (wp *WorkPlan) LLM(id, input string, provider node.LLMProvider) *WorkPlan {
-	sauto.AddLLM(wp.graph, id, input, provider)
-	wp.autoLink(wp.graph.GetNode(id))
+	sauto.AddLLM(wp.plan, id, input, provider)
+	wp.autoLink(wp.plan.GetNode(id))
 	return wp
 }
 
@@ -175,8 +167,8 @@ func Step(id, input string) StepDef {
 
 // Loop adds a loop node with auto-linking and returns a Signal for real-time access.
 func (wp *WorkPlan) Loop(id, bodyID string, opts ...func(*sloop.LoopNode)) *sloop.Signal {
-	sig := sloop.Add(wp.graph, id, bodyID, wp.factory, opts...)
-	wp.autoLink(wp.graph.GetNode(id))
+	sig := sloop.Add(wp.plan, id, bodyID, wp.factory, opts...)
+	wp.autoLink(wp.plan.GetNode(id))
 	return sig
 }
 
@@ -193,7 +185,7 @@ func (wp *WorkPlan) Retry(id, bodyID string, maxIter int, successCond func(strin
 
 // Fork adds a concurrent fork node with auto-linking.
 func (wp *WorkPlan) Fork(id string, branches []node.ForkBranch, maxConcurrent int) *WorkPlan {
-	forkNode := fork.Add(wp.graph, id, branches, maxConcurrent, wp.factory)
+	forkNode := fork.Add(wp.plan, id, branches, maxConcurrent, wp.factory)
 	forkNode.SetPolicy(wp.ForkPolicy)
 	forkNode.SetJoinPolicy(wp.ForkJoinPolicy)
 	if wp.BranchRuntimeFor != nil {
@@ -202,7 +194,7 @@ func (wp *WorkPlan) Fork(id string, branches []node.ForkBranch, maxConcurrent in
 		})
 	}
 	forkNode.OnEvent = wp.BranchEventHook
-	wp.autoLink(wp.graph.GetNode(id))
+	wp.autoLink(wp.plan.GetNode(id))
 	return wp
 }
 
@@ -210,15 +202,15 @@ func (wp *WorkPlan) Fork(id string, branches []node.ForkBranch, maxConcurrent in
 
 // If adds a binary conditional branch node with auto-linking.
 func (wp *WorkPlan) If(id string, cond func(string) bool, trueID, falseID string) *WorkPlan {
-	sw.If(wp.graph, id, cond, trueID, falseID)
-	wp.autoLink(wp.graph.GetNode(id))
+	sw.If(wp.plan, id, cond, trueID, falseID)
+	wp.autoLink(wp.plan.GetNode(id))
 	return wp
 }
 
 // Switch adds a multi-way conditional branch node with auto-linking.
 func (wp *WorkPlan) Switch(id string, cases ...node.SwitchCase) *WorkPlan {
-	sw.Switch(wp.graph, id, cases...)
-	wp.autoLink(wp.graph.GetNode(id))
+	sw.Switch(wp.plan, id, cases...)
+	wp.autoLink(wp.plan.GetNode(id))
 	return wp
 }
 
@@ -226,18 +218,18 @@ func (wp *WorkPlan) Switch(id string, cases ...node.SwitchCase) *WorkPlan {
 
 // Approve adds an approval pause node with auto-linking.
 func (wp *WorkPlan) Approve(id, input string, gate approve.ApprovalGate, opts ...func(*approve.ApproveNode)) *WorkPlan {
-	approve.Add(wp.graph, id, input, gate, wp.factory, opts...)
-	wp.autoLink(wp.graph.GetNode(id))
+	approve.Add(wp.plan, id, input, gate, wp.factory, opts...)
+	wp.autoLink(wp.plan.GetNode(id))
 	return wp
 }
 
 // Gate adds a simplified approval node (execute/abort only) with auto-linking.
 func (wp *WorkPlan) Gate(id, content string) *WorkPlan {
 	g := &AutoApproveGate{}
-	approve.Add(wp.graph, id, content, g, wp.factory,
+	approve.Add(wp.plan, id, content, g, wp.factory,
 		approve.WithOptions(approve.Choices("execute", "abort")),
 	)
-	wp.autoLink(wp.graph.GetNode(id))
+	wp.autoLink(wp.plan.GetNode(id))
 	return wp
 }
 
@@ -250,8 +242,8 @@ func (wp *WorkPlan) PendingQuestion() *approve.Question {
 
 // Emit adds an emit node that writes PrevOutput to a named variable.
 func (wp *WorkPlan) Emit(id, key string) *WorkPlan {
-	emit.Add(wp.graph, id, key)
-	wp.autoLink(wp.graph.GetNode(id))
+	emit.Add(wp.plan, id, key)
+	wp.autoLink(wp.plan.GetNode(id))
 	return wp
 }
 
@@ -259,8 +251,8 @@ func (wp *WorkPlan) Emit(id, key string) *WorkPlan {
 
 // Checkpoint adds a checkpoint/snapshot node with auto-linking.
 func (wp *WorkPlan) Checkpoint(id string) *WorkPlan {
-	scheckpoint.Add(wp.graph, id)
-	wp.autoLink(wp.graph.GetNode(id))
+	scheckpoint.Add(wp.plan, id)
+	wp.autoLink(wp.plan.GetNode(id))
 	return wp
 }
 
@@ -290,18 +282,6 @@ func (wp *WorkPlan) Resume(ctx context.Context, snapshotID string) (*types.WorkP
 	return wp.runner.Resume(ctx, snapshotID)
 }
 
-// ─── Serialization ───────────────────────────────────────────────────
-
-// ExportJSON exports the current graph in the versioned Seele WorkPlan JSON
-// DSL. Only auto nodes with declarative inputs are representable by version 1.
-func (wp *WorkPlan) ExportJSON() (string, error) {
-	p, err := serialize.ToPlan(wp.plan)
-	if err != nil {
-		return "", err
-	}
-	return p.ToJSON()
-}
-
 // ─── Internal Helpers ───────────────────────────────────────────────
 
 // autoLink automatically connects the last added node to the new one.
@@ -312,31 +292,35 @@ func (wp *WorkPlan) autoLink(n node.Node) {
 	if wp.entryID == "" {
 		wp.entryID = n.ID()
 		wp.lastNodeID = n.ID()
-		wp.graph.SetEntry(n.ID())
+		wp.plan.SetEntry(n.ID())
 		return
 	}
 	if wp.lastNodeID == "" {
 		wp.lastNodeID = n.ID()
 		return
 	}
-	prev := wp.graph.GetNode(wp.lastNodeID)
+	prev := wp.plan.GetNode(wp.lastNodeID)
 	if prev == nil {
 		wp.lastNodeID = n.ID()
 		return
 	}
-	switch prev.Kind() {
+	kind := node.KindMethod
+	if described, ok := prev.(node.Kinded); ok {
+		kind = described.Kind()
+	}
+	switch kind {
 	case node.KindIf, node.KindSwitch:
 		// Conditional edges are added by If/Switch builders
 	case node.KindFork, node.KindLoop:
 		// Fork/Loop edges may already be set; only add if no outgoing edges
-		edges := wp.graph.GetEdgesFrom(wp.lastNodeID)
+		edges := wp.plan.GetEdgesFrom(wp.lastNodeID)
 		if len(edges) == 0 {
-			wp.graph.AddEdge(edge.Edge{From: wp.lastNodeID, To: n.ID()})
+			wp.plan.AddEdge(edge.Edge{From: wp.lastNodeID, To: n.ID()})
 		}
 	default:
-		edges := wp.graph.GetEdgesFrom(wp.lastNodeID)
+		edges := wp.plan.GetEdgesFrom(wp.lastNodeID)
 		if len(edges) == 0 {
-			wp.graph.AddEdge(edge.Edge{From: wp.lastNodeID, To: n.ID()})
+			wp.plan.AddEdge(edge.Edge{From: wp.lastNodeID, To: n.ID()})
 		}
 	}
 	wp.lastNodeID = n.ID()

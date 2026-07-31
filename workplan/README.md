@@ -1,33 +1,32 @@
 # workplan
 
-`workplan` 是声明式工作流门面：它装配 Plan 执行内核、Graph 编辑外观、运行时和链式 sugar API。
+`workplan` 提供无产品语义的 Plan 执行内核：Plan 是唯一图状态源，Node 是最小执行接口，Scheduler/Executor 只负责拓扑、并发、取消和结果合并。
 
-## 公开接口
+## 职责边界
+
+- `core/plan` 持有节点、边、入口和 `Build → Validate → Seal → Run` 生命周期。
+- `core/node` 提供最小 `Node` 合约及可选的 Auto、Function、LLM 等抽象实现。
+- `runtime` 提供校验、执行、调度、分支和 checkpoint 原语；不识别 AgentFactory、Task 或产品 DSL。
+- `codec` 提供邻接表、0/1 邻接矩阵的导入导出；节点如何 materialize 由调用方注入 `NodeEncoder`/`NodeDecoder`。
+- `sugar` 只是可选的构建辅助 API，不是 Plan 内核的第二个状态源。
+
+## 公开入口
 
 | API | 用途 |
 | --- | --- |
-| `New` | 创建新的 Plan 内核及 WorkPlan 门面 |
-| `NewFromPlan` | 将已有 Plan 内核装配为可执行 WorkPlan |
-| `Plan` | 获取 WorkPlan 的执行内核 |
-| `Graph` | 获取用于编辑和查询的 Graph 外观 |
-| `Auto` / `Method` / `LLM` | 添加顺序节点 |
-| `If` / `Switch` / `Loop` / `Fork` | 添加控制流 |
-| `Run` / `Resume` | 执行或从检查点恢复 |
-| `ExportJSON` | 导出正式 Seele DSL v1 |
+| `core/plan.New` / `core/plan.Build` | 创建或构建 Plan |
+| `core/plan.Validate` / `Seal` | 检查并封存可执行拓扑 |
+| `core/node.Node` | 自定义节点的最小执行接口 |
+| `codec.ImportAdjacencyList` / `ExportAdjacencyList` | 邻接表 JSON 导入导出 |
+| `codec.ImportAdjacencyMatrix` / `ExportAdjacencyMatrix` | 邻接矩阵 JSON 导入导出 |
+| `runtime/runner.Runner` | 执行和恢复 Plan |
 
-## 实现细节
+## 数据格式边界
 
-- `core/plan` 是节点、边和入口的唯一所有者；运行器和调度器直接依赖它。
-- `runtime/graph` 是 Plan 的编辑/查询外观，供 sugar、可视化和后续表露层功能使用，不参与执行依赖链。
-- DSL v1 的执行节点会直接编译为核心 `AutoNode` 和 `edge.Edge`，不经过 sugar。
-
-## 模块导航
-
-- [core/](core/README.md)：Plan 内核、节点、边和上下文
-- [dsl/](dsl/README.md)：正式 JSON 语法与语义校验
-- [runtime/](runtime/README.md)：执行、校验、序列化和 Graph 外观
-- [sugar/](sugar/README.md)：链式构建 API
+Seele 只验证通用拓扑和节点编解码结果，不解释 `task`、`auto`、`agent` 等产品字段。Seelex 或其他调用方可以在 `NodeDecoder` 中解释自己的 JSON，并获得包含字段路径、行列和原因的结构化 codec 错误。
 
 ## 验证
 
-- `go test ./workplan/...`
+```text
+go test ./workplan/...
+```

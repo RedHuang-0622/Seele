@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 	"go.uber.org/goleak"
 )
 
@@ -125,7 +125,7 @@ func TestNewNode_NegativeMaxConcurrent(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	branches := []node.ForkBranch{
 		{Label: "research", SystemPrompt: "Research agent", Input: "data"},
 		{Label: "write", SystemPrompt: "Write agent", Input: "data"},
@@ -143,7 +143,7 @@ func TestAdd(t *testing.T) {
 }
 
 func TestAdd_EmptyBranches(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	n := Add(g, "empty-fork", []node.ForkBranch{}, 1, &mockFactory{})
 	if n == nil {
 		t.Fatal("Add() with empty branches returned nil")
@@ -260,9 +260,9 @@ func TestRun_UsesInjectedBranchRuntimeAndEmitsBranchEvents(t *testing.T) {
 	n := NewNode("runtime-fork", []node.ForkBranch{
 		{Label: "left"},
 		{Label: "right"},
-	}, 2, &mockFactory{})
+	}, 2, taggedFactory{tag: "node-owned"})
 	n.SetRuntimeResolver(func(branch node.ForkBranch) forkexec.BranchRuntime {
-		return forkexec.BranchRuntime{SessionID: "session-1", AgentFactory: taggedFactory{tag: branch.Label + "-runtime"}}
+		return forkexec.BranchRuntime{Metadata: map[string]string{"branch": branch.Label}}
 	})
 	n.OnEvent = func(event forkexec.Event) { events <- event }
 
@@ -270,8 +270,8 @@ func TestRun_UsesInjectedBranchRuntimeAndEmitsBranchEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(output, "left-runtime") || !strings.Contains(output, "right-runtime") {
-		t.Errorf("output = %q, want injected runtime agent outputs", output)
+	if !strings.Contains(output, "node-owned") {
+		t.Errorf("output = %q, want node-owned agent outputs", output)
 	}
 
 	seen := make(map[string]map[forkexec.BranchState]bool)
@@ -319,7 +319,7 @@ func TestRun_BestEffortJoinSuccessful(t *testing.T) {
 }
 
 func TestGraphContainsForkNode(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	branches := []node.ForkBranch{
 		{Label: "a", Input: "in-a"},
 		{Label: "b", Input: "in-b"},

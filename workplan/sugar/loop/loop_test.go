@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 )
 
 // ── Mock types ─────────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ func TestNewNode(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	signal := Add(g, "loop-node", "body-node", &mockFactory{})
 	if signal == nil {
 		t.Fatal("Add() returned nil signal")
@@ -178,7 +178,7 @@ func TestAdd(t *testing.T) {
 }
 
 func TestAdd_WithOptions(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	cond := func(s string) bool { return s == "done" }
 	signal := Add(g, "loops-with-opts", "body", &mockFactory{},
 		WithUntil(cond),
@@ -209,7 +209,7 @@ func TestAdd_WithOptions(t *testing.T) {
 }
 
 func TestWithBodyConfig(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	signal := Add(g, "loop-body", "body", &mockFactory{},
 		WithBodyConfig("system prompt", "{{.PrevResult}}"),
 	)
@@ -254,7 +254,7 @@ func TestWithUntil(t *testing.T) {
 }
 
 func TestGraphContainsLoopNode(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	Add(g, "graph-loop", "body", &mockFactory{})
 	nodes := g.AllNodes()
 	found := false

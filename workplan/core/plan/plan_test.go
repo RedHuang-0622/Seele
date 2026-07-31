@@ -2,6 +2,7 @@ package plan
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"testing"
@@ -126,9 +127,10 @@ func TestConcurrentAddNodeAndAddEdgeLoseNoWrites(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			id := string(rune('a' + i%26))
-			p.AddNode(newTestNode(id + string(rune('0'+i/26))))
-			p.AddEdge(edge.Edge{From: "entry", To: id})
+			nodeID := fmt.Sprintf("n%d", i)
+			edgeTo := fmt.Sprintf("n%d", i)
+			p.AddNode(newTestNode(nodeID))
+			p.AddEdge(edge.Edge{From: "entry", To: edgeTo})
 		}(i)
 	}
 	wg.Wait()
@@ -138,5 +140,105 @@ func TestConcurrentAddNodeAndAddEdgeLoseNoWrites(t *testing.T) {
 	}
 	if got := len(p.AllEdges()); got != writers {
 		t.Fatalf("AllEdges = %d, want %d — concurrent AddEdge lost writes", got, writers)
+	}
+}
+
+func TestAddNodeOverwritesByID(t *testing.T) {
+	p := New()
+	first := newTestNode("a")
+	second := newTestNode("a")
+
+	p.AddNode(first)
+	p.AddNode(second)
+
+	if got := len(p.AllNodes()); got != 1 {
+		t.Fatalf("AllNodes = %d, want 1", got)
+	}
+	if p.GetNode("a") != second {
+		t.Fatal("AddNode must overwrite an existing node by ID")
+	}
+}
+
+func TestAddNodeIfAbsentIsIdempotentByID(t *testing.T) {
+	p := New()
+	first := newTestNode("a")
+	second := newTestNode("a")
+
+	if !p.AddNodeIfAbsent(first) {
+		t.Fatal("first AddNodeIfAbsent must add the node")
+	}
+	if p.AddNodeIfAbsent(second) {
+		t.Fatal("second AddNodeIfAbsent must report the existing node")
+	}
+	if p.GetNode("a") != first {
+		t.Fatal("AddNodeIfAbsent must keep the first node")
+	}
+}
+
+func TestSealMakesPlanImmutable(t *testing.T) {
+	p := New()
+	p.AddNode(newTestNode("start"))
+	p.SetEntry("start")
+	if err := p.Seal(); err != nil {
+		t.Fatalf("Seal() error = %v", err)
+	}
+	p.AddNode(newTestNode("late"))
+	p.AddEdge(edge.Edge{From: "start", To: "late"})
+	p.SetEntry("late")
+	if p.GetNode("late") != nil || len(p.AllEdges()) != 0 || p.Entry() != "start" {
+		t.Fatalf("sealed plan was mutated: entry=%q nodes=%v edges=%v", p.Entry(), p.AllNodes(), p.AllEdges())
+	}
+}
+
+func TestReplaceNodeSwapsAndReportsMissing(t *testing.T) {
+	p := New()
+	p.AddNode(newTestNode("a"))
+
+	if p.ReplaceNode(newTestNode("missing")) {
+		t.Fatal("ReplaceNode must return false when the ID is unknown")
+	}
+
+	replacement := newTestNode("a")
+	if !p.ReplaceNode(replacement) {
+		t.Fatal("ReplaceNode must return true when the ID exists")
+	}
+	if p.GetNode("a") != replacement {
+		t.Fatal("ReplaceNode did not install the new node")
+	}
+}
+
+func TestAddUnconditionalEdgeIfAbsentIsIdempotentByEndpoints(t *testing.T) {
+	p := New()
+
+	if !p.AddUnconditionalEdgeIfAbsent("a", "b") {
+		t.Fatal("first edge must be added")
+	}
+	if p.AddUnconditionalEdgeIfAbsent("a", "b") {
+		t.Fatal("duplicate edge must not be added")
+	}
+	if !p.AddUnconditionalEdgeIfAbsent("a", "c") {
+		t.Fatal("different endpoints must be added")
+	}
+
+	if got := len(p.AllEdges()); got != 2 {
+		t.Fatalf("AllEdges = %d, want 2", got)
+	}
+}
+
+func TestAddEdgeKeepsClosuresFromSameCodeLocation(t *testing.T) {
+	p := New()
+	for _, expected := range []string{"backend", "tests"} {
+		expected := expected
+		p.AddEdge(edge.Edge{
+			From: "a",
+			To:   "b",
+			Condition: func(wc *types.WorkflowContext) bool {
+				return wc.Vars["branch"] == expected
+			},
+		})
+	}
+
+	if got := len(p.AllEdges()); got != 2 {
+		t.Fatalf("AllEdges = %d, want 2 distinct captured conditions", got)
 	}
 }

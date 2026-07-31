@@ -6,8 +6,8 @@ import (
 
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 type testNode struct {
@@ -23,73 +23,73 @@ func (n *testNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, 
 }
 
 func TestGraphValidPasses(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("start", node.KindMethod))
 	g.AddNode(newTestNode("end", node.KindMethod))
 	g.SetEntry("start")
 	g.AddEdge(edge.Edge{From: "start", To: "end"})
 
-	err := Plan(g.Plan())
+	err := Plan(g)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 }
 
 func TestEntryNodeMissingEntryReturnsError(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("start", node.KindMethod))
 	g.SetEntry("nonexistent")
 
-	err := EntryNode(g.Plan())
+	err := EntryNode(g)
 	if err == nil {
 		t.Fatal("expected error for missing entry node, got nil")
 	}
 }
 
 func TestEntryNodeEmptyEntryIsValid(t *testing.T) {
-	g := graph.New()
-	err := EntryNode(g.Plan())
+	g := coreplan.New()
+	err := EntryNode(g)
 	if err != nil {
 		t.Fatalf("expected no error for empty graph, got: %v", err)
 	}
 }
 
 func TestEntryNodeValidPasses(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("start", node.KindMethod))
 	g.SetEntry("start")
 
-	err := EntryNode(g.Plan())
+	err := EntryNode(g)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 }
 
 func TestEdgeReferencesInvalidEdgeTarget(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("a", node.KindMethod))
 	g.AddEdge(edge.Edge{From: "a", To: "nonexistent"})
 
-	err := EdgeReferences(g.Plan())
+	err := EdgeReferences(g)
 	if err == nil {
 		t.Fatal("expected error for invalid edge target, got nil")
 	}
 }
 
 func TestEdgeReferencesValidPasses(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("a", node.KindMethod))
 	g.AddNode(newTestNode("b", node.KindMethod))
 	g.AddEdge(edge.Edge{From: "a", To: "b"})
 
-	err := EdgeReferences(g.Plan())
+	err := EdgeReferences(g)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 }
 
 func TestCyclicDetectsCycle(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("a", node.KindMethod))
 	g.AddNode(newTestNode("b", node.KindMethod))
 	g.AddNode(newTestNode("c", node.KindMethod))
@@ -97,76 +97,76 @@ func TestCyclicDetectsCycle(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "b", To: "c"})
 	g.AddEdge(edge.Edge{From: "c", To: "a"}) // cycle: a -> b -> c -> a
 
-	err := Cyclic(g.Plan())
+	err := Cyclic(g)
 	if err == nil {
 		t.Fatal("expected cycle detection error, got nil")
 	}
 }
 
 func TestCyclicNoCyclePasses(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("a", node.KindMethod))
 	g.AddNode(newTestNode("b", node.KindMethod))
 	g.AddNode(newTestNode("c", node.KindMethod))
 	g.AddEdge(edge.Edge{From: "a", To: "b"})
 	g.AddEdge(edge.Edge{From: "b", To: "c"})
 
-	err := Cyclic(g.Plan())
+	err := Cyclic(g)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 }
 
 func TestCyclicSelfLoop(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("a", node.KindMethod))
 	g.AddEdge(edge.Edge{From: "a", To: "a"}) // self-loop
 
-	err := Cyclic(g.Plan())
+	err := Cyclic(g)
 	if err == nil {
 		t.Fatal("expected cycle detection error for self-loop, got nil")
 	}
 }
 
 func TestOrphanDetectsUnreachableNodes(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("start", node.KindMethod))
 	g.AddNode(newTestNode("orphan", node.KindMethod))
 	g.SetEntry("start")
 	// No edges at all — "orphan" has no incoming edges and is not the entry
 
-	err := Orphan(g.Plan())
+	err := Orphan(g)
 	if err == nil {
 		t.Fatal("expected orphan detection error, got nil")
 	}
 }
 
 func TestOrphanAllReachablePasses(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("start", node.KindMethod))
 	g.AddNode(newTestNode("end", node.KindMethod))
 	g.SetEntry("start")
 	g.AddEdge(edge.Edge{From: "start", To: "end"})
 
-	err := Orphan(g.Plan())
+	err := Orphan(g)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 }
 
 func TestOrphanNoEntryPasses(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("start", node.KindMethod))
 	// No entry set — Orphan returns nil early
 
-	err := Orphan(g.Plan())
+	err := Orphan(g)
 	if err != nil {
 		t.Fatalf("expected no error for graph with no entry, got: %v", err)
 	}
 }
 
 func TestOrphanDisconnectedGraph(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	g.AddNode(newTestNode("a", node.KindMethod))
 	g.AddNode(newTestNode("b", node.KindMethod))
 	g.AddNode(newTestNode("c", node.KindMethod))
@@ -174,7 +174,7 @@ func TestOrphanDisconnectedGraph(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "a", To: "b"})
 	// "c" has no incoming edges and is not the entry
 
-	err := Orphan(g.Plan())
+	err := Orphan(g)
 	if err == nil {
 		t.Fatal("expected orphan detection error for disconnected node 'c', got nil")
 	}

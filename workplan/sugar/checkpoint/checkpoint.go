@@ -5,8 +5,8 @@ import (
 	"context"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 // CheckpointNode records the current output as a checkpoint.
@@ -28,7 +28,7 @@ func (n *CheckpointNode) Run(ctx context.Context, wc *types.WorkflowContext) (st
 }
 
 // Add registers a checkpoint node in the graph.
-func Add(g *graph.Graph, id string) *CheckpointNode {
+func Add(g *coreplan.Plan, id string) *CheckpointNode {
 	n := NewNode(id)
 	g.AddNode(n)
 	return n

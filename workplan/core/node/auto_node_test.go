@@ -19,22 +19,21 @@ type autoTestAgent struct{}
 
 func (autoTestAgent) Chat(_ context.Context, input string) (string, error) { return input, nil }
 
-func TestAutoNodeRendersTaskInputAndSupportsFactoryOverride(t *testing.T) {
+func TestAutoNodeRendersTaskInputWithOwnedFactory(t *testing.T) {
 	baseFactory := &autoTestFactory{}
-	overrideFactory := &autoTestFactory{}
 	n := NewAutoNode("inspect", baseFactory, "inspect {{.PrevResult}}")
 	wc := types.NewWorkflowContext()
 	wc.PrevOutput = `"scope"`
 
-	output, err := n.RunWithAgentFactory(context.Background(), wc, overrideFactory)
+	output, err := n.Run(context.Background(), wc)
 	if err != nil {
-		t.Fatalf("RunWithAgentFactory error = %v", err)
+		t.Fatalf("Run error = %v", err)
 	}
 	if output != "inspect scope" {
 		t.Fatalf("output = %q", output)
 	}
-	if overrideFactory.prompt == "" || baseFactory.prompt != "" {
-		t.Fatalf("factory override was not used: base=%q override=%q", baseFactory.prompt, overrideFactory.prompt)
+	if baseFactory.prompt == "" {
+		t.Fatal("construction-time factory was not used")
 	}
 	if n.DSLInput() != "inspect {{.PrevResult}}" || n.Kind() != KindAuto {
 		t.Fatalf("node metadata was not preserved")
@@ -69,10 +68,6 @@ func TestAutoNodeReportsNilFactory(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 
-	// A nil override falls back to the construction-time factory.
-	if _, err := n.RunWithAgentFactory(context.Background(), types.NewWorkflowContext(), nil); err == nil {
-		t.Fatal("nil override with a nil base factory must return an error")
-	}
 }
 
 type nilAgentFactory struct{}

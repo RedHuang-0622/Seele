@@ -5,8 +5,8 @@ import (
 	"context"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 // EmitNode writes PrevOutput to a named variable.
@@ -32,7 +32,7 @@ func (n *EmitNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, 
 }
 
 // Add registers an emit node in the graph.
-func Add(g *graph.Graph, id, key string) *EmitNode {
+func Add(g *coreplan.Plan, id, key string) *EmitNode {
 	n := NewNode(id, key)
 	g.AddNode(n)
 	return n

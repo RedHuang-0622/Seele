@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 func TestNewNode(t *testing.T) {
@@ -26,7 +26,7 @@ func TestNewNode(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	n := Add(g, "emit-node", "myvar")
 	if n == nil {
 		t.Fatal("Add() returned nil")
@@ -43,7 +43,7 @@ func TestAdd(t *testing.T) {
 }
 
 func TestAdd_ReturnsCorrectType(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	n := Add(g, "my-emit", "key")
 	if _, ok := interface{}(n).(*EmitNode); !ok {
 		t.Error("Add() should return *EmitNode")
@@ -134,7 +134,7 @@ func TestRun_UpdatesResultVars(t *testing.T) {
 }
 
 func TestMultipleEmits(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	e1 := Add(g, "emit-first", "var1")
 	e2 := Add(g, "emit-second", "var2")
 
@@ -155,7 +155,7 @@ func TestMultipleEmits(t *testing.T) {
 }
 
 func TestGraphContainsEmitNode(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	Add(g, "graph-emit", "mykey")
 
 	nodes := g.AllNodes()

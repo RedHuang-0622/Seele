@@ -1,25 +1,28 @@
 # workplan/core/node
 
-`core/node` 定义 WorkPlan 的可执行节点契约和基础节点实现，不负责图存储或调度。
+该包定义 Plan 节点的最小执行合约和可选的通用节点实现。
 
-## 公开接口
+## 核心接口
 
-| API | 用途 |
-| --- | --- |
-| `Node` / `BaseNode` / `NodeKind` | 统一节点结构和类别 |
-| `InputNode` | 可导出声明式任务输入的节点契约 |
-| `NewAutoNode` | 直接执行 DSL `kind: "auto"` 子代理任务 |
-| `NewFunctionNode` / `NewLLMNode` / `NewAgentNode` | 其它核心节点原语 |
-| `AgentFactory` / `LLMProvider` | 运行时依赖抽象 |
+```go
+type Node interface {
+    ID() string
+    Run(context.Context, *types.WorkflowContext) (string, error)
+}
+```
 
-## 实现细节
+`Kinded` 只是内置节点的可选描述接口，调度器不能要求它存在。`AutoNode`、`FunctionNode` 和 `LLMNode` 是 Seele 提供的抽象实现；自定义节点无需继承它们。
 
-- `AutoNode` 在运行时渲染其任务输入，支持 Scheduler 注入分支级 `AgentFactory`，因此并行分支可使用独立子代理。
-- `DSLInput` 保留未渲染的任务文本，供正式 DSL 导出使用。
-- 节点不依赖 Plan 或 Graph；路由与调度由运行时负责。
+## 边界
 
-## 依赖与验证
+节点自行持有执行所需的 Agent、Task adapter 或工具函数。Scheduler 不注入或识别 AgentFactory，Plan 核心也不依赖 Agent、Seelex 或 Task。
 
-- 执行器：[../../runtime/executor/README.md](../../runtime/executor/README.md)
-- DSL 编译：[../../runtime/serialize/README.md](../../runtime/serialize/README.md)
-- 验证：`go test ./workplan/core/node/...`
+## 编解码
+
+通用拓扑编解码见 [../../codec/README.md](../../codec/README.md)。产品 DSL 的节点字段由调用方提供的 NodeDecoder 解释。
+
+## 验证
+
+```text
+go test ./workplan/core/node/...
+```

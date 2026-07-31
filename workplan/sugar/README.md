@@ -1,6 +1,6 @@
 # workplan/sugar
 
-`sugar` 是 WorkPlan DSL 的节点构建层。各子包只将语义明确的节点和边写入 `runtime/graph`；执行逻辑集中在 runtime。
+`sugar` 是 WorkPlan DSL 的节点构建层。各子包只将语义明确的节点和边写入 `core/plan.Plan`；执行逻辑集中在 runtime。
 
 | 包 | DSL 语义 |
 | --- | --- |

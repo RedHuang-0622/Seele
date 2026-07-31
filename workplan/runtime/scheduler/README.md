@@ -8,13 +8,13 @@
 | --- | --- |
 | `New` | 绑定 `core/plan.Plan` 和 Executor |
 | `Run` | 从入口调度完整 Plan |
-| `SetBranchRuntimeResolver` | 为节点分支注入只读运行时和 AgentFactory |
+| `SetBranchRuntimeResolver` | 为节点分支注入通用 limiter 与不透明 metadata |
 | `SetForkPolicy` / `SetForkJoinPolicy` | 配置分支失败与汇合策略 |
 
 ## 实现细节
 
-- 同一轮中无依赖冲突的节点经 `forkexec` 并发运行，AutoNode 可收到分支级 AgentFactory。
-- Scheduler 直接读取 Plan 的节点与边；Graph 外观只服务编辑和查询。
+- 同一轮中无依赖冲突的节点经 `forkexec` 并发运行；Scheduler 只调用 `Node.Run`，不识别 Agent、ToolFunc 或节点类别。
+- Scheduler 直接读取 Plan 的节点与边；不存在第二份 Graph 状态或 facade。
 
 ## 依赖与验证
 

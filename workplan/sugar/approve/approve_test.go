@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 )
 
 // ── Mock types ─────────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ func TestNewNode(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	gate := &mockGate{}
 	n := Add(g, "approve-node", "execute prompt", gate, &mockFactory{})
 	if n == nil {
@@ -219,7 +219,7 @@ func TestBuildKVS_Explicit(t *testing.T) {
 }
 
 func TestAddToGraph_NodeFound(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	gate := &mockGate{
 		fn: func(ctx context.Context, q Question) (any, error) {
 			return "execute", nil

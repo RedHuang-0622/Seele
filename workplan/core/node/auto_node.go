@@ -31,24 +31,11 @@ func (n *AutoNode) DSLInput() string { return n.input }
 
 // Run executes the node using its construction-time AgentFactory.
 func (n *AutoNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, error) {
-	return n.run(ctx, wc, n.factory)
-}
-
-// RunWithAgentFactory executes the node with a branch-bound factory when one
-// is supplied by the scheduler.
-func (n *AutoNode) RunWithAgentFactory(ctx context.Context, wc *types.WorkflowContext, factory AgentFactory) (string, error) {
-	if factory == nil {
-		factory = n.factory
-	}
-	return n.run(ctx, wc, factory)
-}
-
-func (n *AutoNode) run(ctx context.Context, wc *types.WorkflowContext, factory AgentFactory) (string, error) {
-	if factory == nil {
+	if n.factory == nil {
 		return "", fmt.Errorf("auto node %q: agent factory is nil", n.ID())
 	}
 	input := types.RenderTemplate(n.input, wc)
-	agt := factory.NewAgent(defaultAutoSystemPrompt)
+	agt := n.factory.NewAgent(defaultAutoSystemPrompt)
 	if agt == nil {
 		return "", fmt.Errorf("auto node %q: agent factory returned nil", n.ID())
 	}

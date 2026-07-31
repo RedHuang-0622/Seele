@@ -12,36 +12,14 @@ import (
 // Executor runs individual nodes with pre/post processing.
 type Executor struct{}
 
-type agentFactoryOverrideNode interface {
-	RunWithAgentFactory(context.Context, *types.WorkflowContext, node.AgentFactory) (string, error)
-}
-
 // New creates an executor.
 func New() *Executor {
 	return &Executor{}
 }
 
-// RunNode executes a node without a branch-specific AgentFactory override.
+// RunNode executes a node through the only runtime contract: Node.Run.
 func (e *Executor) RunNode(ctx context.Context, n node.Node, wc *types.WorkflowContext) (string, error) {
-	return e.RunNodeWithAgentFactory(ctx, n, wc, nil)
-}
-
-// RunNodeWithAgentFactory executes n using a branch-bound factory when the
-// node supports runtime factory injection. Other node kinds retain RunNode
-// behavior unchanged.
-func (e *Executor) RunNodeWithAgentFactory(ctx context.Context, n node.Node, wc *types.WorkflowContext, factory node.AgentFactory) (string, error) {
-	if factory == nil {
-		return e.runNode(ctx, n, wc)
-	}
-	overridable, ok := n.(agentFactoryOverrideNode)
-	if !ok {
-		return e.runNode(ctx, n, wc)
-	}
-	output, err := overridable.RunWithAgentFactory(ctx, wc, factory)
-	if err != nil {
-		return output, err
-	}
-	return types.ToJSON(output), nil
+	return e.runNode(ctx, n, wc)
 }
 
 // runNode executes a single node with pre-processing (template rendering) and post-processing.

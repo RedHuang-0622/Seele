@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 // ── Mock types ─────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ func TestNewAgentStrategy_DefaultPrompt(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	n := Add(g, "agent-node", "hello", &mockFactory{})
 	if n == nil {
 		t.Fatal("Add() returned nil")
@@ -85,7 +85,7 @@ func TestAdd(t *testing.T) {
 }
 
 func TestAddMethod(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	fn := func(ctx context.Context, input string) (string, error) {
 		return "result", nil
 	}
@@ -102,7 +102,7 @@ func TestAddMethod(t *testing.T) {
 }
 
 func TestAddLLM(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	n := AddLLM(g, "llm-node", "prompt", &mockLLMProvider{})
 	if n == nil {
 		t.Fatal("AddLLM() returned nil")
@@ -208,7 +208,7 @@ func TestStrategyNode_Kind(t *testing.T) {
 }
 
 func TestAddToGraph_AllNodesPresent(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	Add(g, "a", "input", &mockFactory{})
 	AddMethod(g, "b", func(ctx context.Context, input string) (string, error) {
 		return "ok", nil

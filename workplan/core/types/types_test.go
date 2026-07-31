@@ -237,15 +237,15 @@ func TestToJSON(t *testing.T) {
 		input string
 		want  string
 	}{
-		{`{"key":"value"}`, `{"key":"value"}`},                     // already valid JSON
-		{`"hello"`, `"hello"`},                                      // valid JSON string
-		{`42`, `42`},                                                 // valid JSON number
-		{`true`, `true`},                                             // valid JSON bool
-		{`hello`, `"hello"`},                                         // plain string → JSON quoted
-		{`plain text`, `"plain text"`},                               // plain with space → JSON quoted
-		{`123`, `123`},                                              // valid JSON number → pass through
-		{``, `""`},                                                   // empty → JSON empty string
-		{`{"nested": {"a": [1,2]}}`, `{"nested": {"a": [1,2]}}`},    // nested JSON
+		{`{"key":"value"}`, `{"key":"value"}`}, // already valid JSON
+		{`"hello"`, `"hello"`},                 // valid JSON string
+		{`42`, `42`},                           // valid JSON number
+		{`true`, `true`},                       // valid JSON bool
+		{`hello`, `"hello"`},                   // plain string → JSON quoted
+		{`plain text`, `"plain text"`},         // plain with space → JSON quoted
+		{`123`, `123`},                         // valid JSON number → pass through
+		{``, `""`},                             // empty → JSON empty string
+		{`{"nested": {"a": [1,2]}}`, `{"nested": {"a": [1,2]}}`}, // nested JSON
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -265,14 +265,14 @@ func TestFromJSON(t *testing.T) {
 		input string
 		want  string
 	}{
-		{`"hello"`, `hello`},           // JSON string → unwrapped
+		{`"hello"`, `hello`},             // JSON string → unwrapped
 		{`"hello world"`, `hello world`}, // JSON string with space → unwrapped
-		{`plaintext`, `plaintext`},      // not JSON → as-is
-		{`{"a":1}`, `{"a":1}`},         // valid JSON but not a string → as-is
-		{``, ``},                        // empty → as-is
-		{`42`, `42`},                    // JSON number → as-is (not a string)
-		{`true`, `true`},               // JSON bool → as-is
-		{`"\"escaped\""`, `"escaped"`}, // JSON with escaped quotes
+		{`plaintext`, `plaintext`},       // not JSON → as-is
+		{`{"a":1}`, `{"a":1}`},           // valid JSON but not a string → as-is
+		{``, ``},                         // empty → as-is
+		{`42`, `42`},                     // JSON number → as-is (not a string)
+		{`true`, `true`},                 // JSON bool → as-is
+		{`"\"escaped\""`, `"escaped"`},   // JSON with escaped quotes
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -389,36 +389,37 @@ func TestRenderTemplate(t *testing.T) {
 			t.Errorf("got %q", result)
 		}
 	})
-		t.Run("replaces {{.PrevResults.nodeID}}", func(t *testing.T) {
-			wc := NewWorkflowContext()
-			wc.PrevResults["b"] = `"布偶猫"`
-			wc.PrevResults["c"] = `"温顺"`
-			result := RenderTemplate("外形{{.PrevResults.b}}，习性{{.PrevResults.c}}", wc)
-			if result != "外形布偶猫，习性温顺" {
-				t.Errorf("got %q, want %q", result, "外形布偶猫，习性温顺")
-			}
-		})
+	t.Run("replaces {{.PrevResults.nodeID}}", func(t *testing.T) {
+		wc := NewWorkflowContext()
+		wc.PrevResults["b"] = `"布偶猫"`
+		wc.PrevResults["c"] = `"温顺"`
+		result := RenderTemplate("外形{{.PrevResults.b}}，习性{{.PrevResults.c}}", wc)
+		if result != "外形布偶猫，习性温顺" {
+			t.Errorf("got %q, want %q", result, "外形布偶猫，习性温顺")
+		}
+	})
 
-		t.Run("{{.PrevResults}} missing key leaves placeholder", func(t *testing.T) {
-			wc := NewWorkflowContext()
-			wc.PrevResults["b"] = `"存在"`
-			result := RenderTemplate("{{.PrevResults.b}} {{.PrevResults.nonexistent}}", wc)
-			if result != "存在 {{.PrevResults.nonexistent}}" {
-				t.Errorf("got %q", result)
-			}
-		})
+	t.Run("{{.PrevResults}} missing key leaves placeholder", func(t *testing.T) {
+		wc := NewWorkflowContext()
+		wc.PrevResults["b"] = `"存在"`
+		result := RenderTemplate("{{.PrevResults.b}} {{.PrevResults.nonexistent}}", wc)
+		if result != "存在 {{.PrevResults.nonexistent}}" {
+			t.Errorf("got %q", result)
+		}
+	})
 
-		t.Run("combined PrevResult and PrevResults", func(t *testing.T) {
-			wc := NewWorkflowContext()
-			wc.PrevOutput = `"最后"`
-			wc.PrevResults["a"] = `"第一"`
-			wc.PrevResults["b"] = `"第二"`
-			result := RenderTemplate("{{.PrevResult}} after {{.PrevResults.a}} and {{.PrevResults.b}}", wc)
-			if result != "最后 after 第一 and 第二" {
-				t.Errorf("got %q", result)
-			}
-		})
-	}
+	t.Run("combined PrevResult and PrevResults", func(t *testing.T) {
+		wc := NewWorkflowContext()
+		wc.PrevOutput = `"最后"`
+		wc.PrevResults["a"] = `"第一"`
+		wc.PrevResults["b"] = `"第二"`
+		result := RenderTemplate("{{.PrevResult}} after {{.PrevResults.a}} and {{.PrevResults.b}}", wc)
+		if result != "最后 after 第一 and 第二" {
+			t.Errorf("got %q", result)
+		}
+	})
+}
+
 // --- Status String ---
 
 func TestStatusString(t *testing.T) {

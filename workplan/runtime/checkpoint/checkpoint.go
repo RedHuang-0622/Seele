@@ -16,8 +16,8 @@ type Store interface {
 
 // MemoryStore is an in-memory implementation of Store.
 type MemoryStore struct {
-	mu     sync.RWMutex
-	snaps  map[string]*types.Snapshot
+	mu    sync.RWMutex
+	snaps map[string]*types.Snapshot
 }
 
 // NewMemoryStore creates an in-memory checkpoint store.

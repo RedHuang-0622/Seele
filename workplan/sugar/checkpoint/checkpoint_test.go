@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 func TestNewNode(t *testing.T) {
@@ -23,7 +23,7 @@ func TestNewNode(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	n := Add(g, "checkpoint-1")
 	if n == nil {
 		t.Fatal("Add() returned nil")
@@ -37,7 +37,7 @@ func TestAdd(t *testing.T) {
 }
 
 func TestAdd_ReturnsCorrectType(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	n := Add(g, "my-cp")
 	if _, ok := interface{}(n).(*CheckpointNode); !ok {
 		t.Error("Add() should return *CheckpointNode")
@@ -103,7 +103,7 @@ func TestRun_NilResult(t *testing.T) {
 }
 
 func TestMultipleCheckpoints(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	cp1 := Add(g, "cp-first")
 	cp2 := Add(g, "cp-second")
 
@@ -127,7 +127,7 @@ func TestMultipleCheckpoints(t *testing.T) {
 }
 
 func TestGraphContainsCheckpoint(t *testing.T) {
-	g := graph.New()
+	g := coreplan.New()
 	Add(g, "checkpoint-node")
 
 	nodes := g.AllNodes()

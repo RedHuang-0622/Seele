@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/executor"
@@ -133,7 +134,7 @@ func (s *Scheduler) run(ctx context.Context, captureCheckpoints bool) (*types.Wo
 					if n == nil {
 						return "", fmt.Errorf("node %q not found", nodeID)
 					}
-					return s.executor.RunNodeWithAgentFactory(branchCtx, n, branch.Workflow, branch.Runtime.AgentFactory)
+					return s.executor.RunNode(branchCtx, n, branch.Workflow)
 				},
 			})
 		}
@@ -196,7 +197,9 @@ func (s *Scheduler) recordResults(wc *types.WorkflowContext, results []forkexec.
 		n := s.plan.GetNode(result.NodeID)
 		kind := "unknown"
 		if n != nil {
-			kind = n.Kind().String()
+			if described, ok := n.(node.Kinded); ok {
+				kind = described.Kind().String()
+			}
 		}
 		nr := &types.NodeResult{NodeBase: types.NodeBase{
 			NodeID: result.NodeID, Kind: kind, Status: string(result.State), Output: result.Output,

@@ -8,7 +8,8 @@ import (
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 )
 
-// NodeKind represents the type classification of a node.
+// NodeKind is optional descriptive metadata for built-in nodes. It is not part
+// of the execution contract: custom nodes only need to implement ID and Run.
 type NodeKind int
 
 const (
@@ -45,8 +46,13 @@ func (k NodeKind) String() string {
 // Implementations must not depend on Graph, Scheduler, or Runner.
 type Node interface {
 	ID() string
-	Kind() NodeKind
 	Run(ctx context.Context, wc *types.WorkflowContext) (string, error)
+}
+
+// Kinded is an optional metadata contract implemented by Seele's built-in
+// nodes. Runtimes must not require it in order to execute a Node.
+type Kinded interface {
+	Kind() NodeKind
 }
 
 // InputNode is a node whose declarative input can be serialized into a

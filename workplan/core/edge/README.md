@@ -14,7 +14,7 @@
 
 - `Resolve` 只评估当前节点出边，先按优先级处理匹配条件，再处理默认边。
 - 条件函数读取 `WorkflowContext`，因此路由逻辑与节点执行逻辑分离。
-- 该包只依赖 core types，可被 Graph 校验和 Scheduler 共用。
+- 该包只依赖 core types，可被 Plan 校验和 Scheduler 共用。
 
 ## 依赖与验证
 

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 // ChoiceOption describes a single choice in an approval question.
@@ -132,7 +132,7 @@ func (n *ApproveNode) run(ctx context.Context, wc *types.WorkflowContext, factor
 }
 
 // Add registers an approval node in the graph.
-func Add(g *graph.Graph, id, input string, gate ApprovalGate, factory node.AgentFactory, opts ...func(*ApproveNode)) *ApproveNode {
+func Add(g *coreplan.Plan, id, input string, gate ApprovalGate, factory node.AgentFactory, opts ...func(*ApproveNode)) *ApproveNode {
 	n := NewNode(id, gate, factory)
 	n.Input = input
 	n.Options = Choices("execute", "skip", "abort")

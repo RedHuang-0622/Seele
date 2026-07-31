@@ -7,8 +7,8 @@ import (
 
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 // ControlNode is a pass-through node that uses edges for conditional routing.
@@ -28,7 +28,7 @@ func (n *ControlNode) Run(ctx context.Context, wc *types.WorkflowContext) (strin
 
 // If adds a binary conditional branch node.
 // cond receives the previous node's output (plain text).
-func If(g *graph.Graph, id string, cond func(string) bool, trueID, falseID string) *ControlNode {
+func If(g *coreplan.Plan, id string, cond func(string) bool, trueID, falseID string) *ControlNode {
 	n := NewNode(id, node.KindIf)
 	g.AddNode(n)
 	g.AddEdge(edge.Edge{
@@ -47,7 +47,7 @@ func If(g *graph.Graph, id string, cond func(string) bool, trueID, falseID strin
 }
 
 // Switch adds a multi-way conditional branch node.
-func Switch(g *graph.Graph, id string, cases ...node.SwitchCase) *ControlNode {
+func Switch(g *coreplan.Plan, id string, cases ...node.SwitchCase) *ControlNode {
 	n := NewNode(id, node.KindSwitch)
 	g.AddNode(n)
 	for i, c := range cases {

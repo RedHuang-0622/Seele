@@ -6,9 +6,9 @@ import (
 	"fmt"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 // ForkNode executes multiple branches concurrently.
@@ -81,10 +81,7 @@ func (n *ForkNode) Run(ctx context.Context, ec *types.WorkflowContext) (string, 
 				if prompt == "" {
 					prompt = "You are a helpful assistant."
 				}
-				factory := branchCtx.Runtime.AgentFactory
-				if factory == nil {
-					factory = n.factory
-				}
+				factory := n.factory
 				if factory == nil {
 					return "", fmt.Errorf("nil agent factory")
 				}
@@ -117,7 +114,7 @@ func (n *ForkNode) Run(ctx context.Context, ec *types.WorkflowContext) (string, 
 }
 
 // Add registers a fork node in the graph.
-func Add(g *graph.Graph, id string, branches []node.ForkBranch, maxConcurrent int, factory node.AgentFactory) *ForkNode {
+func Add(g *coreplan.Plan, id string, branches []node.ForkBranch, maxConcurrent int, factory node.AgentFactory) *ForkNode {
 	n := NewNode(id, branches, maxConcurrent, factory)
 	g.AddNode(n)
 	return n

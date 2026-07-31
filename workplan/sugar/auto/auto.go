@@ -5,8 +5,8 @@ import (
 	"context"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 // StrategyNode wraps a NodeStrategy as a graph node.
@@ -161,7 +161,7 @@ func (s *AgentStrategy) ExecuteWithAgentFactory(ctx context.Context, wc *types.W
 }
 
 // Add registers an auto (Agent) strategy node in the graph.
-func Add(g *graph.Graph, id, input string, factory node.AgentFactory) *StrategyNode {
+func Add(g *coreplan.Plan, id, input string, factory node.AgentFactory) *StrategyNode {
 	n := &StrategyNode{
 		BaseNode: node.NewBaseNode(id, node.KindAuto),
 		Strategy: NewAgentStrategy(factory, ""),
@@ -172,7 +172,7 @@ func Add(g *graph.Graph, id, input string, factory node.AgentFactory) *StrategyN
 }
 
 // AddMethod registers a method (Go function) strategy node.
-func AddMethod(g *graph.Graph, id string, fn func(ctx context.Context, input string) (string, error)) *StrategyNode {
+func AddMethod(g *coreplan.Plan, id string, fn func(ctx context.Context, input string) (string, error)) *StrategyNode {
 	n := &StrategyNode{
 		BaseNode: node.NewBaseNode(id, node.KindMethod),
 		Strategy: NewMethodStrategy(fn),
@@ -182,7 +182,7 @@ func AddMethod(g *graph.Graph, id string, fn func(ctx context.Context, input str
 }
 
 // AddLLM registers an LLM strategy node.
-func AddLLM(g *graph.Graph, id, input string, provider node.LLMProvider) *StrategyNode {
+func AddLLM(g *coreplan.Plan, id, input string, provider node.LLMProvider) *StrategyNode {
 	n := &StrategyNode{
 		BaseNode: node.NewBaseNode(id, node.KindLLM),
 		Strategy: NewLLMStrategy(provider),

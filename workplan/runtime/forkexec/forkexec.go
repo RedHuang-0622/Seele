@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 )
 
@@ -62,16 +61,11 @@ type Limiter interface {
 	Release()
 }
 
-// BranchRuntime is read-only metadata injected by Seelex for a branch.
+// BranchRuntime contains only generic runtime controls. Product metadata and
+// agent selection belong to the Node implementation or an outer adapter.
 type BranchRuntime struct {
-	SessionID    string
-	WorkspaceID  string
-	Role         string
-	AccountID    string
-	Provider     string
-	TraceID      string
-	AgentFactory node.AgentFactory
-	Limiter      Limiter
+	Limiter  Limiter
+	Metadata map[string]string
 }
 
 // ParentSnapshot is an immutable deep copy of a parent workflow context.

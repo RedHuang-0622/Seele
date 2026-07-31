@@ -121,8 +121,12 @@ func testNodeInterface(t *testing.T, n Node, expectedID string, expectedKind Nod
 	if n.ID() != expectedID {
 		t.Errorf("ID() = %q, want %q", n.ID(), expectedID)
 	}
-	if n.Kind() != expectedKind {
-		t.Errorf("Kind() = %v, want %v", n.Kind(), expectedKind)
+	kinded, ok := n.(Kinded)
+	if !ok {
+		t.Fatalf("built-in node %T does not expose optional kind metadata", n)
+	}
+	if kinded.Kind() != expectedKind {
+		t.Errorf("Kind() = %v, want %v", kinded.Kind(), expectedKind)
 	}
 }
 

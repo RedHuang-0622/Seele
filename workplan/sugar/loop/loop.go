@@ -7,8 +7,8 @@ import (
 	"sync"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 // Signal provides real-time access to loop iteration results.
@@ -64,10 +64,10 @@ func (s *Signal) OnUpdate(cb func(string)) {
 // LoopNode executes its body repeatedly until a condition is met.
 type LoopNode struct {
 	node.BaseNode
-	BodyID      string           // ID of the body node to repeat
+	BodyID      string            // ID of the body node to repeat
 	Until       func(string) bool // termination condition, nil = run once
-	MaxIter     int              // maximum iterations, 0 = unlimited
-	OnExhausted string           // fallback node ID when MaxIter reached
+	MaxIter     int               // maximum iterations, 0 = unlimited
+	OnExhausted string            // fallback node ID when MaxIter reached
 	Signal      *Signal
 	factory     node.AgentFactory
 	bodyPrompt  string
@@ -123,7 +123,7 @@ func (n *LoopNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, 
 }
 
 // Add registers a loop node in the graph and returns its Signal.
-func Add(g *graph.Graph, id, bodyID string, factory node.AgentFactory, opts ...func(*LoopNode)) *Signal {
+func Add(g *coreplan.Plan, id, bodyID string, factory node.AgentFactory, opts ...func(*LoopNode)) *Signal {
 	n := NewNode(id, bodyID, factory)
 	for _, o := range opts {
 		o(n)

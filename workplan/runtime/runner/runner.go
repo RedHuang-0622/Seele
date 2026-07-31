@@ -21,21 +21,20 @@ type Runner struct {
 	sched    *scheduler.Scheduler
 	exec     *executor.Executor
 	checkMgr *checkpoint.Manager
-	factory  node.AgentFactory
 }
 
 // Option configures the runner.
 type Option func(*Runner)
 
-// New creates a runner from a graph.
-func New(p *coreplan.Plan, factory node.AgentFactory, opts ...Option) *Runner {
+// New creates a runner from a Plan. Node implementations own all execution
+// dependencies; Runner receives no agent or tool factory.
+func New(p *coreplan.Plan, opts ...Option) *Runner {
 	exec := executor.New()
 	sched := scheduler.New(p, exec)
 	r := &Runner{
-		plan:    p,
-		sched:   sched,
-		exec:    exec,
-		factory: factory,
+		plan:  p,
+		sched: sched,
+		exec:  exec,
 	}
 	for _, o := range opts {
 		o(r)
@@ -87,10 +86,14 @@ func (r *Runner) Resume(ctx context.Context, snapshotID string) (*types.WorkPlan
 		}
 
 		output, err := r.exec.RunNode(ctx, n, wc)
+		kind := "unknown"
+		if described, ok := n.(node.Kinded); ok {
+			kind = described.Kind().String()
+		}
 		nr := &types.NodeResult{
 			NodeBase: types.NodeBase{
 				NodeID: currentID,
-				Kind:   n.Kind().String(),
+				Kind:   kind,
 				Output: output,
 			},
 			Err: err,

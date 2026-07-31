@@ -167,9 +167,9 @@ func TestWorkPlan_Fork(t *testing.T) {
 func TestWorkPlan_ForkE2EUsesInjectedRuntimeAndEvents(t *testing.T) {
 	seen := make(map[string]map[forkexec.BranchState]bool)
 	var mu sync.Mutex
-	wp := New(&mockFactory{},
+	wp := New(injectedFactory{output: "node-owned"},
 		WithBranchRuntimeResolver(func(branchID string) forkexec.BranchRuntime {
-			return forkexec.BranchRuntime{Role: "reviewer", AccountID: "account-1", AgentFactory: injectedFactory{output: branchID + "-runtime"}}
+			return forkexec.BranchRuntime{Metadata: map[string]string{"branch": branchID}}
 		}),
 		WithBranchEventHook(func(event forkexec.Event) {
 			mu.Lock()
@@ -186,8 +186,8 @@ func TestWorkPlan_ForkE2EUsesInjectedRuntimeAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if output := result.FinalOutputString(); !strings.Contains(output, "left-runtime") || !strings.Contains(output, "right-runtime") {
-		t.Errorf("final output = %q, want injected branch outputs", output)
+	if output := result.FinalOutputString(); !strings.Contains(output, "node-owned") {
+		t.Errorf("final output = %q, want node-owned branch outputs", output)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -254,29 +254,6 @@ func TestWorkPlan_If(t *testing.T) {
 	}
 }
 
-func TestWorkPlan_ExportJSON(t *testing.T) {
-	factory := &mockFactory{}
-	wp := New(factory)
-
-	wp.Auto("step1", "first")
-	wp.Auto("step2", "second")
-
-	json, err := wp.ExportJSON()
-	if err != nil {
-		t.Fatalf("ExportJSON: %v", err)
-	}
-	if json == "" {
-		t.Fatal("expected non-empty JSON")
-	}
-	if !strings.Contains(json, `"version": 1`) || !strings.Contains(json, `"entry": "step1"`) {
-		t.Fatalf("exported JSON does not use the versioned Seele DSL: %s", json)
-	}
-	if !strings.Contains(json, `"input": "first"`) || !strings.Contains(json, `"from": "step1"`) {
-		t.Fatalf("exported JSON lost declarative node or edge data: %s", json)
-	}
-	t.Logf("exported plan: %s", json)
-}
-
 func TestNewFromPlanAssemblesGraphFacadeAroundKernel(t *testing.T) {
 	kernel := coreplan.New()
 	wp := NewFromPlan(kernel, &mockFactory{})
@@ -286,7 +263,7 @@ func TestNewFromPlanAssemblesGraphFacadeAroundKernel(t *testing.T) {
 		t.Fatal("WorkPlan did not retain the supplied Plan kernel")
 	}
 	if kernel.GetNode("inspect") == nil {
-		t.Fatal("Graph facade did not add the sugar node to the Plan kernel")
+		t.Fatal("WorkPlan did not add the sugar node to the Plan kernel")
 	}
 }
 

@@ -134,7 +134,7 @@ func TestContextManagerFreezesParentSnapshot(t *testing.T) {
 }
 
 func TestForkCoordinatorPassesBranchRuntime(t *testing.T) {
-	runtime := BranchRuntime{SessionID: "session-1", Role: "reviewer", AccountID: "account-1"}
+	runtime := BranchRuntime{Metadata: map[string]string{"role": "reviewer", "account": "account-1"}}
 	manager := NewContextManager(types.NewWorkflowContext())
 	coordinator := ForkCoordinator{}
 	results, err := coordinator.RunWithContextManager(context.Background(), manager, []Spec{{
@@ -143,10 +143,10 @@ func TestForkCoordinatorPassesBranchRuntime(t *testing.T) {
 			if branch.BranchID != "review" {
 				t.Fatalf("branch ID = %q", branch.BranchID)
 			}
-			if branch.Runtime.Role != runtime.Role || branch.Runtime.AccountID != runtime.AccountID {
-				t.Fatalf("runtime = %#v, want injected role/account", branch.Runtime)
+			if branch.Runtime.Metadata["role"] != runtime.Metadata["role"] || branch.Runtime.Metadata["account"] != runtime.Metadata["account"] {
+				t.Fatalf("runtime = %#v, want injected metadata", branch.Runtime)
 			}
-			return branch.Runtime.Role + ":" + branch.Runtime.AccountID, nil
+			return branch.Runtime.Metadata["role"] + ":" + branch.Runtime.Metadata["account"], nil
 		},
 	}})
 	if err != nil {

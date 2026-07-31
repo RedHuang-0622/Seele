@@ -11,7 +11,7 @@
 | [edge/](edge/README.md) | 有向边及条件路由 |
 | [types/](types/README.md) | 上下文、结果、状态和快照 |
 
-Plan 不依赖 Graph；Graph 是运行时提供的编辑/查询外观。
+Plan 是节点、边和入口的唯一状态源；runtime 只通过 Plan 的只读视图进行调度，不维护第二份图状态。
 
 ## 验证
 
