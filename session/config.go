@@ -1,8 +1,8 @@
-package engine
+package session
 
 // SessionConfig 配置引擎的 ReAct 循环参数。
 type SessionConfig struct {
-	// MaxLoops 单次 Chat 调用中最多允许的 tool_call 循环次数。默认 10。
+	// MaxLoops 单次 Chat 调用中最多允许的 tool_call 循环次数。默认 25。
 	MaxLoops int
 
 	// MaxToolResultChars 工具调用结果的最大字符数。默认 4000。

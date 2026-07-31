@@ -126,7 +126,7 @@ func (s *Store) sessionDir(sessionID string) string {
 // Save persists messages for a session. When thresholds are exceeded,
 // messages are automatically split into shards.
 //
-// messages is []types.Message, typically from engine.History().
+// messages is []types.Message, typically from session.History().
 func (s *Store) Save(sessionID string, messages []types.Message) error {
 	if s.baseDir == "" {
 		return nil // no-op: no storage configured

@@ -31,9 +31,9 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
 	"github.com/RedHuang-0622/Seele/seelectx/storage"
 	"github.com/RedHuang-0622/Seele/seelectx/tracer"
+	"github.com/RedHuang-0622/Seele/session"
 	"github.com/RedHuang-0622/Seele/tools/builtin"
 	"github.com/RedHuang-0622/Seele/tools/holder"
 	"github.com/RedHuang-0622/Seele/types"
@@ -128,7 +128,7 @@ When you need tools outside your current mode, call switch_mode to change.
 Always respond in the user's language.`
 	}
 
-	// ── Engine ────────────────────────────────────────────────────────
+	// ── Session ───────────────────────────────────────────────────────
 	tr := tracer.NewSimpleTracer()
 	store, err := storage.NewStore("")
 	if err != nil {
@@ -137,11 +137,11 @@ Always respond in the user's language.`
 	}
 	hooks := buildHooks()
 
-	eng := engine.New(agt,
-		engine.WithTracer(tr),
-		engine.WithStore(store),
-		engine.WithHooks(hooks),
-		engine.WithSystemPrompt(defaultPrompt),
+	eng := session.New(agt,
+		session.WithTracer(tr),
+		session.WithStore(store),
+		session.WithHooks(hooks),
+		session.WithSystemPrompt(defaultPrompt),
 	)
 
 	// ── 注册 switch_mode 工具（闭包捕获 eng/agt/prompts）────────────

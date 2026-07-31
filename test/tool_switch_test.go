@@ -14,7 +14,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/session"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
@@ -119,7 +119,7 @@ func testToolCall(t *testing.T, label string, pool *api.AccountPool, ls api.LLMC
 		},
 	)
 
-	eng := engine.New(agt, engine.WithSystemPrompt(
+	eng := session.New(agt, session.WithSystemPrompt(
 		"你是一个会使用计数工具的助手。当前使用 "+label+" 格式。",
 	))
 

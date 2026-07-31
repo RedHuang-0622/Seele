@@ -13,8 +13,8 @@ import (
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
 	seelectx "github.com/RedHuang-0622/Seele/seelectx"
+	"github.com/RedHuang-0622/Seele/session"
 	interfaces "github.com/RedHuang-0622/Seele/tools"
 	holder "github.com/RedHuang-0622/Seele/tools/holder"
 
@@ -147,7 +147,7 @@ func newTestSession(llmClient *api.ChatClient, tools *holder.Holder, prompt stri
 
 // TestMaxLoops_Default 验证 Engine 默认 maxLoops 值。
 func TestMaxLoops_Default(t *testing.T) {
-	cfg := engine.DefaultSessionConfig()
+	cfg := session.DefaultSessionConfig()
 	t.Logf("default MaxLoops=%d", cfg.MaxLoops)
 	if cfg.MaxLoops <= 0 {
 		t.Errorf("default MaxLoops should be positive, got %d", cfg.MaxLoops)
@@ -156,12 +156,12 @@ func TestMaxLoops_Default(t *testing.T) {
 
 // TestMaxLoops_Zero 验证 maxLoops 被设置为 0 时变为默认值。
 func TestMaxLoops_Zero(t *testing.T) {
-	cfg := engine.SessionConfig{MaxLoops: 0}.Effective()
+	cfg := session.SessionConfig{MaxLoops: 0}.Effective()
 	if cfg.MaxLoops <= 0 {
 		t.Errorf("effective MaxLoops should be positive when set to 0, got %d", cfg.MaxLoops)
 	}
 	// 确认与默认值一致
-	def := engine.SessionConfig{}.Effective()
+	def := session.SessionConfig{}.Effective()
 	if cfg.MaxLoops != def.MaxLoops {
 		t.Errorf("expected default MaxLoops=%d, got %d", def.MaxLoops, cfg.MaxLoops)
 	}
@@ -170,7 +170,7 @@ func TestMaxLoops_Zero(t *testing.T) {
 // TestMaxLoops_Explicit 验证显式设置 maxLoops 生效。
 func TestMaxLoops_Explicit(t *testing.T) {
 	expected := 3
-	cfg := engine.SessionConfig{MaxLoops: expected}.Effective()
+	cfg := session.SessionConfig{MaxLoops: expected}.Effective()
 	if cfg.MaxLoops != expected {
 		t.Errorf("expected MaxLoops=%d, got %d", expected, cfg.MaxLoops)
 	}

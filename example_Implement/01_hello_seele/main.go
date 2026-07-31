@@ -1,12 +1,12 @@
 // 01_hello_seele/main.go
 //
-// Seele 框架最简入门：创建 Agent → 注入 Engine → 发起对话。
+// Seele 框架最简入门：创建 Agent → 装配 Session → 发起对话。
 //
 // 架构流程：
 //
 //	agent (装配 config + tools)
-//	  └── engine.New(agent) (注入 agent，内部管理 contexts)
-//	        └── eng.Chat(ctx, "hello") (唯一对话入口，内部 ReAct loop)
+//	  └── session.New(agent) (注入 agent，内部管理 contexts)
+//	        └── conversation.Chat(ctx, "hello") (唯一对话入口，内部 ReAct loop)
 //
 // 无需启动任何外部服务 —— 工具是纯 Go 函数，零网络开销。
 //
@@ -25,7 +25,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/session"
 	tool "github.com/RedHuang-0622/Seele/tools"
 	"github.com/RedHuang-0622/Seele/types"
 )
@@ -115,24 +115,41 @@ func main() {
 		fmt.Printf("  • %s — %s\n", t.Function.Name, truncate(t.Function.Description, 60))
 	}
 
-	// ── 4. Engine：注入 Agent，内部接管 contexts ───────────────────
-	eng := engine.New(agt, engine.WithSystemPrompt("你是一个有用的助手，可以查询时间和进行简单计算。"))
+	// ── 4. Session：装配一次用户会话 ────────────────────────────────
+	conversation, err := session.NewSession(session.SessionComponents{
+		Agent: agt,
+		Context: session.ContextComponents{
+			SystemPrompt: "你是一个有用的助手，可以查询时间和进行简单计算。",
+		},
+	})
+	if err != nil {
+		log.Fatalf("create session: %v", err)
+	}
 
-	// 多轮对话（engine 内部维护 history）
-	reply, err := eng.Chat(ctx, "现在几点了？")
+	// 多轮对话由 Session 维护 working history。
+	reply, err := conversation.Chat(ctx, "现在几点了？")
 	if err != nil {
 		log.Fatalf("chat error: %v", err)
 	}
 	fmt.Println("\n🤖 Agent:", reply)
 
-	reply, err = eng.Chat(ctx, "帮我算一下 (15 + 27) * 3 等于多少？")
+	reply, err = conversation.Chat(ctx, "帮我算一下 (15 + 27) * 3 等于多少？")
 	if err != nil {
 		log.Fatalf("chat error: %v", err)
 	}
 	fmt.Println("🤖 Agent:", reply)
 
 	// ── 5. 一次性对话：用完即弃 ────────────────────────────────────
-	reply, err = engine.New(agt, engine.WithSystemPrompt("你是一个简洁的助手。")).Chat(ctx, "用一句话介绍 Go 语言。")
+	quickChat, err := session.NewSession(session.SessionComponents{
+		Agent: agt,
+		Context: session.ContextComponents{
+			SystemPrompt: "你是一个简洁的助手。",
+		},
+	})
+	if err != nil {
+		log.Fatalf("create quick session: %v", err)
+	}
+	reply, err = quickChat.Chat(ctx, "用一句话介绍 Go 语言。")
 	if err != nil {
 		log.Fatalf("quickchat error: %v", err)
 	}

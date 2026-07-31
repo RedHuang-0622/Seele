@@ -8,22 +8,22 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
 	"github.com/RedHuang-0622/Seele/seelectx/tracer"
+	"github.com/RedHuang-0622/Seele/session"
 )
 
 // ── 可视化回调 ──────────────────────────────────────────────────────
 
-func buildHooks() *engine.LoopHooks {
-	return &engine.LoopHooks{
-		OnLLMStart: func(ctx context.Context, info engine.LLMInfo) {
+func buildHooks() *session.LoopHooks {
+	return &session.LoopHooks{
+		OnLLMStart: func(ctx context.Context, info session.LLMInfo) {
 			if info.Turn == 0 {
 				fmt.Printf("\n  -- Round %d --\n", info.Turn+1)
 			} else {
 				fmt.Printf("\n  -- Round %d (tool loop) --\n", info.Turn+1)
 			}
 		},
-		OnLLMComplete: func(ctx context.Context, info engine.LLMInfo) {
+		OnLLMComplete: func(ctx context.Context, info session.LLMInfo) {
 			if len(info.ToolCalls) > 0 {
 				names := make([]string, len(info.ToolCalls))
 				for i, tc := range info.ToolCalls {
@@ -36,11 +36,11 @@ func buildHooks() *engine.LoopHooks {
 				}
 			}
 		},
-		OnToolStart: func(ctx context.Context, info engine.ToolCallInfo) {
+		OnToolStart: func(ctx context.Context, info session.ToolCallInfo) {
 			args := tryFormatArgs(info.Arguments)
 			fmt.Printf("  \033[33m✎ %s\033[0m(%s)\n", info.Name, args)
 		},
-		OnToolComplete: func(ctx context.Context, info engine.ToolCallInfo) {
+		OnToolComplete: func(ctx context.Context, info session.ToolCallInfo) {
 			if info.Error != nil {
 				fmt.Printf("  \033[31m  ✖ %s\033[0m -> %v\n", info.Name, info.Error)
 			} else {
@@ -68,7 +68,7 @@ func truncateDisplay(s string, max int) string {
 	return s[:max] + "..."
 }
 
-func extractTokens(eng *engine.Engine) string {
+func extractTokens(eng *session.Session) string {
 	if tree := eng.ExportTrace(); tree != nil && tree.Root != nil {
 		for _, c := range tree.Root.Children {
 			if c.Kind == tracer.SpanLLMCall {

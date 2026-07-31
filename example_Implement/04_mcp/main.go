@@ -18,7 +18,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/session"
 	mcpprov "github.com/RedHuang-0622/Seele/tools/mcp"
 	"github.com/RedHuang-0622/Seele/types"
 )
@@ -85,14 +85,22 @@ func main() {
 		log.Printf("fetch MCP attach failed (skip): %v", err)
 	}
 
-	eng := engine.New(agt, engine.WithSystemPrompt("你是一个可以使用外部工具的助手。"))
+	conversation, err := session.NewSession(session.SessionComponents{
+		Agent: agt,
+		Context: session.ContextComponents{
+			SystemPrompt: "你是一个可以使用外部工具的助手。",
+		},
+	})
+	if err != nil {
+		log.Fatalf("create session: %v", err)
+	}
 
 	fmt.Println("=== 已注册工具 ===")
 	for _, t := range agt.Tools().Tools() {
 		fmt.Printf("  %s — %s\n", t.Function.Name, t.Function.Description)
 	}
 
-	reply, err := eng.Chat(ctx, "你好，可以访问哪些外部工具？")
+	reply, err := conversation.Chat(ctx, "你好，可以访问哪些外部工具？")
 	if err != nil {
 		log.Printf("chat error: %v", err)
 	} else {

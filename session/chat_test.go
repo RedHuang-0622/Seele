@@ -1,9 +1,9 @@
-// Package engine tests provide smoke tests for the Engine ReAct loop.
+// Package session tests provide smoke tests for the Session ReAct loop.
 //
 // Tests use an HTTP mock LLM server (no real API key needed) and a minimal
-// agent.Agent created with agent.New(). All tests verify the public
+// runtime. All tests verify the public
 // Chat() / ChatStream() API with various response scenarios.
-package engine
+package session
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/RedHuang-0622/Seele/agent"
+	"github.com/RedHuang-0622/Seele/agent/core/api"
 	"github.com/RedHuang-0622/Seele/seelectx/cache"
 	"github.com/RedHuang-0622/Seele/seelectx/storage"
 	"github.com/RedHuang-0622/Seele/seelectx/tracer"
@@ -31,6 +31,55 @@ type mockLLMResponse struct {
 	content   string
 	toolCalls []types.ToolCall
 }
+
+// testRuntime keeps session tests independent from the agent facade. This is
+// important because application code composes agent.Agent with session.NewSession, while
+// session tests must not create an import cycle through the agent package.
+type testRuntime struct {
+	llm   *api.ChatClient
+	mu    sync.RWMutex
+	tools map[string]testTool
+}
+
+type testTool struct {
+	definition types.Tool
+	handler    func(context.Context, string) (string, error)
+}
+
+func (r *testRuntime) LLM() types.ChatCompleter { return r.llm }
+
+func (r *testRuntime) VisibleTools(context.Context) []types.Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	visible := make([]types.Tool, 0, len(r.tools))
+	for _, tool := range r.tools {
+		visible = append(visible, tool.definition)
+	}
+	return visible
+}
+
+func (r *testRuntime) Dispatch(ctx context.Context, name, argumentsJSON string) (string, error) {
+	r.mu.RLock()
+	tool, ok := r.tools[name]
+	r.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("test runtime: tool %q not found", name)
+	}
+	return tool.handler(ctx, argumentsJSON)
+}
+
+func (r *testRuntime) RegisterTool(name, description string, schema map[string]interface{}, handler func(context.Context, string) (string, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tools[name] = testTool{
+		definition: types.Tool{Type: "function", Function: types.ToolFunction{
+			Name: name, Description: description, Parameters: schema,
+		}},
+		handler: handler,
+	}
+}
+
+func (r *testRuntime) Shutdown() {}
 
 // =============================================================================
 // mockLLMServer — OpenAI-compatible /chat/completions mock
@@ -207,16 +256,15 @@ func (m *mockLLMServer) handler(w http.ResponseWriter, r *http.Request) {
 // =============================================================================
 
 // newTestAgent creates a minimal Agent with its LLM client pointed at mockURL.
-func newTestAgent(mockURL string) (*agent.Agent, error) {
-	return agent.New(agent.Options{
-		LLMConfig: types.LLMConfig{
+func newTestAgent(mockURL string) (*testRuntime, error) {
+	return &testRuntime{
+		llm: api.NewChatClient(types.LLMConfig{
 			BaseURL: mockURL,
 			APIKey:  "test-key",
 			Model:   "test-model",
-		},
-		// Speed up tests by reducing the hub startup wait
-		HubStartupDelay: 10,
-	})
+		}),
+		tools: make(map[string]testTool),
+	}, nil
 }
 
 // =============================================================================
@@ -553,7 +601,7 @@ func TestEngine_Tracer_NoopIsDefault(t *testing.T) {
 
 // fillLongHistory fills the engine with enough body to exceed the legacy 6144
 // threshold. The caller decides whether to compress it.
-func fillLongHistory(eng *Engine) {
+func fillLongHistory(eng *Session) {
 	for i := 0; i < 30; i++ {
 		body := make([]byte, 600)
 		for j := range body {

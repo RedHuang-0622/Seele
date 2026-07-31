@@ -10,7 +10,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/session"
 )
 
 // ── 命令定义 ────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ func loadPrompts() map[string]string {
 
 // ── 命令处理 ────────────────────────────────────────────────────────
 
-func handleCommand(raw string, cc *api.ChatClient, eng *engine.Engine, agt *agent.Agent, model string, prompts map[string]string) {
+func handleCommand(raw string, cc *api.ChatClient, eng *session.Session, agt *agent.Agent, model string, prompts map[string]string) {
 	parts := strings.Fields(raw)
 	if len(parts) == 0 {
 		return

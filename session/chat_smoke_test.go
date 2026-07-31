@@ -1,14 +1,14 @@
 //go:build seele_ab
 // +build seele_ab
 
-// Package engine contains the ab/smoke test for passive context compression.
+// Package session contains the ab/smoke test for passive context compression.
 // Tests in this file are gated on the `seele_ab` build tag and `RUN_AB=true`
 // so they can run on demand without coupling to the default CI pipeline.
 //
 // Run with:
 //
-//	RUN_AB=true go test -tags seele_ab ./engine -run TestAB -v -count=1
-package engine
+//	RUN_AB=true go test -tags seele_ab ./session -run TestAB -v -count=1
+package session
 
 import (
 	"context"
@@ -26,7 +26,7 @@ import (
 func skipUnlessAB(t *testing.T) {
 	t.Helper()
 	if os.Getenv("RUN_AB") != "true" {
-		t.Skip("set RUN_AB=true to enable engine ab tests")
+		t.Skip("set RUN_AB=true to enable session ab tests")
 	}
 }
 

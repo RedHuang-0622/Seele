@@ -8,7 +8,7 @@ import (
 )
 
 // Session 是 Pool 管理的对话会话抽象。
-// Engine 的 Chat/ChatStream/History 天然满足此接口。
+// Session 的 Chat/ChatStream/History 天然满足此接口。
 // 定义在 agent 包而非 engine 包，避免 import cycle。
 type Session interface {
 	Chat(ctx context.Context, userInput string) (string, error)

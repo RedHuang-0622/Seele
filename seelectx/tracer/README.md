@@ -19,5 +19,5 @@
 
 ## 依赖与验证
 
-- 调用方：[engine](../../engine/README.md)、[workplan](../../workplan/README.md)
+- 调用方：[session](../../session/README.md)、[workplan](../../workplan/README.md)
 - 验证：`go test ./seelectx/tracer/...`

@@ -1,4 +1,4 @@
-// Package agent 是 Seele 的编排层，负责组装 LLM、工具、会话三大组件。
+// Package agent 是 Seele 的编排层，负责组装 LLM、工具和用户可见的会话。
 package agent
 
 import (
@@ -74,7 +74,7 @@ func (l *stdLogger) Error(msg string, args ...any) { slog.Default().Error(msg, a
 //	  ├── toolGW    toolgw.Gateway    ← 工具网关（含插件过滤）
 //	  ├── pool      *api.AccountPool  ← 账号池
 //	  │
-//	  ├── NewSession() *seelectx.Holder
+//	  ├── NewSession(SessionComponents) *session.Session
 //	  ├── QuickChat()
 //	  ├── Shutdown()
 //	  └── ...

@@ -22,8 +22,8 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
 	"github.com/RedHuang-0622/Seele/seelectx/tracer"
+	"github.com/RedHuang-0622/Seele/session"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
@@ -77,12 +77,19 @@ func main() {
 		},
 	)
 
-	// ── 3. 创建 Engine，注入 SimpleTracer ───────────────────────────────
+	// ── 3. 创建 Session，注入 SimpleTracer ───────────────────────────────
 	// 默认 NoopTracer 零开销；传入 SimpleTracer 后 Chat 结束可导出追踪树
 	tr := tracer.NewSimpleTracer()
-	eng := engine.New(agt,
-		engine.WithTracer(tr),
-		engine.WithSystemPrompt("你是一个助手。可以调用 current_time 查看当前时间。"))
+	conversation, err := session.NewSession(session.SessionComponents{
+		Agent:  agt,
+		Tracer: tr,
+		Context: session.ContextComponents{
+			SystemPrompt: "你是一个助手。可以调用 current_time 查看当前时间。",
+		},
+	})
+	if err != nil {
+		log.Fatalf("create session: %v", err)
+	}
 
 	strategy := api.GetProviderStrategy(string(ls.Provider))
 	fmt.Println("=== Trace Tree 可观测性演示 ===")
@@ -92,13 +99,13 @@ func main() {
 	// 场景 A：纯文本回复
 	// ══════════════════════════════════════════════════════════════════
 	fmt.Println("─── 场景 A: 纯文本回复 ───")
-	replyA, err := eng.Chat(ctx, "你好，请简单说一句话。")
+	replyA, err := conversation.Chat(ctx, "你好，请简单说一句话。")
 	if err != nil {
 		log.Fatalf("Chat A: %v", err)
 	}
 	fmt.Printf("  回复: %s\n\n", truncate(replyA, 120))
 
-	treeA := eng.ExportTrace()
+	treeA := conversation.ExportTrace()
 	fmt.Println("  追踪树 (JSON):")
 	fmt.Println(treeA.String())
 	fmt.Println()
@@ -107,13 +114,13 @@ func main() {
 	// 场景 B：工具调用（time）
 	// ══════════════════════════════════════════════════════════════════
 	fmt.Println("─── 场景 B: 工具调用 ───")
-	replyB, err := eng.Chat(ctx, "现在几点了？调用 current_time 工具。")
+	replyB, err := conversation.Chat(ctx, "现在几点了？调用 current_time 工具。")
 	if err != nil {
 		log.Fatalf("Chat B: %v", err)
 	}
 	fmt.Printf("  回复: %s\n\n", truncate(replyB, 120))
 
-	treeB := eng.ExportTrace()
+	treeB := conversation.ExportTrace()
 	fmt.Println("  追踪树 (JSON):")
 	fmt.Println(treeB.String())
 	fmt.Println()

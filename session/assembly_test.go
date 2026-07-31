@@ -1,4 +1,4 @@
-package engine
+package session
 
 import (
 	"context"
@@ -173,7 +173,7 @@ func TestReActLoopReportsMissingToolRuntime(t *testing.T) {
 	llm := &recordingLLM{responses: []types.Message{{Role: "assistant", ToolCalls: []types.ToolCall{call}}}}
 	loop := NewReActLoop(nil, llm)
 	_, err := loop.Run(context.Background(), "hello", nil)
-	if err == nil || err.Error() != `engine: model requested tool "inspect" but no tool runtime is configured` {
+	if err == nil || err.Error() != `session: model requested tool "inspect" but no tool runtime is configured` {
 		t.Fatalf("Run() error = %v", err)
 	}
 }

@@ -26,7 +26,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/session"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
@@ -39,7 +39,7 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func initAgent(t *testing.T) (*agent.Agent, *engine.Engine) {
+func initAgent(t *testing.T) (*agent.Agent, *session.Session) {
 	t.Helper()
 
 	if _, err := os.Stat(smokeConfig); os.IsNotExist(err) {
@@ -88,12 +88,12 @@ func initAgent(t *testing.T) (*agent.Agent, *engine.Engine) {
 	t.Logf("Model: %s | Accounts: %d | Tools: %d",
 		first.Model, len(pool.All()), len(agt.Tools().Tools()))
 
-	return agt, engine.New(agt,
-		engine.WithSystemPrompt("You are a test assistant. Use tools when asked. Keep responses short."),
+	return agt, session.New(agt,
+		session.WithSystemPrompt("You are a test assistant. Use tools when asked. Keep responses short."),
 	)
 }
 
-func runChat(t *testing.T, eng *engine.Engine, prompt string) string {
+func runChat(t *testing.T, eng *session.Session, prompt string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

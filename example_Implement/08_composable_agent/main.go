@@ -8,7 +8,8 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
-	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/seelectx"
+	"github.com/RedHuang-0622/Seele/session"
 	"github.com/RedHuang-0622/Seele/telemetry"
 	"github.com/RedHuang-0622/Seele/tools"
 	"github.com/RedHuang-0622/Seele/tools/builtin"
@@ -103,11 +104,18 @@ func runDemo(ctx context.Context) (demoResult, error) {
 	if err != nil {
 		return demoResult{}, fmt.Errorf("create telemetry hook: %w", err)
 	}
-	eng := engine.New(agt,
-		engine.WithSystemPrompt("你是一个离线示例助手；需要计算时调用工具。"),
-		engine.WithTelemetryHook(hook),
-	)
-	reply, err := eng.Chat(ctx, "计算 6 × 7")
+	session, err := session.NewSession(session.SessionComponents{
+		Agent:     agt,
+		History:   seelectx.NewMemoryHistory(),
+		Telemetry: hook,
+		Context: session.ContextComponents{
+			SystemPrompt: "你是一个离线示例助手；需要计算时调用工具。",
+		},
+	})
+	if err != nil {
+		return demoResult{}, fmt.Errorf("assemble session: %w", err)
+	}
+	reply, err := session.Chat(ctx, "计算 6 × 7")
 	if err != nil {
 		return demoResult{}, fmt.Errorf("chat: %w", err)
 	}

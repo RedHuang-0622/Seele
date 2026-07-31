@@ -22,7 +22,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/session"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
@@ -65,7 +65,15 @@ func main() {
 		chatClient.SetProvider(ls.Provider)
 	}
 
-	eng := engine.New(agt, engine.WithSystemPrompt("你是一个有用的助手。会记住对话历史。"))
+	conversation, err := session.NewSession(session.SessionComponents{
+		Agent: agt,
+		Context: session.ContextComponents{
+			SystemPrompt: "你是一个有用的助手。会记住对话历史。",
+		},
+	})
+	if err != nil {
+		log.Fatalf("create session: %v", err)
+	}
 
 	agt.RegisterTool(
 		"counter",
@@ -106,7 +114,7 @@ func main() {
 
 	tryChat := func(n int, userMsg string) string {
 		// 读取当前账号（Chat 内部会调 effectiveAccount 推进 round-robin）
-		reply, err := eng.Chat(ctx, userMsg)
+		reply, err := conversation.Chat(ctx, userMsg)
 		if err != nil {
 			log.Fatalf("chat %d: %v", n, err)
 		}
@@ -136,7 +144,7 @@ func main() {
 	// 历史摘要
 	_ = rounds
 	fmt.Println("--- 对话历史（跨账号共享）---")
-	for i, m := range eng.History() {
+	for i, m := range conversation.History() {
 		role := m.Role
 		desc := ""
 		switch {

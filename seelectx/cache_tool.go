@@ -32,7 +32,7 @@ import (
 //
 //	cache, _ := seelectx.NewFileCache(seelectx.DefaultCacheConfig())
 //	seelectx.RegisterCacheTools(func(name, desc string, schema map[string]any, fn func(ctx, args string) (string, error)) {
-//	    engine.RegisterInlineTool(name, desc, schema, fn)
+//	    agent.RegisterTool(name, desc, schema, fn)
 //	}, cache, provider.SchemaOf)
 
 // ToolRegistrar 是工具注册回调的函数签名。
@@ -52,7 +52,7 @@ type SchemaGenerator func(v any) map[string]any
 // RegisterCacheTools 将缓存查看/管理方法注册为 LLM 可调用的工具。
 //
 // 参数：
-//   - register: 工具注册回调（通常包装 engine.RegisterInlineTool）
+//   - register: 工具注册回调（通常包装 agent.RegisterTool）
 //   - cache: 缓存提供者实例
 //   - schemaOf: JSON Schema 生成函数（传 provider.SchemaOf）
 //

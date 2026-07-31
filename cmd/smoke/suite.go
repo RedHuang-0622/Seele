@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/RedHuang-0622/Seele/agent"
-	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/session"
 	"github.com/RedHuang-0622/Seele/tools/builtin"
 	toolgateway "github.com/RedHuang-0622/Seele/tools/gateway"
 	"github.com/RedHuang-0622/Seele/tools/holder"
@@ -31,16 +31,16 @@ type smokeResult struct {
 
 type toolObservation struct {
 	mu    sync.Mutex
-	calls []engine.ToolCallInfo
+	calls []session.ToolCallInfo
 }
 
-func (o *toolObservation) record(_ context.Context, info engine.ToolCallInfo) {
+func (o *toolObservation) record(_ context.Context, info session.ToolCallInfo) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.calls = append(o.calls, info)
 }
 
-func (o *toolObservation) find(name string) (engine.ToolCallInfo, bool) {
+func (o *toolObservation) find(name string) (session.ToolCallInfo, bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for _, call := range o.calls {
@@ -48,7 +48,7 @@ func (o *toolObservation) find(name string) (engine.ToolCallInfo, bool) {
 			return call, true
 		}
 	}
-	return engine.ToolCallInfo{}, false
+	return session.ToolCallInfo{}, false
 }
 
 func runSmokeSuite(ctx context.Context, client agent.Completer) ([]smokeResult, error) {
@@ -81,9 +81,9 @@ func newSmokeRuntime(client agent.Completer) (*agent.Agent, error) {
 
 func runSmokeCase(ctx context.Context, runtime *agent.Agent, test smokeCase) (smokeResult, error) {
 	observation := &toolObservation{}
-	chat := engine.New(runtime,
-		engine.WithSystemPrompt("You are a function-calling smoke-test agent. You must call the tool explicitly requested by the user before answering. Never replace the requested tool call with mental calculation."),
-		engine.WithHooks(&engine.LoopHooks{OnToolComplete: observation.record}),
+	chat := session.New(runtime,
+		session.WithSystemPrompt("You are a function-calling smoke-test agent. You must call the tool explicitly requested by the user before answering. Never replace the requested tool call with mental calculation."),
+		session.WithHooks(&session.LoopHooks{OnToolComplete: observation.record}),
 	)
 	reply, err := chat.Chat(ctx, test.Prompt)
 	if err != nil {

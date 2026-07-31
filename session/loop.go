@@ -1,4 +1,4 @@
-package engine
+package session
 
 import (
 	"context"
@@ -141,10 +141,10 @@ func (rl *ReActLoop) CompressNow(ctx context.Context) error {
 		updated, err = seelectx.CompressHistory(ctx, rl.llm, rl.history, 8192)
 	}
 	if err != nil {
-		return fmt.Errorf("engine: compress history: %w", err)
+		return fmt.Errorf("session: compress history: %w", err)
 	}
 	if err := rl.persistHistory(updated); err != nil {
-		return fmt.Errorf("engine: persist compressed history: %w", err)
+		return fmt.Errorf("session: persist compressed history: %w", err)
 	}
 	rl.history = updated
 	return nil
@@ -152,7 +152,7 @@ func (rl *ReActLoop) CompressNow(ctx context.Context) error {
 
 func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(string)) (result string, err error) {
 	if rl.llm == nil {
-		return "", fmt.Errorf("engine: llm client is required")
+		return "", fmt.Errorf("session: llm client is required")
 	}
 	var agentInvocation telemetry.Invocation
 	if rl.telemetryHook != nil {
@@ -165,7 +165,7 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 			},
 		})
 		if hookErr != nil {
-			return "", fmt.Errorf("engine: telemetry agent before: %w", hookErr)
+			return "", fmt.Errorf("session: telemetry agent before: %w", hookErr)
 		}
 		ctx, agentInvocation = instrumentedCtx, invocation
 		defer func() {
@@ -183,13 +183,13 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 				},
 			})
 			if hookErr != nil && err == nil {
-				err = fmt.Errorf("engine: telemetry agent after: %w", hookErr)
+				err = fmt.Errorf("session: telemetry agent after: %w", hookErr)
 			}
 		}()
 	}
 	defer func() {
 		if saveErr := rl.saveToCache(ctx); saveErr != nil && err == nil {
-			err = fmt.Errorf("engine: save history: %w", saveErr)
+			err = fmt.Errorf("session: save history: %w", saveErr)
 		}
 	}()
 
@@ -246,7 +246,7 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 				},
 			})
 			if hookErr != nil {
-				return "", fmt.Errorf("engine: telemetry llm before: %w", hookErr)
+				return "", fmt.Errorf("session: telemetry llm before: %w", hookErr)
 			}
 		}
 		assistantMsg, callErr := rl.callLLM(llmCtx, tools, onChunk)
@@ -258,7 +258,7 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 			}
 			hookErr := rl.telemetryHook.After(llmCtx, llmInvocation, telemetry.Effect{Error: callErr, Attributes: attributes})
 			if hookErr != nil && callErr == nil {
-				callErr = fmt.Errorf("engine: telemetry llm after: %w", hookErr)
+				callErr = fmt.Errorf("session: telemetry llm after: %w", hookErr)
 			}
 		}
 		if callErr != nil {
@@ -266,7 +266,7 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 			if rl.hooks != nil && rl.hooks.OnError != nil {
 				rl.hooks.OnError(ctx, callErr, loop)
 			}
-			return "", fmt.Errorf("engine loop %d: %w", loop, callErr)
+			return "", fmt.Errorf("session loop %d: %w", loop, callErr)
 		}
 		rl.history = append(rl.history, assistantMsg)
 		if err := rl.handleContextEvent(ctx, seelectx.ContextEvent{
@@ -301,7 +301,7 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 			}
 			if assistantMsg.Content == nil || *assistantMsg.Content == "" {
 				llmSpan.End(tracer.WithAttr("response_type", "empty"))
-				return "", fmt.Errorf("engine loop %d: LLM returned empty content", loop)
+				return "", fmt.Errorf("session loop %d: LLM returned empty content", loop)
 			}
 			llmSpan.SetAttr("response_type", "text")
 			llmSpan.End()
@@ -314,7 +314,7 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 
 		for _, tc := range assistantMsg.ToolCalls {
 			if rl.agent == nil {
-				return "", fmt.Errorf("engine: model requested tool %q but no tool runtime is configured", tc.Function.Name)
+				return "", fmt.Errorf("session: model requested tool %q but no tool runtime is configured", tc.Function.Name)
 			}
 			if rl.hooks != nil && rl.hooks.OnToolStart != nil {
 				rl.hooks.OnToolStart(ctx, ToolCallInfo{
@@ -340,7 +340,7 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 					},
 				})
 				if hookErr != nil {
-					return "", fmt.Errorf("engine: telemetry tool before %q: %w", tc.Function.Name, hookErr)
+					return "", fmt.Errorf("session: telemetry tool before %q: %w", tc.Function.Name, hookErr)
 				}
 			}
 			out, dErr := rl.agent.Dispatch(toolCtx, tc.Function.Name, tc.Function.Arguments)
@@ -355,7 +355,7 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 					},
 				})
 				if hookErr != nil && dErr == nil {
-					dErr = fmt.Errorf("engine: telemetry tool after %q: %w", tc.Function.Name, hookErr)
+					dErr = fmt.Errorf("session: telemetry tool after %q: %w", tc.Function.Name, hookErr)
 				}
 			}
 
@@ -381,7 +381,7 @@ func (rl *ReActLoop) Run(ctx context.Context, userInput string, onChunk func(str
 					Raw: out, Err: dErr,
 				})
 				if processErr != nil {
-					return "", fmt.Errorf("engine: process tool result %q: %w", tc.Function.Name, processErr)
+					return "", fmt.Errorf("session: process tool result %q: %w", tc.Function.Name, processErr)
 				}
 				content = view.Content
 			} else {
@@ -425,7 +425,7 @@ func (rl *ReActLoop) handleContextEvent(ctx context.Context, event seelectx.Cont
 	}
 	decision, err := rl.contextController.Handle(ctx, event)
 	if err != nil {
-		return fmt.Errorf("engine: context controller: %w", err)
+		return fmt.Errorf("session: context controller: %w", err)
 	}
 	if decision.ReplaceHistory {
 		rl.history = append(rl.history[:0], decision.History...)
@@ -460,7 +460,7 @@ func (rl *ReActLoop) restoreHistory(ctx context.Context) error {
 	if rl.historyOwner != nil {
 		stored, err := rl.historyOwner.Load(ctx)
 		if err != nil {
-			return fmt.Errorf("engine: load durable history: %w", err)
+			return fmt.Errorf("session: load durable history: %w", err)
 		}
 		rl.history = append(rl.history[:0], stored...)
 		return nil

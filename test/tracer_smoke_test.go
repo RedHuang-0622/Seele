@@ -23,8 +23,8 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
 	"github.com/RedHuang-0622/Seele/seelectx/tracer"
+	"github.com/RedHuang-0622/Seele/session"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
@@ -106,8 +106,8 @@ func TestTraceMock(t *testing.T) {
 		defer a.Shutdown()
 
 		tr := tracer.NewSimpleTracer()
-		eng := engine.New(a, engine.WithTracer(tr),
-			engine.WithSystemPrompt("You are helpful."))
+		eng := session.New(a, session.WithTracer(tr),
+			session.WithSystemPrompt("You are helpful."))
 
 		reply, err := eng.Chat(context.Background(), "Say hello")
 		if err != nil {
@@ -170,8 +170,8 @@ func TestTraceMock(t *testing.T) {
 		mock.enqueueText("Done")
 
 		tr := tracer.NewSimpleTracer()
-		eng := engine.New(a, engine.WithTracer(tr),
-			engine.WithSystemPrompt("You are helpful."))
+		eng := session.New(a, session.WithTracer(tr),
+			session.WithSystemPrompt("You are helpful."))
 
 		reply, err := eng.Chat(context.Background(), "Run echo")
 		if err != nil {
@@ -231,8 +231,8 @@ func TestTraceMock(t *testing.T) {
 		)
 
 		tr := tracer.NewSimpleTracer()
-		eng := engine.New(a, engine.WithTracer(tr),
-			engine.WithSystemPrompt("You are helpful."))
+		eng := session.New(a, session.WithTracer(tr),
+			session.WithSystemPrompt("You are helpful."))
 
 		_, err := eng.Chat(ctx, "Loop forever")
 		if err == nil {
@@ -294,8 +294,8 @@ func TestTraceReal(t *testing.T) {
 	)
 
 	tr := tracer.NewSimpleTracer()
-	eng := engine.New(agt, engine.WithTracer(tr),
-		engine.WithSystemPrompt("You are a helpful assistant."))
+	eng := session.New(agt, session.WithTracer(tr),
+		session.WithSystemPrompt("You are a helpful assistant."))
 
 	t.Logf("Calling real API (model=%s)...", acct.Model)
 

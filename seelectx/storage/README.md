@@ -18,5 +18,5 @@
 
 ## 依赖与验证
 
-- Engine 注入点：[engine](../../engine/README.md)
+- Session 注入点：[session](../../session/README.md)
 - 验证：`go test ./seelectx/storage/...`

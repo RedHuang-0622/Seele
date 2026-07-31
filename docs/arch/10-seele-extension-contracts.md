@@ -16,15 +16,35 @@ func NewWithComponents(components Components) (*Agent, error)
 
 `Completer` 是最低必需能力；流式 client、工具 runtime、history owner、ContextController、telemetry hook 均可选。client 的 key、URL、模型和 provider entry 不被 Seele 强制成唯一配置格式，调用方可以硬编码或通过 `accountpool`/自定义 resolver 注入。
 
-Engine 依赖的运行时也只需要：
+Session 依赖的运行时也只需要：
 
 ```go
-type Runtime interface {
+type Agent interface {
     VisibleTools(context.Context) []types.Tool
     Dispatch(context.Context, string, string) (string, error)
     LLM() types.ChatCompleter
 }
 ```
+
+## Session
+
+`session.NewSession` 是面向应用的会话入口。`agent.Agent` 通过方法集满足 `session.Agent`，因此 `agent` 继续只做装配，`session` 只管理一次对话的执行状态，二者没有包级依赖。
+
+```go
+type SessionComponents struct {
+    Agent     session.Agent               // required: LLM + tool dispatch
+    History   seelectx.DurableHistory     // optional, caller-owned
+    Context   session.ContextComponents   // optional mechanisms, caller-selected
+    Telemetry telemetry.Hook              // optional lifecycle collection
+    Tracer    tracer.Tracer               // optional compatibility trace tree
+}
+
+func NewSession(SessionComponents) (*Session, error) // package session
+```
+
+`Session` 持有 working history；每次 `Chat` 先从注入的 `History` 加载快照，完成后再保存。`SystemPrompt` 和 `PromptBlocks` 只进入模型请求，绝不写入 durable history。`Reset(ctx)` 是清空 durable snapshot 的显式、可失败操作；`ClearHistory` 仅为底层 Loop 兼容而清空当前 working view。
+
+同一个 `Session` 只能串行调用 `Chat` 或 `ChatStream`。多个 Session 若共享同一 `DurableHistory`，一致性策略应由调用方的 history 实现决定；默认内存实现不提供多会话的并发冲突解决。
 
 ## WorkPlan
 
@@ -131,7 +151,7 @@ type Tracer interface {
 ```mermaid
 sequenceDiagram
     participant S as Seelex
-    participant A as Agent/Engine
+    participant A as Agent/Session
     participant C as seelectx
     participant H as telemetry Hook
     participant T as Tracer

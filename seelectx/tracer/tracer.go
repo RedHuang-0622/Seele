@@ -171,7 +171,7 @@ func WithAttr(key, value string) SpanOption {
 
 // Tracer 是可观测性的核心接口。
 //
-// 注册到 Engine 后自动埋点，无需业务代码额外调用。
+// 注册到 Session 后自动埋点，无需业务代码额外调用。
 // 多种实现可互换：
 //   - NoopTracer — 零开销，适用于生产环境无追踪需求时
 //   - SimpleTracer — JSON 格式输出，适用于开发和调试

@@ -9,7 +9,7 @@
 //
 // 架构：
 //
-//	agent.New → engine.New → eng.Chat()
+//	agent.New → session.NewSession → session.Chat()
 //
 // 运行前：
 //   1. 编辑 ../config/config.yaml，填入你的 LLM API Key
@@ -29,7 +29,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/session"
 	tool "github.com/RedHuang-0622/Seele/tools"
 	"github.com/RedHuang-0622/Seele/types"
 )
@@ -224,21 +224,29 @@ func main() {
 		fmt.Printf("\n--- %s ---\n%s\n", t.Function.Name, string(schemaJSON))
 	}
 
-	// ── Engine：注入 Agent，内部接管 contexts ────────────────────────
-	eng := engine.New(agt, engine.WithSystemPrompt("你是一个全能助手，可以查天气、处理文本、创建团队。"))
+	// ── Session：显式装配会话生命周期 ────────────────────────────────
+	conversation, err := session.NewSession(session.SessionComponents{
+		Agent: agt,
+		Context: session.ContextComponents{
+			SystemPrompt: "你是一个全能助手，可以查天气、处理文本、创建团队。",
+		},
+	})
+	if err != nil {
+		log.Fatalf("create session: %v", err)
+	}
 
-	// 多轮对话（engine 内部维护 history）
-	reply, _ := eng.Chat(ctx, "北京今天天气怎么样？")
+	// 多轮对话由同一个 Session 持有 working history。
+	reply, _ := conversation.Chat(ctx, "北京今天天气怎么样？")
 	fmt.Println("\n🌤 天气:", reply)
 
-	reply, _ = eng.Chat(ctx, "把 Shanghai 的天气用大写字母写出来")
+	reply, _ = conversation.Chat(ctx, "把 Shanghai 的天气用大写字母写出来")
 	fmt.Println("📝 文本:", reply)
 
-	reply, _ = eng.Chat(ctx, "创建一个名为 Avengers 的团队，Leader 是 Tony 40岁，成员有 Steve 100岁 和 Thor 1500岁")
+	reply, _ = conversation.Chat(ctx, "创建一个名为 Avengers 的团队，Leader 是 Tony 40岁，成员有 Steve 100岁 和 Thor 1500岁")
 	fmt.Println("👥 团队:", reply)
 
 	for i := 0; i < 3; i++ {
-		reply, _ = eng.Chat(ctx, "调用一次计数器")
+		reply, _ = conversation.Chat(ctx, "调用一次计数器")
 	}
 	fmt.Println("🔢 计数器:", reply)
 

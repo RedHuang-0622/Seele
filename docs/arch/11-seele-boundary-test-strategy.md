@@ -9,7 +9,7 @@
 | Tools 契约 | `go test ./tools/...` | FC provider、provider/tool 重名、权限、超时、重试、MCP/microHub/Skills adapter、快照隔离 |
 | Context | `go test ./seelectx/...` | turn/字符/tool exchange 切片、规整、相关性、Placeholder、短历史不调用 LLM、递归压缩与结构化结果 |
 | Hook/Tracer | `go test ./telemetry/...` | 生命周期 Before/After、CorrelationID、并行 Span、panic 捕获、trace/metric/audit、Query/Stream、OTel 映射 |
-| Engine | `go test ./engine/...` | 无工具临时 Chat、显式 history owner、assembler、raw/filtered/reference tool result、显式 ContextController、Agent/LLM/Tool telemetry |
+| Session | `go test ./session/...` | 无工具临时 Chat、显式 history owner、assembler、raw/filtered/reference tool result、显式 ContextController、Agent/LLM/Tool telemetry |
 | 全仓静态 | `go test ./... -run '^$' && go vet ./... && go build ./...` | 依赖方向和全仓编译 |
 
 ## 依赖边界检查

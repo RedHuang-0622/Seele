@@ -1,6 +1,6 @@
 # cmd/repl
 
-`seele-repl` 是交互式 Agent 示例入口。它装配账户、Agent、通用 builtin Provider、tracer 与 Engine；文件、Git、Shell 和 WorkPlan 产品工具不再由 Seele 默认注册。
+`seele-repl` 是交互式 Agent 示例入口。它装配账户、Agent、通用 builtin Provider、tracer 与 Session；文件、Git、Shell 和 WorkPlan 产品工具不再由 Seele 默认注册。
 
 ## 运行
 

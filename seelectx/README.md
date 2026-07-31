@@ -8,7 +8,7 @@
 
 `policy.go` 和 `compressor.go` 提供可替换的上下文策略：结构切片（turn、字符和连续 tool exchange）、工具记录规整、query relevance 排序/丢弃、动态 placeholder、动态压缩 prompt、短对话免 LLM 以及递归摘要。`ContextController` 是唯一可让 loop 响应结构化事件的入口；未注入 controller 时不会进行任何策略判断。
 
-`seelectx` 管理 ReAct 会话的横切状态：响应缓存、历史预算、持久化和追踪，并为 `engine` 提供统一的接口与兼容别名。
+`seelectx` 管理 ReAct 会话的横切状态：响应缓存、历史预算、持久化和追踪，并为 `session` 提供统一的接口与兼容别名。
 
 ## 子模块
 
