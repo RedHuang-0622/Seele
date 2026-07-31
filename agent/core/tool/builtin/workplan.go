@@ -9,27 +9,24 @@ import (
 	"github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	workplanTypes "github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
-	"github.com/RedHuang-0622/Seele/workplan/sugar/approve"
 )
 
-// ── AgentFactory 适配 ───────────────────────────────────────────────────
-
-// chatAgentFactory 将 types.ChatCompleter 适配为 workplan.AgentFactory。
-type chatAgentFactory struct{ client types.ChatCompleter }
-
-// NewChatAgentFactory 创建基于 ChatCompleter 的 AgentFactory。
-// 传入 nil 时 NewAgent 返回回显 fallback（不调用 LLM）。
+// NewChatAgentFactory adapts a ChatCompleter into the factory used by DSL auto
+// nodes. A nil client is useful for deterministic local tests.
 func NewChatAgentFactory(client types.ChatCompleter) workplan.AgentFactory {
 	return &chatAgentFactory{client: client}
 }
 
+type chatAgentFactory struct{ client types.ChatCompleter }
+
 func (f *chatAgentFactory) NewAgent(systemPrompt string) node.Agent {
 	if f.client == nil {
-		return &echoAgent{}
+		return echoAgent{}
 	}
-	return &chatAgent{client: f.client, systemPrompt: systemPrompt}
+	return chatAgent{client: f.client, systemPrompt: systemPrompt}
 }
 
 type chatAgent struct {
@@ -37,54 +34,32 @@ type chatAgent struct {
 	systemPrompt string
 }
 
-func (a *chatAgent) Chat(ctx context.Context, input string) (string, error) {
-	msg, err := a.client.Complete(ctx, []types.Message{
+func (a chatAgent) Chat(ctx context.Context, input string) (string, error) {
+	message, err := a.client.Complete(ctx, []types.Message{
 		{Role: "system", Content: &a.systemPrompt},
 		{Role: "user", Content: &input},
 	}, nil)
 	if err != nil {
 		return "", fmt.Errorf("workplan chat: %w", err)
 	}
-	if msg.Content != nil {
-		return *msg.Content, nil
+	if message.Content == nil {
+		return "", nil
 	}
-	return "", nil
+	return *message.Content, nil
 }
 
 type echoAgent struct{}
 
-func (*echoAgent) Chat(_ context.Context, input string) (string, error) { return input, nil }
+func (echoAgent) Chat(_ context.Context, input string) (string, error) { return input, nil }
 
-// ── WorkPlanTool ─────────────────────────────────────────────────────────
-
-// WorkPlanTool 将 WorkPlan 引擎包装为 ToolProvider。
-// LLM 通过 plan_load 用邻接表 JSON 定义 DAG，再 plan_run 执行。
-//
-// 邻接表格式示例（plan_load 的参数）：
-//
-//	{
-//	  "entry": "start",
-//	  "nodes": {
-//	    "start":    {"input": "分析需求"},
-//	    "design":   {"input": "设计方案: {{.PrevResult}}"},
-//	    "code":     {"input": "实现编码: {{.PrevResult}}"}
-//	  },
-//	  "edges": {
-//	    "start":  ["design"],
-//	    "design": ["code"]
-//	  }
-//	}
+// WorkPlanTool exposes the versioned executable Seele DSL to an LLM. A load
+// replaces the assembled Plan kernel atomically; Graph remains a separate
+// editing facade owned by the resulting WorkPlan.
 type WorkPlanTool struct {
 	mu      sync.Mutex
 	wp      *workplan.WorkPlan
 	factory node.AgentFactory
 
-	// Gate 用于 kind:manual 节点的审批（human-in-the-loop）。
-	// 未设置时，manual 节点回退为 auto 节点。
-	Gate approve.ApprovalGate
-
-	// ProgressCallback 每节点完成时回调，按需选填。
-	// seelex plan visualization 通过此回调实时更新 TUI Plan 面板。
 	ProgressCallback   func(nr *workplanTypes.NodeResult)
 	BranchEventHook    func(forkexec.Event)
 	BranchRuntimeFor   func(string) forkexec.BranchRuntime
@@ -93,57 +68,46 @@ type WorkPlanTool struct {
 	MaxForkConcurrency int
 }
 
-// NewWorkPlanTool 创建 WorkPlan 工具。factory 用于子 Agent 创建。
 func NewWorkPlanTool(factory node.AgentFactory) *WorkPlanTool {
 	return &WorkPlanTool{factory: factory}
 }
 
-// SetGate 设置审批门控，用于 kind:manual 节点的 human-in-the-loop 审批。
-func (w *WorkPlanTool) SetGate(g approve.ApprovalGate) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.Gate = g
-}
-
-// SetBranchEventHook configures plan_load-created WorkPlans to emit branch events.
 func (w *WorkPlanTool) SetBranchEventHook(hook func(forkexec.Event)) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.BranchEventHook = hook
 }
 
-// SetBranchRuntimeResolver injects Seelex-owned branch runtime metadata.
 func (w *WorkPlanTool) SetBranchRuntimeResolver(resolver func(string) forkexec.BranchRuntime) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.BranchRuntimeFor = resolver
 }
 
-// SetForkPolicy configures the failure policy for plan_load-created WorkPlans.
 func (w *WorkPlanTool) SetForkPolicy(policy forkexec.Policy) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.ForkPolicy = policy
 }
 
-// SetForkJoinPolicy configures the merge policy for plan_load-created WorkPlans.
 func (w *WorkPlanTool) SetForkJoinPolicy(policy forkexec.JoinPolicy) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.ForkJoinPolicy = policy
 }
 
-// SetMaxForkConcurrency configures branch concurrency for loaded WorkPlans.
 func (w *WorkPlanTool) SetMaxForkConcurrency(maxConcurrent int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.MaxForkConcurrency = maxConcurrent
 }
 
-// newWorkPlanLocked creates a WorkPlan from the tool's injected runtime config.
-// The caller must hold w.mu.
 func (w *WorkPlanTool) newWorkPlanLocked() *workplan.WorkPlan {
-	return workplan.New(w.factory,
+	return w.newWorkPlanFromPlanLocked(coreplan.New())
+}
+
+func (w *WorkPlanTool) newWorkPlanFromPlanLocked(p *coreplan.Plan) *workplan.WorkPlan {
+	return workplan.NewFromPlan(p, w.factory,
 		workplan.WithBranchEventHook(w.BranchEventHook),
 		workplan.WithBranchRuntimeResolver(w.BranchRuntimeFor),
 		workplan.WithForkPolicy(w.ForkPolicy),
@@ -157,35 +121,56 @@ func (w *WorkPlanTool) ProviderName() string { return "workplan" }
 func (w *WorkPlanTool) Tools() []interfaces.ToolEntry {
 	return []interfaces.ToolEntry{
 		tool("plan_load",
-			`定义或替换完整的 WorkPlan DAG 工作流。接受 JSON 格式的邻接表描述，包含入口节点、节点定义和有向边。`+
-				`每次调用 plan_load 原子替换当前整个工作流。`+
-				`格式: {entry, nodes: {id: {input}}, edges: {from: [to, ...]}}`,
-			obj(
-				prop("entry", "string", "入口节点 ID，必须存在于 nodes 中"),
-				prop("nodes", "object", "节点定义：{节点ID: {input: 提示词}}，支持 {{.PrevResult}} 引用上游输出"),
-				prop("edges", "object", "邻接表：{节点ID: [目标节点ID, ...]}，定义有向边"),
-			),
-			&planLoadHandler{tool: w}),
-
+			"Validate and atomically load a Seele WorkPlan DSL v1 document. The document must contain version 1, entry, nodes [{id,input,kind:auto}], and edges [{from,to}]. Every node is a runnable subagent task.",
+			planLoadSchema(), &planLoadHandler{tool: w}),
 		tool("plan_run",
-			"执行当前 WorkPlan，从入口节点按图拓扑顺序执行所有节点，返回每个节点的执行结果。",
+			"Run the loaded Plan kernel. Independent successor nodes execute as isolated subagent branches.",
 			obj(), &planRunHandler{tool: w}),
-
 		tool("plan_status",
-			"查看 WorkPlan 状态：节点/边数量、入口节点、完整拓扑列表。",
+			"Return the loaded Plan kernel's entry, nodes, and directed edges.",
 			obj(), &planStatusHandler{tool: w}),
-
 		tool("plan_export",
-			"将当前 WorkPlan 导出为 JSON 格式的 Plan 描述（节点列表 + 边列表）。",
+			"Export the loaded Plan kernel as a versioned Seele WorkPlan DSL v1 document.",
 			obj(), &planExportHandler{tool: w}),
-
 		tool("plan_clear",
-			"清除当前 WorkPlan 所有节点和边，重置为空。",
+			"Discard the loaded Plan kernel and create an empty WorkPlan.",
 			obj(), &planClearHandler{tool: w}),
 	}
 }
 
-// ── 工具定义辅助 ─────────────────────────────────────────────────────────
+func planLoadSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"version": map[string]interface{}{"type": "integer", "enum": []int{1}},
+			"entry":   map[string]interface{}{"type": "string"},
+			"nodes": map[string]interface{}{
+				"type": "array",
+				"items": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"id":    map[string]interface{}{"type": "string"},
+						"input": map[string]interface{}{"type": "string"},
+						"kind":  map[string]interface{}{"type": "string", "enum": []string{"auto"}},
+					},
+					"required": []string{"id", "input", "kind"},
+				},
+			},
+			"edges": map[string]interface{}{
+				"type": "array",
+				"items": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"from": map[string]interface{}{"type": "string"},
+						"to":   map[string]interface{}{"type": "string"},
+					},
+					"required": []string{"from", "to"},
+				},
+			},
+		},
+		"required": []string{"version", "entry", "nodes", "edges"},
+	}
+}
 
 func tool(name, desc string, params map[string]interface{}, h interfaces.ToolHandler) interfaces.ToolEntry {
 	return interfaces.ToolEntry{
@@ -202,29 +187,19 @@ func tool(name, desc string, params map[string]interface{}, h interfaces.ToolHan
 }
 
 func obj(props ...map[string]interface{}) map[string]interface{} {
-	m := map[string]interface{}{
+	result := map[string]interface{}{
 		"type":       "object",
 		"properties": map[string]interface{}{},
 	}
-	var required []string
-	for _, p := range props {
-		for k, v := range p {
-			propsMap := m["properties"].(map[string]interface{})
-			propsMap[k] = v
-			required = append(required, k)
+	required := make([]string, 0, len(props))
+	for _, prop := range props {
+		for key, value := range prop {
+			result["properties"].(map[string]interface{})[key] = value
+			required = append(required, key)
 		}
 	}
 	if len(required) > 0 {
-		m["required"] = required
+		result["required"] = required
 	}
-	return m
-}
-
-func prop(name, typ, desc string) map[string]interface{} {
-	return map[string]interface{}{
-		name: map[string]interface{}{
-			"type":        typ,
-			"description": desc,
-		},
-	}
+	return result
 }

@@ -19,6 +19,9 @@ type StrategyNode struct {
 	onChunk      func(string)
 }
 
+// DSLInput returns the node's declarative input for workflow serialization.
+func (n *StrategyNode) DSLInput() string { return n.Input }
+
 // NodeStrategy is the execution strategy interface (Strategy pattern).
 type NodeStrategy interface {
 	Execute(ctx context.Context, wc *types.WorkflowContext) (string, error)

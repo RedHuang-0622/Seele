@@ -1,22 +1,23 @@
 # workplan/runtime/serialize
 
-该包把运行时图转换为可传输的 `Plan`，并借助条件注册表从 Plan 重建图。
+`runtime/serialize` 负责在正式 Seele JSON DSL、Plan 内核和可执行核心节点之间转换。
 
-## 公开入口
+## 公开接口
 
-| 符号 | 用途 |
+| API | 用途 |
 | --- | --- |
-| `Plan`、`PlanNodeSpec`、`PlanEdgeSpec` | JSON 友好的图描述 |
-| `ToPlan` / `FromPlan` | 图与 Plan 的双向转换 |
-| `FromJSON` | 解析 Plan JSON |
+| `FromJSON` | 解析并校验版本化 DSL |
+| `ToPlan` | 将 Plan 内核导出为 DSL 数据模型 |
+| `Compile` | 使用 `AgentFactory` 创建核心 `AutoNode` 和 `edge.Edge` |
+| `FromPlan` | 在没有 AgentFactory 时创建只读检查用占位内核 |
 
 ## 实现细节
 
-- 序列化只保留节点类型、输入、边和可标识的条件，不试图序列化函数闭包。
-- 反序列化通过 `ConditionRegistry` 解析条件名，缺失条件即报错，避免恢复出行为不完整的图。
-- Plan 适合工具传参和持久化，Graph 仍是运行时的并发安全结构。
+- 编译路径绕过 sugar，直接调用 `core/node.NewAutoNode` 与 `core/plan.AddEdge`。
+- v1 导出包含 `version`、`entry`、节点 `input` 和边数组；不可表达的节点类型会返回明确错误。
 
 ## 依赖与验证
 
-- 图：[graph](../graph/README.md)，条件：[core/types](../../core/types/README.md)
+- 语法：[../../dsl/README.md](../../dsl/README.md)
+- 内核：[../../core/plan/README.md](../../core/plan/README.md)
 - 验证：`go test ./workplan/runtime/serialize/...`

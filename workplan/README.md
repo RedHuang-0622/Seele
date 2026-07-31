@@ -1,28 +1,32 @@
 # workplan
 
-`workplan` 是声明式工作流门面。它以链式 DSL 构建 DAG，并将本地函数、纯 LLM、完整 Agent、条件、循环、并发分支、审批和检查点组合执行。
+`workplan` 是声明式工作流门面：它装配 Plan 执行内核、Graph 编辑外观、运行时和链式 sugar API。
 
-## 公开入口
+## 公开接口
 
-| 符号 | 用途 |
+| API | 用途 |
 | --- | --- |
-| `New` / `Option` | 创建 WorkPlan 并注入 AgentFactory、追踪和 Fork 策略 |
-| `Auto`、`Method`、`LLM`、`Pipeline` | 添加顺序执行节点 |
-| `If`、`Switch`、`Loop`、`Fork` | 添加控制流 |
-| `Approve`、`Emit`、`Checkpoint` | 人工介入、变量写入和快照节点 |
-| `Run` / `Resume` | 执行或从检查点继续执行 |
+| `New` | 创建新的 Plan 内核及 WorkPlan 门面 |
+| `NewFromPlan` | 将已有 Plan 内核装配为可执行 WorkPlan |
+| `Plan` | 获取 WorkPlan 的执行内核 |
+| `Graph` | 获取用于编辑和查询的 Graph 外观 |
+| `Auto` / `Method` / `LLM` | 添加顺序节点 |
+| `If` / `Switch` / `Loop` / `Fork` | 添加控制流 |
+| `Run` / `Resume` | 执行或从检查点恢复 |
+| `ExportJSON` | 导出正式 Seele DSL v1 |
 
 ## 实现细节
 
-- 门面维护 `entryID` 与 `lastNodeID`，每次 DSL 调用自动添加边；底层图和执行器仍可单独访问。
-- sugar 包只构建节点，`runtime/runner`、`scheduler` 和 `executor` 负责执行，保持声明与运行解耦。
-- Fork 使用独立分支上下文和可配置策略/并发上限；Tracer 以接口注入，不强依赖具体观测实现。
+- `core/plan` 是节点、边和入口的唯一所有者；运行器和调度器直接依赖它。
+- `runtime/graph` 是 Plan 的编辑/查询外观，供 sugar、可视化和后续表露层功能使用，不参与执行依赖链。
+- DSL v1 的执行节点会直接编译为核心 `AutoNode` 和 `edge.Edge`，不经过 sugar。
 
 ## 模块导航
 
-- [core/](core/README.md)：节点、边和执行上下文模型。
-- [runtime/](runtime/README.md)：图、调度、验证、序列化和检查点。
-- [sugar/](sugar/README.md)：DSL 节点构建器。
+- [core/](core/README.md)：Plan 内核、节点、边和上下文
+- [dsl/](dsl/README.md)：正式 JSON 语法与语义校验
+- [runtime/](runtime/README.md)：执行、校验、序列化和 Graph 外观
+- [sugar/](sugar/README.md)：链式构建 API
 
 ## 验证
 

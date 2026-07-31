@@ -4,6 +4,7 @@ package builtin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/RedHuang-0622/Seele/agent/core/api"
 	"github.com/RedHuang-0622/Seele/engine"
 	"github.com/RedHuang-0622/Seele/types"
+	workplanTypes "github.com/RedHuang-0622/Seele/workplan/core/types"
 )
 
 var configPath = os.Getenv("SEELE_CONFIG")
@@ -74,6 +76,48 @@ func TestCLI_EndToEnd(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+
+	t.Run("formal_dsl_subagents", func(t *testing.T) {
+		planTool := NewWorkPlanTool(NewChatAgentFactory(chatClient))
+		planJSON := `{
+  "version": 1,
+  "entry": "inspect",
+  "nodes": [
+    {"id": "inspect", "input": "作为检查子代理，只回复 inspect-ok。", "kind": "auto"},
+    {"id": "backend", "input": "作为后端检查子代理，只回复 backend-ok。", "kind": "auto"},
+    {"id": "tests", "input": "作为测试检查子代理，只回复 tests-ok。", "kind": "auto"},
+    {"id": "integrate", "input": "作为整合子代理，只回复 integrate-ok。", "kind": "auto"}
+  ],
+  "edges": [
+    {"from": "inspect", "to": "backend"},
+    {"from": "inspect", "to": "tests"},
+    {"from": "backend", "to": "integrate"},
+    {"from": "tests", "to": "integrate"}
+  ]
+}`
+		if _, err := (&planLoadHandler{tool: planTool}).Execute(ctx, planJSON); err != nil {
+			t.Fatalf("plan_load: %v", err)
+		}
+		response, err := (&planRunHandler{tool: planTool}).Execute(ctx, "{}")
+		if err != nil {
+			t.Fatalf("plan_run: %v", err)
+		}
+		var result struct {
+			Status string                      `json:"status"`
+			Nodes  []*workplanTypes.NodeResult `json:"nodes"`
+		}
+		if err := json.Unmarshal([]byte(response), &result); err != nil {
+			t.Fatalf("decode plan_run result: %v", err)
+		}
+		if result.Status != "completed" || len(result.Nodes) != 4 {
+			t.Fatalf("subagent run = %#v", result)
+		}
+		for _, nodeResult := range result.Nodes {
+			if nodeResult.Status != "completed" {
+				t.Fatalf("subagent %q status = %q, output=%s", nodeResult.NodeID, nodeResult.Status, nodeResult.Output)
+			}
+		}
+	})
 
 	t.Run("get_time", func(t *testing.T) {
 		reply, err := eng.Chat(ctx, "现在几点？用 get_time 工具查一下")

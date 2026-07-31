@@ -1,161 +1,111 @@
-// Package serialize provides Plan ↔ Graph bidirectional conversion.
-// Plan is a pure-data JSON-serializable representation of a workflow.
+// Package serialize bridges the versioned Seele JSON DSL and runtime graphs.
 package serialize
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
+	"github.com/RedHuang-0622/Seele/workplan/dsl"
 )
 
-// PlanNodeSpec describes a single node in the serializable plan.
-type PlanNodeSpec struct {
-	ID   string `json:"id"`
-	Kind string `json:"kind"`
+// Plan is the versioned, executable Seele WorkPlan JSON document.
+type Plan = dsl.Plan
+
+// PlanNodeSpec is a task node in a versioned Seele WorkPlan document.
+type PlanNodeSpec = dsl.Node
+
+// PlanEdgeSpec is a dependency edge in a versioned Seele WorkPlan document.
+type PlanEdgeSpec = dsl.Edge
+
+// NewPlan creates an empty versioned Plan. Callers must add an entry and node
+// definitions before serializing or compiling it.
+func NewPlan() *Plan {
+	return &Plan{Version: dsl.Version}
 }
 
-// PlanEdgeSpec describes a single edge in the serializable plan.
-type PlanEdgeSpec struct {
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Label     string `json:"label,omitempty"`
-	Condition string `json:"condition,omitempty"` // label reference to ConditionRegistry
-}
-
-// Plan is a serializable workflow definition.
-type Plan struct {
-	Name        string         `json:"name,omitempty"`
-	Description string         `json:"description,omitempty"`
-	Version     string         `json:"version,omitempty"`
-	EntryNodeID string         `json:"entry_node_id"`
-	Nodes       []PlanNodeSpec `json:"nodes"`
-	Edges       []PlanEdgeSpec `json:"edges"`
-}
-
-// NewPlan creates an empty plan.
-func NewPlan(name string) *Plan {
-	return &Plan{Name: name}
-}
-
-// Add appends a node spec to the plan.
-func (p *Plan) Add(id, kind string) *Plan {
-	p.Nodes = append(p.Nodes, PlanNodeSpec{ID: id, Kind: kind})
-	return p
-}
-
-// Edge appends an edge spec to the plan.
-func (p *Plan) Edge(from, to string) *Plan {
-	p.Edges = append(p.Edges, PlanEdgeSpec{From: from, To: to})
-	return p
-}
-
-// ToJSON serializes the plan to JSON.
-func (p *Plan) ToJSON() (string, error) {
-	b, err := json.MarshalIndent(p, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-// FromJSON deserializes a plan from JSON.
+// FromJSON parses the versioned Seele WorkPlan JSON DSL.
 func FromJSON(data string) (*Plan, error) {
-	var p Plan
-	if err := json.Unmarshal([]byte(data), &p); err != nil {
-		return nil, fmt.Errorf("plan deserialize: %w", err)
-	}
-	return &p, nil
+	return dsl.Parse(data)
 }
 
-// ToPlan exports a Graph to a Plan.
-func ToPlan(g *graph.Graph) *Plan {
-	plan := &Plan{EntryNodeID: g.Entry()}
-	for _, id := range g.AllNodes() {
-		n := g.GetNode(id)
-		kind := "unknown"
-		if n != nil {
-			kind = n.Kind().String()
+// ToPlan exports a WorkPlan kernel as an executable Seele WorkPlan document.
+// Only core or sugar auto nodes exposing node.InputNode can be represented by
+// DSL version 1.
+func ToPlan(p *coreplan.Plan) (*Plan, error) {
+	plan := NewPlan()
+	plan.Entry = p.Entry()
+	ids := p.AllNodes()
+	sort.Strings(ids)
+	for _, id := range ids {
+		n := p.GetNode(id)
+		if n == nil {
+			return nil, fmt.Errorf("export Seele DSL: node %q is missing from graph", id)
 		}
-		plan.Nodes = append(plan.Nodes, PlanNodeSpec{ID: id, Kind: kind})
-	}
-	for _, e := range g.AllEdges() {
-		plan.Edges = append(plan.Edges, PlanEdgeSpec{
-			From: e.From, To: e.To, Label: e.Label,
-		})
-	}
-	return plan
-}
-
-// FromPlan reconstructs a Graph from a Plan.
-// Node implementations must be provided externally since Go functions cannot be serialized.
-func FromPlan(p *Plan, registry *types.ConditionRegistry) (*graph.Graph, error) {
-	g := graph.New()
-	g.SetEntry(p.EntryNodeID)
-
-	// Create placeholder nodes (kind recorded but no execution logic)
-	for _, ns := range p.Nodes {
-		kind := parseKind(ns.Kind)
-		placeholder := node.NewBaseNode(ns.ID, kind)
-		// Wrap in a placeholder struct that implements node.Node
-		g.AddNode(&placeholderNode{BaseNode: placeholder, kind: kind})
-	}
-
-	// Add edges with optional conditions
-	for _, es := range p.Edges {
-		e := edge.Edge{From: es.From, To: es.To, Label: es.Label}
-		if es.Condition != "" && registry != nil {
-			if cond, ok := registry.Resolve(es.Condition); ok {
-				e.Condition = cond
-			}
+		if n.Kind() != node.KindAuto {
+			return nil, fmt.Errorf("export Seele DSL: node %q has kind %q; DSL version %d supports only %q nodes", id, n.Kind(), dsl.Version, "auto")
 		}
-		g.AddEdge(e)
+		inputNode, ok := n.(node.InputNode)
+		if !ok {
+			return nil, fmt.Errorf("export Seele DSL: node %q does not expose its declarative input", id)
+		}
+		plan.Nodes = append(plan.Nodes, PlanNodeSpec{ID: id, Input: inputNode.DSLInput(), Kind: "auto"})
 	}
-
-	return g, nil
-}
-
-// placeholderNode is a minimal node.Node implementation for deserialized plans.
-// Real execution logic must be injected by replacing placeholder nodes.
-type placeholderNode struct {
-	node.BaseNode
-	kind node.NodeKind
-}
-
-func (p *placeholderNode) Kind() node.NodeKind { return p.kind }
-func (p *placeholderNode) Run(ctx context.Context, wc *types.WorkflowContext) (string, error) {
-	return "", fmt.Errorf("placeholder node %q: execution logic not injected; use ReplaceNode for real execution", p.ID())
-}
-
-func parseKind(s string) node.NodeKind {
-	switch s {
-	case "method":
-		return node.KindMethod
-	case "llm":
-		return node.KindLLM
-	case "agent", "auto":
-		return node.KindAuto
-	case "approve":
-		return node.KindApprove
-	case "if":
-		return node.KindIf
-	case "switch":
-		return node.KindSwitch
-	case "loop":
-		return node.KindLoop
-	case "fork":
-		return node.KindFork
-	case "join":
-		return node.KindJoin
-	case "checkpoint":
-		return node.KindCheckpoint
-	case "emit":
-		return node.KindEmit
-	default:
-		return node.KindMethod
+	for _, e := range p.AllEdges() {
+		plan.Edges = append(plan.Edges, PlanEdgeSpec{From: e.From, To: e.To})
 	}
+	if err := plan.Validate(); err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+// Compile validates p and creates executable core auto nodes and core edges.
+// It intentionally bypasses the workplan sugar packages.
+func Compile(p *Plan, factory node.AgentFactory) (*coreplan.Plan, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	if factory == nil {
+		return nil, fmt.Errorf("compile Seele DSL: agent factory is nil")
+	}
+	compiled := coreplan.New()
+	for _, spec := range p.Nodes {
+		compiled.AddNode(node.NewAutoNode(spec.ID, factory, spec.Input))
+	}
+	compiled.SetEntry(p.Entry)
+	for _, spec := range p.Edges {
+		compiled.AddEdge(edge.Edge{From: spec.From, To: spec.To})
+	}
+	return compiled, nil
+}
+
+// FromPlan reconstructs a non-executable placeholder graph for callers that
+// inspect graph structure without supplying an AgentFactory. Use Compile when
+// the graph must run subagents.
+func FromPlan(p *Plan, _ *types.ConditionRegistry) (*coreplan.Plan, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	compiled := coreplan.New()
+	for _, spec := range p.Nodes {
+		compiled.AddNode(&placeholderNode{BaseNode: node.NewBaseNode(spec.ID, node.KindAuto)})
+	}
+	compiled.SetEntry(p.Entry)
+	for _, spec := range p.Edges {
+		compiled.AddEdge(edge.Edge{From: spec.From, To: spec.To})
+	}
+	return compiled, nil
+}
+
+// placeholderNode is used only by FromPlan, which cannot accept an
+// AgentFactory. Compile provides executable graphs.
+type placeholderNode struct{ node.BaseNode }
+
+func (p *placeholderNode) Run(context.Context, *types.WorkflowContext) (string, error) {
+	return "", fmt.Errorf("placeholder node %q: compile the DSL with an AgentFactory before execution", p.ID())
 }

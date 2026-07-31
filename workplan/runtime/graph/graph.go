@@ -1,143 +1,43 @@
-// Package graph provides the graph structure that manages nodes and edges.
-// It is the central data structure of the workplan runtime.
+// Package graph provides the mutable graph-facing view assembled around a
+// WorkPlan kernel. Scheduling and DSL compilation depend on core/plan instead.
 package graph
 
 import (
-	"sync/atomic"
-
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 )
 
-// Graph manages nodes and edges with atomic (lock-free) reads/writes.
-type Graph struct {
-	nodes atomic.Pointer[map[string]node.Node]
-	edges atomic.Pointer[[]edge.Edge]
-	entry string
-}
+// Graph is the graph editing and inspection facade for a WorkPlan kernel.
+type Graph struct{ plan *coreplan.Plan }
 
-// New creates an empty graph.
-func New() *Graph {
-	g := &Graph{}
-	g.nodes.Store(&map[string]node.Node{})
-	g.edges.Store(&[]edge.Edge{})
-	return g
-}
+// New creates an editing facade around a fresh Plan kernel.
+func New() *Graph { return NewWithPlan(coreplan.New()) }
 
-// AddNode registers a node (CAS lock-free write).
-func (g *Graph) AddNode(n node.Node) {
-	for {
-		old := g.nodes.Load()
-		m := make(map[string]node.Node, len(*old)+1)
-		for k, v := range *old {
-			m[k] = v
-		}
-		m[n.ID()] = n
-		if g.nodes.CompareAndSwap(old, &m) {
-			return
-		}
+// NewWithPlan creates an editing facade around p.
+func NewWithPlan(p *coreplan.Plan) *Graph {
+	if p == nil {
+		p = coreplan.New()
 	}
+	return &Graph{plan: p}
 }
 
-// RemoveNode deletes a node by ID (CAS lock-free write).
-func (g *Graph) RemoveNode(id string) {
-	for {
-		old := g.nodes.Load()
-		if _, ok := (*old)[id]; !ok {
-			return
-		}
-		m := make(map[string]node.Node, len(*old)-1)
-		for k, v := range *old {
-			if k != id {
-				m[k] = v
-			}
-		}
-		if g.nodes.CompareAndSwap(old, &m) {
-			return
-		}
-	}
-}
+// Plan exposes the kernel assembled behind this graph facade.
+func (g *Graph) Plan() *coreplan.Plan { return g.plan }
 
-// GetNode retrieves a node by ID (lock-free read).
-func (g *Graph) GetNode(id string) node.Node {
-	m := *g.nodes.Load()
-	return m[id]
-}
-
-// AllNodes returns all node IDs.
-func (g *Graph) AllNodes() []string {
-	m := *g.nodes.Load()
-	ids := make([]string, 0, len(m))
-	for id := range m {
-		ids = append(ids, id)
-	}
-	return ids
-}
-
-// AddEdge registers an edge (CAS lock-free write).
-func (g *Graph) AddEdge(e edge.Edge) {
-	for {
-		old := g.edges.Load()
-		cp := make([]edge.Edge, len(*old)+1)
-		copy(cp, *old)
-		cp[len(*old)] = e
-		if g.edges.CompareAndSwap(old, &cp) {
-			return
-		}
-	}
-}
-
-// GetEdgesFrom returns all edges originating from the given node.
-func (g *Graph) GetEdgesFrom(from string) []edge.Edge {
-	edges := *g.edges.Load()
-	var result []edge.Edge
-	for _, e := range edges {
-		if e.From == from {
-			result = append(result, e)
-		}
-	}
-	return result
-}
-
-// AllEdges returns a copy of all edges.
-func (g *Graph) AllEdges() []edge.Edge {
-	edges := *g.edges.Load()
-	cp := make([]edge.Edge, len(edges))
-	copy(cp, edges)
-	return cp
-}
-
-// SetEntry sets the entry node ID.
-func (g *Graph) SetEntry(id string) { g.entry = id }
-
-// Entry returns the entry node ID.
-func (g *Graph) Entry() string { return g.entry }
-
-// Resolve determines the next node from currentID via edges.
+func (g *Graph) AddNode(n node.Node)                  { g.plan.AddNode(n) }
+func (g *Graph) RemoveNode(id string)                 { g.plan.RemoveNode(id) }
+func (g *Graph) GetNode(id string) node.Node          { return g.plan.GetNode(id) }
+func (g *Graph) AllNodes() []string                   { return g.plan.AllNodes() }
+func (g *Graph) AddEdge(e edge.Edge)                  { g.plan.AddEdge(e) }
+func (g *Graph) GetEdgesFrom(from string) []edge.Edge { return g.plan.GetEdgesFrom(from) }
+func (g *Graph) AllEdges() []edge.Edge                { return g.plan.AllEdges() }
+func (g *Graph) SetEntry(id string)                   { g.plan.SetEntry(id) }
+func (g *Graph) Entry() string                        { return g.plan.Entry() }
 func (g *Graph) Resolve(currentID string, wc *types.WorkflowContext) string {
-	edges := *g.edges.Load()
-	return edge.Resolve(edges, currentID, wc)
+	return g.plan.Resolve(currentID, wc)
 }
-
-// GetNextNodes returns ALL matching next node IDs from unconditional edges.
-// When multiple nodes are returned, the scheduler should run them concurrently (fork).
 func (g *Graph) GetNextNodes(currentID string, wc *types.WorkflowContext) []string {
-	edges := *g.edges.Load()
-	var ids []string
-	for _, e := range edges {
-		if e.From == currentID && e.Condition == nil {
-			ids = append(ids, e.To)
-		}
-	}
-	// Fallback to conditional edges if no unconditional
-	if len(ids) > 0 {
-		return ids
-	}
-	// (keep backward compat: single conditional match)
-	next := edge.Resolve(edges, currentID, wc)
-	if next != "" {
-		return []string{next}
-	}
-	return nil
+	return g.plan.GetNextNodes(currentID, wc)
 }

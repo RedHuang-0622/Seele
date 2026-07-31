@@ -7,15 +7,15 @@ import (
 	"sort"
 	"time"
 
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/executor"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 )
 
 // Scheduler drives dependency-aware execution of graph nodes.
 type Scheduler struct {
-	graph              *graph.Graph
+	plan               *coreplan.Plan
 	executor           *executor.Executor
 	MaxForkConcurrency int
 	ForkPolicy         forkexec.Policy
@@ -68,9 +68,9 @@ func (s *Scheduler) SetBranchRuntimeResolver(resolver func(string) forkexec.Bran
 }
 
 // New creates a scheduler bound to a graph and executor.
-func New(g *graph.Graph, exec *executor.Executor) *Scheduler {
+func New(p *coreplan.Plan, exec *executor.Executor) *Scheduler {
 	return &Scheduler{
-		graph: g, executor: exec, MaxForkConcurrency: 3, ForkPolicy: forkexec.PolicyFailFast,
+		plan: p, executor: exec, MaxForkConcurrency: 3, ForkPolicy: forkexec.PolicyFailFast,
 	}
 }
 
@@ -89,7 +89,7 @@ func (s *Scheduler) run(ctx context.Context, captureCheckpoints bool) (*types.Wo
 	wc := types.NewWorkflowContext()
 	checkpoints := make(map[string]*types.Snapshot)
 	start := time.Now()
-	entry := s.graph.Entry()
+	entry := s.plan.Entry()
 	if entry == "" {
 		return wc.Result, checkpoints, nil
 	}
@@ -115,7 +115,7 @@ func (s *Scheduler) run(ctx context.Context, captureCheckpoints bool) (*types.Wo
 		specs := make([]forkexec.Spec, 0, len(ready))
 		for _, nodeID := range ready {
 			nodeID := nodeID
-			n := s.graph.GetNode(nodeID)
+			n := s.plan.GetNode(nodeID)
 			runtime := forkexec.BranchRuntime{}
 			if s.RuntimeFor != nil {
 				runtime = s.RuntimeFor(nodeID)
@@ -163,7 +163,7 @@ func (s *Scheduler) run(ctx context.Context, captureCheckpoints bool) (*types.Wo
 			if result.State != forkexec.StateCompleted {
 				continue
 			}
-			nextIDs := s.graph.GetNextNodes(result.NodeID, result.Context.Workflow)
+			nextIDs := s.plan.GetNextNodes(result.NodeID, result.Context.Workflow)
 			for _, nextID := range nextIDs {
 				completedDeps[nextID]++
 				if dependencies[nextID] == 1 {
@@ -185,7 +185,7 @@ func (s *Scheduler) run(ctx context.Context, captureCheckpoints bool) (*types.Wo
 
 func (s *Scheduler) dependencies() map[string]int {
 	counts := make(map[string]int)
-	for _, edge := range s.graph.AllEdges() {
+	for _, edge := range s.plan.AllEdges() {
 		counts[edge.To]++
 	}
 	return counts
@@ -193,7 +193,7 @@ func (s *Scheduler) dependencies() map[string]int {
 
 func (s *Scheduler) recordResults(wc *types.WorkflowContext, results []forkexec.Result, captureCheckpoints bool, checkpoints map[string]*types.Snapshot) {
 	for _, result := range results {
-		n := s.graph.GetNode(result.NodeID)
+		n := s.plan.GetNode(result.NodeID)
 		kind := "unknown"
 		if n != nil {
 			kind = n.Kind().String()

@@ -41,12 +41,12 @@ func (m *mockAgentFactory) NewAgent(systemPrompt string) node.Agent {
 
 func TestNew(t *testing.T) {
 	g := graph.New()
-	r := New(g, nil)
+	r := New(g.Plan(), nil)
 	if r == nil {
 		t.Fatal("New() returned nil")
 	}
-	if r.graph != g {
-		t.Error("graph not set on runner")
+	if r.plan != g.Plan() {
+		t.Error("plan not set on runner")
 	}
 	if r.sched == nil {
 		t.Error("scheduler not initialized")
@@ -62,7 +62,7 @@ func TestNew(t *testing.T) {
 func TestNewWithFactory(t *testing.T) {
 	g := graph.New()
 	factory := &mockAgentFactory{}
-	r := New(g, factory)
+	r := New(g.Plan(), factory)
 	if r.factory == nil {
 		t.Fatal("expected factory to be set")
 	}
@@ -71,7 +71,7 @@ func TestNewWithFactory(t *testing.T) {
 func TestWithCheckpointOption(t *testing.T) {
 	g := graph.New()
 	store := checkpoint.NewMemoryStore()
-	r := New(g, nil, WithCheckpoint(store))
+	r := New(g.Plan(), nil, WithCheckpoint(store))
 	if r.checkMgr == nil {
 		t.Fatal("expected checkMgr to be set")
 	}
@@ -91,7 +91,7 @@ func TestRunExecutesGraph(t *testing.T) {
 	g.SetEntry("start")
 	g.AddEdge(edge.Edge{From: "start", To: "end"})
 
-	r := New(g, nil)
+	r := New(g.Plan(), nil)
 	result, err := r.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -116,7 +116,7 @@ func TestRunValidatesGraph(t *testing.T) {
 	g.SetEntry("nonexistent")
 	g.AddNode(newMockNode("start", node.KindMethod))
 
-	r := New(g, nil)
+	r := New(g.Plan(), nil)
 	_, err := r.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected validation error for missing entry node, got nil")
@@ -131,19 +131,19 @@ func TestRunDetectsCycle(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "a", To: "b"})
 	g.AddEdge(edge.Edge{From: "b", To: "a"}) // cycle
 
-	r := New(g, nil)
+	r := New(g.Plan(), nil)
 	_, err := r.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected cycle validation error, got nil")
 	}
 }
 
-func TestGraphAccessor(t *testing.T) {
+func TestPlanAccessor(t *testing.T) {
 	g := graph.New()
-	r := New(g, nil)
-	returned := r.Graph()
-	if returned != g {
-		t.Error("Graph() returned a different graph instance")
+	r := New(g.Plan(), nil)
+	returned := r.Plan()
+	if returned != g.Plan() {
+		t.Error("Plan() returned a different Plan instance")
 	}
 }
 
@@ -155,7 +155,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 	g.AddEdge(edge.Edge{From: "start", To: "end"})
 
 	store := checkpoint.NewMemoryStore()
-	r := New(g, nil, WithCheckpoint(store))
+	r := New(g.Plan(), nil, WithCheckpoint(store))
 
 	// Manually save a checkpoint for "start"
 	wc := types.NewWorkflowContext()
@@ -184,7 +184,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 
 func TestResumeWithoutCheckpoint(t *testing.T) {
 	g := graph.New()
-	r := New(g, nil)
+	r := New(g.Plan(), nil)
 	_, err := r.Resume(context.Background(), "some-id")
 	if err == nil {
 		t.Fatal("expected error when checkpoint not enabled, got nil")
@@ -194,7 +194,7 @@ func TestResumeWithoutCheckpoint(t *testing.T) {
 func TestResumeWithMissingSnapshot(t *testing.T) {
 	g := graph.New()
 	store := checkpoint.NewMemoryStore()
-	r := New(g, nil, WithCheckpoint(store))
+	r := New(g.Plan(), nil, WithCheckpoint(store))
 
 	_, err := r.Resume(context.Background(), "nonexistent")
 	if err == nil {

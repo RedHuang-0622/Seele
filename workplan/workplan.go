@@ -7,16 +7,17 @@ package workplan
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/runner"
+	"github.com/RedHuang-0622/Seele/workplan/runtime/serialize"
 	"github.com/RedHuang-0622/Seele/workplan/sugar/approve"
 	sauto "github.com/RedHuang-0622/Seele/workplan/sugar/auto"
 	scheckpoint "github.com/RedHuang-0622/Seele/workplan/sugar/checkpoint"
@@ -28,6 +29,7 @@ import (
 
 // WorkPlan is the workflow definition and execution engine.
 type WorkPlan struct {
+	plan          *coreplan.Plan
 	graph         *graph.Graph
 	runner        *runner.Runner
 	factory       node.AgentFactory
@@ -89,10 +91,20 @@ func WithMaxForkConcurrency(maxConcurrent int) Option {
 
 // New creates a new WorkPlan with the given AgentFactory.
 func New(factory node.AgentFactory, opts ...Option) *WorkPlan {
-	g := graph.New()
+	return NewFromPlan(coreplan.New(), factory, opts...)
+}
+
+// NewFromPlan assembles the WorkPlan facade around an executable Plan kernel.
+// The graph field remains an editing view and does not own execution state.
+func NewFromPlan(p *coreplan.Plan, factory node.AgentFactory, opts ...Option) *WorkPlan {
+	if p == nil {
+		p = coreplan.New()
+	}
+	g := graph.NewWithPlan(p)
 	wp := &WorkPlan{
+		plan:    p,
 		graph:   g,
-		runner:  runner.New(g, factory),
+		runner:  runner.New(p, factory),
 		factory: factory,
 	}
 	for _, o := range opts {
@@ -103,6 +115,9 @@ func New(factory node.AgentFactory, opts ...Option) *WorkPlan {
 
 // Graph returns the underlying graph structure.
 func (wp *WorkPlan) Graph() *graph.Graph { return wp.graph }
+
+// Plan returns the executable WorkPlan kernel.
+func (wp *WorkPlan) Plan() *coreplan.Plan { return wp.plan }
 
 // ─── Auto / Step ─────────────────────────────────────────────────────
 
@@ -277,38 +292,14 @@ func (wp *WorkPlan) Resume(ctx context.Context, snapshotID string) (*types.WorkP
 
 // ─── Serialization ───────────────────────────────────────────────────
 
-// ExportJSON exports the current graph as a JSON plan.
+// ExportJSON exports the current graph in the versioned Seele WorkPlan JSON
+// DSL. Only auto nodes with declarative inputs are representable by version 1.
 func (wp *WorkPlan) ExportJSON() (string, error) {
-	type ps struct {
-		ID   string `json:"id"`
-		Kind string `json:"kind"`
-	}
-	type es struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-	}
-	type plan struct {
-		EntryNodeID string `json:"entry_node_id"`
-		Nodes       []ps   `json:"nodes"`
-		Edges       []es   `json:"edges"`
-	}
-	p := &plan{EntryNodeID: wp.graph.Entry()}
-	for _, id := range wp.graph.AllNodes() {
-		n := wp.graph.GetNode(id)
-		kind := "unknown"
-		if n != nil {
-			kind = n.Kind().String()
-		}
-		p.Nodes = append(p.Nodes, ps{ID: id, Kind: kind})
-	}
-	for _, e := range wp.graph.AllEdges() {
-		p.Edges = append(p.Edges, es{From: e.From, To: e.To})
-	}
-	b, err := json.MarshalIndent(p, "", "  ")
+	p, err := serialize.ToPlan(wp.plan)
 	if err != nil {
 		return "", err
 	}
-	return string(b), nil
+	return p.ToJSON()
 }
 
 // ─── Internal Helpers ───────────────────────────────────────────────

@@ -7,17 +7,17 @@ import (
 	"fmt"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/checkpoint"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/executor"
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/scheduler"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/validate"
 )
 
 // Runner is the entry point for workflow execution.
 type Runner struct {
-	graph    *graph.Graph
+	plan     *coreplan.Plan
 	sched    *scheduler.Scheduler
 	exec     *executor.Executor
 	checkMgr *checkpoint.Manager
@@ -28,11 +28,11 @@ type Runner struct {
 type Option func(*Runner)
 
 // New creates a runner from a graph.
-func New(g *graph.Graph, factory node.AgentFactory, opts ...Option) *Runner {
+func New(p *coreplan.Plan, factory node.AgentFactory, opts ...Option) *Runner {
 	exec := executor.New()
-	sched := scheduler.New(g, exec)
+	sched := scheduler.New(p, exec)
 	r := &Runner{
-		graph:   g,
+		plan:    p,
 		sched:   sched,
 		exec:    exec,
 		factory: factory,
@@ -52,7 +52,7 @@ func WithCheckpoint(store checkpoint.Store) Option {
 
 // Run validates and executes the graph from the beginning.
 func (r *Runner) Run(ctx context.Context) (*types.WorkPlanResult, error) {
-	if err := validate.Graph(r.graph); err != nil {
+	if err := validate.Plan(r.plan); err != nil {
 		return nil, fmt.Errorf("graph validation: %w", err)
 	}
 	return r.sched.Run(ctx)
@@ -81,7 +81,7 @@ func (r *Runner) Resume(ctx context.Context, snapshotID string) (*types.WorkPlan
 		default:
 		}
 
-		n := r.graph.GetNode(currentID)
+		n := r.plan.GetNode(currentID)
 		if n == nil {
 			return wc.Result, fmt.Errorf("resume: node %q not found", currentID)
 		}
@@ -107,7 +107,7 @@ func (r *Runner) Resume(ctx context.Context, snapshotID string) (*types.WorkPlan
 		if output != "" {
 			wc.PrevOutput = output
 		}
-		currentID = r.graph.Resolve(currentID, wc)
+		currentID = r.plan.Resolve(currentID, wc)
 	}
 
 	wc.Result.TotalElapsed = start
@@ -115,5 +115,5 @@ func (r *Runner) Resume(ctx context.Context, snapshotID string) (*types.WorkPlan
 	return wc.Result, nil
 }
 
-// Graph returns the underlying graph.
-func (r *Runner) Graph() *graph.Graph { return r.graph }
+// Plan returns the underlying WorkPlan kernel.
+func (r *Runner) Plan() *coreplan.Plan { return r.plan }

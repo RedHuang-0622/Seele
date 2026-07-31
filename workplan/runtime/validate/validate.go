@@ -4,46 +4,47 @@ package validate
 import (
 	"fmt"
 
-	"github.com/RedHuang-0622/Seele/workplan/runtime/graph"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 )
 
-// Graph validates the entire graph: entry node, edge references, cycles, orphans.
-func Graph(g *graph.Graph) error {
-	if err := EntryNode(g); err != nil {
+// Plan validates the complete WorkPlan kernel: entry node, edge references,
+// cycles, and orphan nodes.
+func Plan(p *coreplan.Plan) error {
+	if err := EntryNode(p); err != nil {
 		return err
 	}
-	if err := EdgeReferences(g); err != nil {
+	if err := EdgeReferences(p); err != nil {
 		return err
 	}
-	if err := Cyclic(g); err != nil {
+	if err := Cyclic(p); err != nil {
 		return err
 	}
-	if err := Orphan(g); err != nil {
+	if err := Orphan(p); err != nil {
 		return err
 	}
 	return nil
 }
 
 // EntryNode checks that the entry node exists.
-func EntryNode(g *graph.Graph) error {
-	entry := g.Entry()
+func EntryNode(p *coreplan.Plan) error {
+	entry := p.Entry()
 	if entry == "" {
 		return nil // graph with no entry is valid (empty graph)
 	}
-	if g.GetNode(entry) == nil {
+	if p.GetNode(entry) == nil {
 		return fmt.Errorf("entry node %q not found", entry)
 	}
 	return nil
 }
 
 // EdgeReferences checks that all edge targets refer to existing nodes.
-func EdgeReferences(g *graph.Graph) error {
-	nodes := g.AllNodes()
+func EdgeReferences(p *coreplan.Plan) error {
+	nodes := p.AllNodes()
 	nodeSet := make(map[string]bool, len(nodes))
 	for _, id := range nodes {
 		nodeSet[id] = true
 	}
-	for _, e := range g.AllEdges() {
+	for _, e := range p.AllEdges() {
 		if _, ok := nodeSet[e.To]; !ok {
 			return fmt.Errorf("edge %q -> %q: target node %q not found", e.From, e.To, e.To)
 		}
@@ -52,9 +53,9 @@ func EdgeReferences(g *graph.Graph) error {
 }
 
 // Cyclic checks for cycles using DFS.
-func Cyclic(g *graph.Graph) error {
-	nodes := g.AllNodes()
-	edges := g.AllEdges()
+func Cyclic(p *coreplan.Plan) error {
+	nodes := p.AllNodes()
+	edges := p.AllEdges()
 	adj := make(map[string][]string)
 	for _, id := range nodes {
 		adj[id] = nil
@@ -101,12 +102,12 @@ func Cyclic(g *graph.Graph) error {
 }
 
 // Orphan checks for nodes that are not reachable from the entry.
-func Orphan(g *graph.Graph) error {
-	entry := g.Entry()
+func Orphan(p *coreplan.Plan) error {
+	entry := p.Entry()
 	if entry == "" {
 		return nil
 	}
-	edges := g.AllEdges()
+	edges := p.AllEdges()
 
 	hasIncoming := make(map[string]bool)
 	for _, e := range edges {
@@ -114,7 +115,7 @@ func Orphan(g *graph.Graph) error {
 	}
 
 	var orphans []string
-	for _, id := range g.AllNodes() {
+	for _, id := range p.AllNodes() {
 		if id == entry {
 			continue
 		}

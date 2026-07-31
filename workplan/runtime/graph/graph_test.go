@@ -6,6 +6,7 @@ import (
 
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 )
 
@@ -30,11 +31,22 @@ func TestNew(t *testing.T) {
 	if g == nil {
 		t.Fatal("New() returned nil")
 	}
-	if len(*g.nodes.Load()) != 0 {
-		t.Error("expected empty nodes map")
+	if len(g.AllNodes()) != 0 {
+		t.Error("expected no nodes")
 	}
-	if len(*g.edges.Load()) != 0 {
-		t.Error("expected empty edges slice")
+	if len(g.AllEdges()) != 0 {
+		t.Error("expected no edges")
+	}
+}
+
+func TestGraphFacadeMutatesProvidedPlan(t *testing.T) {
+	p := coreplan.New()
+	g := NewWithPlan(p)
+	g.AddNode(newTestNode("a", node.KindMethod))
+	g.SetEntry("a")
+
+	if p.GetNode("a") == nil || p.Entry() != "a" {
+		t.Fatal("graph facade did not mutate the supplied Plan kernel")
 	}
 }
 

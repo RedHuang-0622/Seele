@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
+	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
 	"github.com/RedHuang-0622/Seele/workplan/core/types"
 	"github.com/RedHuang-0622/Seele/workplan/runtime/forkexec"
 	"github.com/RedHuang-0622/Seele/workplan/sugar/loop"
@@ -267,7 +268,26 @@ func TestWorkPlan_ExportJSON(t *testing.T) {
 	if json == "" {
 		t.Fatal("expected non-empty JSON")
 	}
+	if !strings.Contains(json, `"version": 1`) || !strings.Contains(json, `"entry": "step1"`) {
+		t.Fatalf("exported JSON does not use the versioned Seele DSL: %s", json)
+	}
+	if !strings.Contains(json, `"input": "first"`) || !strings.Contains(json, `"from": "step1"`) {
+		t.Fatalf("exported JSON lost declarative node or edge data: %s", json)
+	}
 	t.Logf("exported plan: %s", json)
+}
+
+func TestNewFromPlanAssemblesGraphFacadeAroundKernel(t *testing.T) {
+	kernel := coreplan.New()
+	wp := NewFromPlan(kernel, &mockFactory{})
+	wp.Auto("inspect", "inspect scope")
+
+	if wp.Plan() != kernel {
+		t.Fatal("WorkPlan did not retain the supplied Plan kernel")
+	}
+	if kernel.GetNode("inspect") == nil {
+		t.Fatal("Graph facade did not add the sugar node to the Plan kernel")
+	}
 }
 
 // ─── Compile-time interface checks ──────────────────────────────────
