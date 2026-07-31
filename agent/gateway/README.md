@@ -1,10 +1,15 @@
 # agent/gateway
 
-网关层是 Agent 对外操作的边界：API 网关负责选择可用账户，工具网关负责返回或执行当前可见的工具。
+`agent/gateway` 仅保留旧 API 账户选择边界；通用工具可见性、权限与调用网关已迁移到根 `tools/gateway`。
 
-| 包 | 功能 | 关键实现 |
-| --- | --- | --- |
-| [api/](api/README.md) | 账户获取 | 委托 `AccountPool`，不理解 HTTP 协议 |
-| [tool/](tool/README.md) | 工具可见性与调用 | 在 Holder 之上叠加插件和权限控制 |
+## 子模块
 
-将选择逻辑放在网关，能让 `agent` 保持为装配协调者，也让各调用路径共享同一套规则。
+| 目录 | 职责 |
+| --- | --- |
+| [`api/`](api/README.md) | 从旧账户池选择 LLM 账户 |
+
+## 依赖方向与验证
+
+- 工具网关：[`../../tools/gateway/README.md`](../../tools/gateway/README.md)
+- 新账号池：[`../../accountpool/README.md`](../../accountpool/README.md)
+- 验证：`go test ./agent/gateway/...`

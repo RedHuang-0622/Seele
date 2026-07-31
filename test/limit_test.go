@@ -13,12 +13,11 @@ import (
 	"testing"
 
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/agent/core/tool/interfaces"
-	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
-seelectx "github.com/RedHuang-0622/Seele/seelectx"
 	"github.com/RedHuang-0622/Seele/engine"
-	
-	
+	seelectx "github.com/RedHuang-0622/Seele/seelectx"
+	interfaces "github.com/RedHuang-0622/Seele/tools"
+	holder "github.com/RedHuang-0622/Seele/tools/holder"
+
 	types "github.com/RedHuang-0622/Seele/types"
 )
 
@@ -32,10 +31,10 @@ seelectx "github.com/RedHuang-0622/Seele/seelectx"
 type controllableProvider struct {
 	name            string
 	tools           []types.Tool
-	failMode        string   // "" | "unavailable" | "error"
-	failCount       int32    // 第 failCount 次及之后才成功，0 表示总是成功
-	callCount       int32    // 实际已调用次数（原子递增）
-	successOverride string   // 非空时覆盖成功返回值
+	failMode        string // "" | "unavailable" | "error"
+	failCount       int32  // 第 failCount 次及之后才成功，0 表示总是成功
+	callCount       int32  // 实际已调用次数（原子递增）
+	successOverride string // 非空时覆盖成功返回值
 }
 
 func newControllableProvider(name string) *controllableProvider {
@@ -80,7 +79,7 @@ func (h *controllableHandler) Execute(ctx context.Context, argsJSON string) (str
 	if h.parent.failCount > 0 && n <= h.parent.failCount {
 		switch h.parent.failMode {
 		case "unavailable":
-			return "", interfaces.ErrToolUnavailable
+			return "", interfaces.ErrUnavailable
 		case "error":
 			return "", fmt.Errorf("controllable: forced error on call #%d", n)
 		}

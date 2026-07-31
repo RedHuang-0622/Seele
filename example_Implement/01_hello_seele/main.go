@@ -25,8 +25,8 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/agent/core/tool"
 	"github.com/RedHuang-0622/Seele/engine"
+	tool "github.com/RedHuang-0622/Seele/tools"
 	"github.com/RedHuang-0622/Seele/types"
 )
 

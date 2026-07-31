@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
-	hubprov "github.com/RedHuang-0622/Seele/agent/core/tool/hub"
 	apigw "github.com/RedHuang-0622/Seele/agent/gateway/api"
-	toolgw "github.com/RedHuang-0622/Seele/agent/gateway/tool"
+	toolgw "github.com/RedHuang-0622/Seele/tools/gateway"
+	holder "github.com/RedHuang-0622/Seele/tools/holder"
+	hubprov "github.com/RedHuang-0622/Seele/tools/microhub"
 	"github.com/RedHuang-0622/Seele/types"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 )

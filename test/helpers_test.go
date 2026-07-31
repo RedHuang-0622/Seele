@@ -13,9 +13,9 @@ import (
 	"sync"
 
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
-	"github.com/RedHuang-0622/Seele/agent/core/tool/interfaces"
 	seelectx "github.com/RedHuang-0622/Seele/seelectx"
+	interfaces "github.com/RedHuang-0622/Seele/tools"
+	holder "github.com/RedHuang-0622/Seele/tools/holder"
 
 	types "github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
@@ -322,10 +322,10 @@ func (a *simpleAgent) Chat(ctx context.Context, input string) (string, error) {
 	return "", fmt.Errorf("simpleAgent: max loops reached")
 }
 
-func (a *simpleAgent) History() []types.Message       { return a.history }
+func (a *simpleAgent) History() []types.Message                    { return a.history }
 func (a *simpleAgent) SetContextConfig(cfg seelectx.ContextConfig) { a.cfg = cfg }
-func (a *simpleAgent) ForceAppendHistory(msg types.Message)       { a.history = append(a.history, msg) }
-func (a *simpleAgent) SessionID() string                         { return "test-session" }
+func (a *simpleAgent) ForceAppendHistory(msg types.Message)        { a.history = append(a.history, msg) }
+func (a *simpleAgent) SessionID() string                           { return "test-session" }
 
 // sessionFactory —— 持有 LLM + 工具，用于创建测试会话
 // =============================================================================

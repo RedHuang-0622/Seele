@@ -26,7 +26,6 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/agent/core/tool/builtin"
 	"github.com/RedHuang-0622/Seele/engine"
 	"github.com/RedHuang-0622/Seele/types"
 )
@@ -77,7 +76,6 @@ func initAgent(t *testing.T) (*agent.Agent, *engine.Engine) {
 	chatClient.WithAccountPool(pool)
 
 	// Register built-in tools
-	builtin.RegisterAll(agt.Tools())
 	agt.RegisterTool(
 		"get_time",
 		"获取当前日期和时间",

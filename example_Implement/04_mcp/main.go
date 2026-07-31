@@ -18,8 +18,8 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	mcpprov "github.com/RedHuang-0622/Seele/agent/core/tool/mcp"
 	"github.com/RedHuang-0622/Seele/engine"
+	mcpprov "github.com/RedHuang-0622/Seele/tools/mcp"
 	"github.com/RedHuang-0622/Seele/types"
 )
 

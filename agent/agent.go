@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/agent/core/tool/permission"
-	holder "github.com/RedHuang-0622/Seele/agent/core/tool/holder"
-	hubprov "github.com/RedHuang-0622/Seele/agent/core/tool/hub"
-	mcp "github.com/RedHuang-0622/Seele/agent/core/tool/mcp"
 	apigw "github.com/RedHuang-0622/Seele/agent/gateway/api"
-	toolgw "github.com/RedHuang-0622/Seele/agent/gateway/tool"
+	toolgw "github.com/RedHuang-0622/Seele/tools/gateway"
+	holder "github.com/RedHuang-0622/Seele/tools/holder"
+	mcp "github.com/RedHuang-0622/Seele/tools/mcp"
+	hubprov "github.com/RedHuang-0622/Seele/tools/microhub"
+	"github.com/RedHuang-0622/Seele/tools/permission"
 	"github.com/RedHuang-0622/Seele/types"
 	hubbase "github.com/RedHuang-0622/microHub/root_class/hub"
 	registry "github.com/RedHuang-0622/microHub/service_registry"
@@ -79,8 +79,9 @@ func (l *stdLogger) Error(msg string, args ...any) { slog.Default().Error(msg, a
 //	  ├── Shutdown()
 //	  └── ...
 type Agent struct {
-	llmClient   *api.ChatClient
+	llmClient   types.ChatCompleter
 	tools       *holder.Holder
+	toolRuntime ToolRuntime
 	apiGW       apigw.Gateway
 	toolGW      toolgw.Gateway
 	pool        *api.AccountPool
@@ -182,6 +183,7 @@ func New(opts Options) (*Agent, error) {
 	a := &Agent{
 		llmClient:    llmClient,
 		tools:        tools,
+		toolRuntime:  toolGW,
 		apiGW:        apiGW,
 		toolGW:       toolGW,
 		pool:         pool,
@@ -214,6 +216,9 @@ func (a *Agent) MCP() *mcp.Provider {
 			return nil
 		default:
 		}
+		if a.tools == nil {
+			return nil
+		}
 		a.mcpProvider = mcp.NewProvider()
 		a.tools.Register(a.mcpProvider)
 		a.opts.Logger.Info("MCP provider initialized")
@@ -224,6 +229,10 @@ func (a *Agent) MCP() *mcp.Provider {
 // RegisterTool 注册一个 Go 函数工具（委托给 Holder.RegisterInline）。
 // outputSchema 可选，指定输出 struct 的 SchemaOf()。
 func (a *Agent) RegisterTool(name, desc string, inputSchema map[string]interface{}, handler func(ctx context.Context, argsJSON string) (string, error), outputSchema ...map[string]interface{}) {
+	if a.tools == nil {
+		a.opts.Logger.Error("inline tool registration rejected: no holder assembled", "name", name)
+		return
+	}
 	a.tools.RegisterInline(name, desc, inputSchema, handler, outputSchema...)
 	a.opts.Logger.Info("inline tool registered", "name", name)
 }
@@ -238,7 +247,11 @@ func (a *Agent) LLM() types.ChatCompleter { return a.llmClient }
 
 // VisibleTools 返回当前对 LLM 可见的工具列表。
 func (a *Agent) VisibleTools(ctx context.Context) []types.Tool {
-	return a.toolGW.VisibleTools(ctx)
+	runtime := a.runtime()
+	if runtime == nil {
+		return nil
+	}
+	return runtime.VisibleTools(ctx)
 }
 
 // Dispatch 委托工具网关执行工具调用。在 wg 中追踪，支持 Graceful Shutdown。
@@ -250,7 +263,11 @@ func (a *Agent) Dispatch(ctx context.Context, name, argsJSON string) (string, er
 	}
 	a.wg.Add(1)
 	defer a.wg.Done()
-	return a.toolGW.Dispatch(ctx, name, argsJSON)
+	runtime := a.runtime()
+	if runtime == nil {
+		return "", fmt.Errorf("agent: no tool runtime assembled")
+	}
+	return runtime.Dispatch(ctx, name, argsJSON)
 }
 
 // DirectDispatch 直接调度工具调用（绕过 LLM 循环）。在 wg 中追踪，支持 Graceful Shutdown。
@@ -262,7 +279,21 @@ func (a *Agent) DirectDispatch(ctx context.Context, name, argsJSON string) (stri
 	}
 	a.wg.Add(1)
 	defer a.wg.Done()
-	return a.toolGW.Dispatch(ctx, name, argsJSON)
+	runtime := a.runtime()
+	if runtime == nil {
+		return "", fmt.Errorf("agent: no tool runtime assembled")
+	}
+	return runtime.Dispatch(ctx, name, argsJSON)
+}
+
+func (a *Agent) runtime() ToolRuntime {
+	if a.toolRuntime != nil {
+		return a.toolRuntime
+	}
+	if a.toolGW != nil {
+		return a.toolGW
+	}
+	return nil
 }
 
 // Tools 暴露底层 Holder，供精细控制使用。

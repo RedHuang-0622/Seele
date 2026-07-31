@@ -31,11 +31,11 @@ import (
 
 	"github.com/RedHuang-0622/Seele/agent"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/agent/core/tool/builtin"
-	"github.com/RedHuang-0622/Seele/agent/core/tool/holder"
+	"github.com/RedHuang-0622/Seele/engine"
 	"github.com/RedHuang-0622/Seele/seelectx/storage"
 	"github.com/RedHuang-0622/Seele/seelectx/tracer"
-	"github.com/RedHuang-0622/Seele/engine"
+	"github.com/RedHuang-0622/Seele/tools/builtin"
+	"github.com/RedHuang-0622/Seele/tools/holder"
 	"github.com/RedHuang-0622/Seele/types"
 )
 
@@ -103,18 +103,10 @@ func main() {
 		chatClient.SetProvider(ls.Provider)
 	}
 
-	// ── 工具注册 ──────────────────────────────────────────────────────
-	builtin.RegisterAll(agt.Tools())
-	agt.RegisterTool("get_time", "获取当前日期和时间",
-		map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
-		func(_ context.Context, _ string) (string, error) {
-			return fmt.Sprintf(`"%s"`, time.Now().Format("2006-01-02 15:04:05")), nil
-		},
-	)
+	// ── 工具注册：由命令显式装配，Agent 本身不默认启用 builtin。──────
+	agt.Tools().Register(builtin.New())
 
 	// ── WorkPlan 工具（LLM 可动态构建 DAG 工作流）──────────────────
-	wpt := builtin.NewWorkPlanTool(builtin.NewChatAgentFactory(agt.LLM()))
-	agt.Tools().Register(wpt)
 
 	// ── 插件系统 ──────────────────────────────────────────────────────
 	initPlugins(agt)
