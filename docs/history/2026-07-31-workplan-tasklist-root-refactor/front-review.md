@@ -43,4 +43,3 @@ Task        = Seelex product layer
 - 每个切片先接口、再实现、再包级测试；全仓编译作为切片交界验收。
 - 真实 API 测试只在显式环境变量打开时运行；无凭证时 skip。
 - Windows 无 gcc 时明确报告 race 环境限制。
-

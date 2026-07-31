@@ -105,4 +105,3 @@ ChatClient.Complete
 - `agent.New(Options)` 仍作为旧客户端构造路径保留，用于仓库旧示例和配置迁移；它不是新模块边界的推荐入口。
 - 旧 `agent/core/tool`、`agent/gateway/tool`、产品 file/Git/Shell/editor/plan builtin 已删除。
 - 旧 `workplan/dsl` 与 `runtime/serialize` 产品 DSL 已删除；调用方改用 `workplan/codec`。
-

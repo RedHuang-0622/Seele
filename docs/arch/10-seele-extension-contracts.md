@@ -165,4 +165,3 @@ sequenceDiagram
 ```
 
 Hook 只捕获标准化事件；Tracer 只关联、存储、查询和投影；Context 只决定下一次模型请求的内容。三者不共享可变 history 或业务状态。
-
