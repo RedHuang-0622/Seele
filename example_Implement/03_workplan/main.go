@@ -73,13 +73,11 @@ func ExampleBranching(factory workplan.AgentFactory) {
 	// ── If：二路分支 ──────────────────────────────────────────────────
 	wp.Auto("检测状态",
 		"检测服务状态，回复中必须包含以下之一：「正常」「异常'").
-
 		If("判断",
 			workplan.Contains("异常"),
 			"告警处理",
 			"常规记录",
 		).
-
 		Auto("告警处理", "触发告警通知值班人员").
 		Auto("常规记录", "记录正常状态到日志").
 		Auto("通知", "发送处理完成通知")
@@ -158,7 +156,6 @@ func ExampleFork(factory workplan.AgentFactory) {
 	wp.
 		Auto("需求分析", "分析需求并拆解任务：用户登录功能，包含前端页面、后端接口、测试用例").
 		Emit("保存需求", "requirement").
-
 		Fork("并行开发", []workplan.ForkBranch{
 			{
 				Label:        "前端工程师",
@@ -176,7 +173,6 @@ func ExampleFork(factory workplan.AgentFactory) {
 				Input:        "编写测试用例，需求：{{.Vars.requirement}}",
 			},
 		}, 3).
-
 		Auto("汇总报告", "汇总各角色的产出，生成集成计划：\n{{.PrevResult}}")
 
 	result, err := wp.Run(ctx)

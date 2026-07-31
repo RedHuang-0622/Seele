@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RedHuang-0622/Seele/config"
 	"github.com/RedHuang-0622/Seele/agent"
-	
+	"github.com/RedHuang-0622/Seele/config"
+
 	types "github.com/RedHuang-0622/Seele/types"
 )
 
@@ -177,7 +177,7 @@ func TestProbe_ServiceDiscovery(t *testing.T) {
 
 	chatStart := time.Now()
 	sa := &simpleAgent{llm: eng.LLM(), tools: eng.Tools(), systemPrompt: ""}
-reply, err := sa.Chat(ctx, `请调用 echo 工具，参数 content="探活测试"`)
+	reply, err := sa.Chat(ctx, `请调用 echo 工具，参数 content="探活测试"`)
 	chatLatency := time.Since(chatStart)
 	if err != nil {
 		t.Logf("QuickChat error (LLM may not be available): %v", err)

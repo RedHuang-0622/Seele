@@ -97,8 +97,8 @@ func main() {
 
 	// 记录每轮用到的账号
 	type round struct {
-		n   int
-		msg string
+		n    int
+		msg  string
 		acct string
 	}
 

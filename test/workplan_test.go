@@ -35,14 +35,22 @@ func TestWorkPlan_Fork_DifferentRegistries(t *testing.T) {
 	toolsA := fa.Tools.Tools()
 	hasA, hasBinA := false, false
 	for _, t := range toolsA {
-		if t.Function.Name == "tool_a" { hasA = true }
-		if t.Function.Name == "tool_b" { hasBinA = true }
+		if t.Function.Name == "tool_a" {
+			hasA = true
+		}
+		if t.Function.Name == "tool_b" {
+			hasBinA = true
+		}
 	}
 	toolsB := fb.Tools.Tools()
 	hasB, hasAinB := false, false
 	for _, t := range toolsB {
-		if t.Function.Name == "tool_b" { hasB = true }
-		if t.Function.Name == "tool_a" { hasAinB = true }
+		if t.Function.Name == "tool_b" {
+			hasB = true
+		}
+		if t.Function.Name == "tool_a" {
+			hasAinB = true
+		}
 	}
 	if hasA && hasB && !hasBinA && !hasAinB {
 		t.Log("OK: 两个工具注册表互不重叠")
