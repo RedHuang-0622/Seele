@@ -1,10 +1,27 @@
 # Seele
 
+[![CI](https://github.com/RedHuang-0622/Seele/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/RedHuang-0622/Seele/actions/workflows/ci.yml)
+
 Seele 是一个无产品语义的 Agent runtime：提供 LLM client、通用工具运行时、Plan/DAG 执行原语、账号租约池、上下文基础能力和可选观测设施；Seelex 负责 Task、产品工具、上下文策略、费用归集和用户体验。
 
 架构原则：
 
 > Seele 提供无产品语义的执行能力；Seelex 决定何时调用、调用什么、上下文放什么、费用如何归集。
+
+## 为什么选择 Seele
+
+Seele 的特色在于把“执行能力”和“产品编排”拆成可替换的窄接口。它适合需要替换模型、工具来源、上下文策略或观测后端的 Agent 应用，而不是要求所有调用方接受一套隐式全家桶。
+
+| 特色 | 当前实现 | 对开发者的价值 |
+| --- | --- | --- |
+| 显式装配 | `agent.NewWithComponents` 只要求 `Completer`，工具 runtime、日志和流式能力均可注入 | 可用 fake 离线测试，也能在生产环境替换 Provider/账号池，不启动隐式基础设施 |
+| 工具平行于 Agent | `tools.Registry`、Provider、Middleware、超时和重试保持 Provider-neutral | 本地函数、MCP、microHub、Skills 可以统一成 Function Calling，不把产品工具写进 Agent |
+| 上下文策略可控 | `seelectx` 提供 history、请求拼装、结果筛选、QuickChat 和显式 Compressor | ReActLoop 不自动压缩；Seelex 可以决定何时压缩、保留什么、如何计费和持久化 |
+| Plan 内核最小化 | `workplan.Node` 只有 `ID`/`Run`，codec 只处理拓扑和不透明节点载荷 | 自定义 tool、agent、subagent 或人工节点不需要修改调度器；同一 Plan 可导出 edge list、邻接表和矩阵 |
+| 可观测但不侵入 | OTel 对齐的 `telemetry.Hook`、`Tracer`、intent/effect correlation、Metric/Audit | 调试、审计和可视化可以按需启用，观测故障默认不会改变业务结果 |
+| 账号租约与负载隔离 | `accountpool` 以 P2C 选择账号并用 lease 覆盖完整请求生命周期 | 多账号并发限制与 Provider 选择可独立演进，不把费用账本塞进 Seele |
+
+推荐的学习顺序是：先看[显式 Agent 装配](example_Implement/08_composable_agent/README.md)，再看[上下文请求管线](example_Implement/09_context_pipeline/README.md)，最后看[自定义 WorkPlan 节点与 JSON codec](example_Implement/10_workplan_codec/README.md)。
 
 ## 能力边界
 
@@ -73,10 +90,10 @@ WorkPlan codec 支持通用 `nodes + edges` 形状；节点实例由调用方 `N
   "version": 1,
   "entry": "inspect",
   "nodes": [
-    {"id": "inspect", "input": "检查项目范围", "kind": "auto"},
-    {"id": "backend", "input": "检查后端实现", "kind": "auto"},
-    {"id": "tests", "input": "执行验证", "kind": "auto"},
-    {"id": "integrate", "input": "整合结果", "kind": "auto"}
+    {"id": "inspect", "type": "seelex", "data": {"input": "检查项目范围", "kind": "auto"}},
+    {"id": "backend", "type": "seelex", "data": {"input": "检查后端实现", "kind": "auto"}},
+    {"id": "tests", "type": "seelex", "data": {"input": "执行验证", "kind": "auto"}},
+    {"id": "integrate", "type": "seelex", "data": {"input": "整合结果", "kind": "auto"}}
   ],
   "edges": [
     {"from": "inspect", "to": "backend"},
@@ -87,7 +104,7 @@ WorkPlan codec 支持通用 `nodes + edges` 形状；节点实例由调用方 `N
 }
 ```
 
-Plan 生命周期是 `Build → Validate → Seal → Run`；不存在第二份 Graph 状态。
+`type` 与 `data` 是调用方提供给 `NodeDecoder` 的不透明载荷；Seelex 可以在自己的适配层把产品 JSON 的 `input`/`kind` 映射到这里。Plan 生命周期是 `Build → Validate → Seal → Run`；不存在第二份 Graph 状态。
 
 ## 扩展方式
 
@@ -108,7 +125,7 @@ agt, err := agent.NewWithComponents(agent.Components{
 
 ### WorkPlan
 
-实现最小 `Node` 接口：`ID()` 和 `Run(context.Context, RunInput) (RunOutput, error)`。Scheduler/Executor 不识别 AgentFactory、Task 或产品节点 kind；混合 tool/agent/subagent 行为由 Seelex 在 Node 实现中装配。
+实现最小 `Node` 接口：`ID()` 和 `Run(context.Context, *WorkflowContext) (string, error)`。Scheduler/Executor 不识别 AgentFactory、Task 或产品节点 kind；混合 tool/agent/subagent 行为由 Seelex 在 Node 实现中装配。
 
 ### Context 与 Telemetry
 
@@ -139,6 +156,12 @@ Develop push 和面向 `develop` 的 PR 使用 [并行 CI](.github/workflows/ci.
 
 Windows 若没有可用 C 编译器，`go test -race ./...` 会被 Go 工具链拒绝；这不等同于 race 通过，需在具备 CGO 工具链的环境补跑。完整变更、测试和审查记录位于 [`docs/history/2026-07-31-workplan-tasklist-root-refactor/`](docs/history/2026-07-31-workplan-tasklist-root-refactor/)。
 
+新增的离线示例也可单独验证：
+
+```powershell
+go test ./example_Implement/08_composable_agent ./example_Implement/09_context_pipeline ./example_Implement/10_workplan_codec -count=1
+```
+
 ## 文档导航
 
 - [`docs/arch/09-seele-runtime-boundary.md`](docs/arch/09-seele-runtime-boundary.md)：运行时边界
@@ -146,3 +169,4 @@ Windows 若没有可用 C 编译器，`go test -race ./...` 会被 Go 工具链�
 - [`docs/arch/11-seele-boundary-test-strategy.md`](docs/arch/11-seele-boundary-test-strategy.md)：边界测试策略
 - [`docs/README.md`](docs/README.md)：架构文档索引
 - [`cmd/README.md`](cmd/README.md)：可执行命令索引
+- [`docs/history/2026-07-31-readme-agent-examples/README.md`](docs/history/2026-07-31-readme-agent-examples/README.md)：本次 README 与离线示例变更说明、测试和审查入口
