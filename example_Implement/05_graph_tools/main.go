@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
+	"github.com/RedHuang-0622/Seele/agent/bridge"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
 	"github.com/RedHuang-0622/Seele/session"
 	tool "github.com/RedHuang-0622/Seele/tools"
@@ -21,18 +22,6 @@ import (
 	"github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
-
-// =============================================================================
-// SessionFactory：适配 workplan.AgentFactory
-// =============================================================================
-
-type SessionFactory struct {
-	runtime *agent.Agent
-}
-
-func (f *SessionFactory) NewAgent(systemPrompt string) workplan.Agent {
-	return session.New(f.runtime, session.WithSystemPrompt(systemPrompt))
-}
 
 // =============================================================================
 // 工具参数声明
@@ -100,7 +89,10 @@ func main() {
 		chatClient.SetProvider(ls.Provider)
 	}
 
-	factory := &SessionFactory{runtime: runtime}
+	factory, err := bridge.NewAgentFactory(runtime)
+	if err != nil {
+		log.Fatalf("agent bridge init failed: %v", err)
+	}
 
 	// ── 2. 注册工具：fork_agents ─────────────────────────────────────
 	runtime.RegisterTool(
@@ -215,14 +207,20 @@ func main() {
 	fmt.Println("  🤖 Graph-as-Tools 对话演示")
 	fmt.Println(strings.Repeat("═", 60))
 
-	sess := session.New(runtime, session.WithSystemPrompt(`你是工作流编排专家。
+	sess, err := session.NewSession(session.SessionComponents{
+		Agent: runtime,
+		Context: session.ContextComponents{SystemPrompt: `你是工作流编排专家。
 你可以使用以下工具来执行复杂任务：
 1. fork_agents — 并发执行多个任务（多角色并行）
 2. run_pipeline — 按顺序执行多步骤流水线
 3. loop_task — 循环执行直到条件满足
 
 对于简单问题直接回答，对于复杂任务选择合适的工具。`,
-	))
+		},
+	})
+	if err != nil {
+		log.Fatalf("session init failed: %v", err)
+	}
 
 	fmt.Println("\n📝 用户: 帮我同时调研 Go 语言的并发模型特点和 Rust 的所有权系统")
 	reply, err := sess.Chat(ctx, "帮我同时调研 Go 语言的并发模型特点和 Rust 的所有权系统")

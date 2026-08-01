@@ -127,8 +127,8 @@ if err != nil {
     return err
 }
 
-factory, err := agentbridge.NewFactory(agt,
-    agentbridge.WithSessionComponents(nodeSessionComponents),
+factory, err := bridge.NewAgentFactory(agt,
+    bridge.WithSessionComponents(nodeSessionComponents),
 )
 if err != nil {
     return err
@@ -136,10 +136,10 @@ if err != nil {
 workflow := workplan.NewFromPlan(plan, factory)
 ```
 
-使用 `workplan/agent.NewFactory` 时，每个 Agent 节点默认获得独立 Session，因此适合 DAG 并发和 Fork。只有 Seelex 明确需要共享上下文时才注入同一 DurableHistory。Task 打点、节点业务状态和重规划仍属于 Seelex；WorkPlan 只返回运行结果和通用事件。
+使用 `agent/bridge.NewAgentFactory` 时，每个 Agent 节点默认获得独立 Session，因此适合 DAG 并发和 Fork。只有 Seelex 明确需要共享上下文时才注入同一 DurableHistory。Task 打点、节点业务状态和重规划仍属于 Seelex；WorkPlan 只返回运行结果和通用事件。
 
 - DAG、Node 与 codec：[workplan README](../../workplan/README.md)
-- Agent 节点桥接：[workplan/agent README](../../workplan/agent/README.md)
+- Agent 节点桥接：[agent/bridge README](../../agent/bridge/README.md)
 
 ## event：持久化执行事实并建立投影
 

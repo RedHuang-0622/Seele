@@ -21,24 +21,12 @@ import (
 	"time"
 
 	"github.com/RedHuang-0622/Seele/agent"
+	"github.com/RedHuang-0622/Seele/agent/bridge"
 	"github.com/RedHuang-0622/Seele/agent/core/api"
-	"github.com/RedHuang-0622/Seele/session"
 
 	"github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
 )
-
-// =============================================================================
-// SessionFactory：将 *agent.Agent 适配为 workplan.AgentFactory。
-// =============================================================================
-
-type SessionFactory struct {
-	runtime *agent.Agent
-}
-
-func (f *SessionFactory) NewAgent(systemPrompt string) workplan.Agent {
-	return session.New(f.runtime, session.WithSystemPrompt(systemPrompt))
-}
 
 // =============================================================================
 // 示例 1：线性流程（Auto → Emit → Checkpoint → Auto）
@@ -293,7 +281,10 @@ func main() {
 		chatClient.SetProvider(ls.Provider)
 	}
 
-	factory := &SessionFactory{runtime: runtime}
+	factory, err := bridge.NewAgentFactory(runtime)
+	if err != nil {
+		log.Fatalf("agent bridge init failed: %v", err)
+	}
 	ExampleLinear(factory)
 	// ExampleBranching(factory)
 	// ExampleLoop(factory)

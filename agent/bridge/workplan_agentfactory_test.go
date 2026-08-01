@@ -1,4 +1,4 @@
-package agentbridge
+package bridge
 
 import (
 	"context"
@@ -63,25 +63,25 @@ func (c *fakeCompleter) CompleteStreamEvents(ctx context.Context, messages []typ
 
 var _ session.Agent = (*fakeRuntime)(nil)
 
-func TestNewFactoryRejectsMissingRuntime(t *testing.T) {
-	if _, err := NewFactory(nil); err == nil || !strings.Contains(err.Error(), "agent is required") {
-		t.Fatalf("NewFactory(nil) error = %v", err)
+func TestNewAgentFactoryRejectsMissingRuntime(t *testing.T) {
+	if _, err := NewAgentFactory(nil); err == nil || !strings.Contains(err.Error(), "agent is required") {
+		t.Fatalf("NewAgentFactory(nil) error = %v", err)
 	}
 	var runtime *fakeRuntime
-	if _, err := NewFactory(runtime); err == nil || !strings.Contains(err.Error(), "agent is required") {
-		t.Fatalf("NewFactory(typed nil) error = %v", err)
+	if _, err := NewAgentFactory(runtime); err == nil || !strings.Contains(err.Error(), "agent is required") {
+		t.Fatalf("NewAgentFactory(typed nil) error = %v", err)
 	}
-	if _, err := NewFactory(&fakeRuntime{}); err == nil || !strings.Contains(err.Error(), "agent LLM is required") {
-		t.Fatalf("NewFactory(runtime without LLM) error = %v", err)
+	if _, err := NewAgentFactory(&fakeRuntime{}); err == nil || !strings.Contains(err.Error(), "agent LLM is required") {
+		t.Fatalf("NewAgentFactory(runtime without LLM) error = %v", err)
 	}
 }
 
-func TestFactoryCreatesIsolatedSessionsWithNodePrompt(t *testing.T) {
+func TestAgentFactoryCreatesIsolatedSessionsWithNodePrompt(t *testing.T) {
 	llm := &fakeCompleter{responses: []string{"first", "second"}}
 	runtime := &fakeRuntime{llm: llm}
-	factory, err := NewFactory(runtime)
+	factory, err := NewAgentFactory(runtime)
 	if err != nil {
-		t.Fatalf("NewFactory() error = %v", err)
+		t.Fatalf("NewAgentFactory() error = %v", err)
 	}
 	first := factory.NewAgent("first system")
 	second := factory.NewAgent("second system")
@@ -108,24 +108,24 @@ func TestFactoryCreatesIsolatedSessionsWithNodePrompt(t *testing.T) {
 	}
 }
 
-func TestFactoryAppliesSessionComponentsAndSessionID(t *testing.T) {
+func TestAgentFactoryAppliesSessionComponentsAndSessionID(t *testing.T) {
 	llm := &fakeCompleter{responses: []string{"ok"}}
-	factory, err := NewFactory(&fakeRuntime{llm: llm},
+	factory, err := NewAgentFactory(&fakeRuntime{llm: llm},
 		WithSessionComponents(session.SessionComponents{}),
 		WithSessionID(func(string) string { return "workplan-node-1" }),
 	)
 	if err != nil {
-		t.Fatalf("NewFactory() error = %v", err)
+		t.Fatalf("NewAgentFactory() error = %v", err)
 	}
-	session := factory.NewAgent("system")
-	identified, ok := session.(interface{ SessionID() string })
+	conversation := factory.NewAgent("system")
+	identified, ok := conversation.(interface{ SessionID() string })
 	if !ok {
 		t.Fatal("NewAgent result does not expose SessionID")
 	}
 	if got := identified.SessionID(); got != "workplan-node-1" {
 		t.Fatalf("SessionID() = %q, want workplan-node-1", got)
 	}
-	if got, err := session.Chat(context.Background(), "input"); err != nil || got != "ok" {
+	if got, err := conversation.Chat(context.Background(), "input"); err != nil || got != "ok" {
 		t.Fatalf("Chat() = %q, %v", got, err)
 	}
 }

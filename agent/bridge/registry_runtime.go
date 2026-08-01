@@ -1,9 +1,9 @@
 // Package bridge provides explicit adapters from common Seele components to
-// Agent assembly contracts.
+// Agent assembly and WorkPlan execution contracts.
 //
-// It intentionally depends on both sides of an integration. Neither agent nor
-// tools imports this package, so using an adapter never creates a reverse
-// dependency from a product-neutral component back to Agent.
+// It intentionally depends on both sides of an integration. Neither agent,
+// tools, nor workplan imports this package, so using an adapter never creates
+// a reverse dependency from a product-neutral component back to Agent.
 package bridge
 
 import (

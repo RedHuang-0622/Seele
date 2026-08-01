@@ -5,7 +5,7 @@
 // of the public surface:
 //
 //	api.ChatClient -> agent.NewWithComponents -> session.New (ReAct loop)
-//	workplan/agent.NewFactory -> workplan.New -> runner.Run
+//	agent/bridge.NewAgentFactory -> workplan.New -> runner.Run
 //	workplan/core/edge + workplan/core/node -> coreplan.Plan -> runner.Run
 //
 // Three scenarios are checked:
@@ -50,7 +50,7 @@ import (
 	"github.com/RedHuang-0622/Seele/tools/holder"
 	"github.com/RedHuang-0622/Seele/types"
 	"github.com/RedHuang-0622/Seele/workplan"
-	agentbridge "github.com/RedHuang-0622/Seele/workplan/agent"
+	agentbridge "github.com/RedHuang-0622/Seele/agent/bridge"
 	"github.com/RedHuang-0622/Seele/workplan/codec"
 	wpedge "github.com/RedHuang-0622/Seele/workplan/core/edge"
 	wpnode "github.com/RedHuang-0622/Seele/workplan/core/node"
@@ -353,11 +353,11 @@ func TestRealChainWorkPlanImportExport(t *testing.T) {
 	client := newRealClient(t, mock.URL())
 	runtime := newAssembledAgent(t, client)
 	defer runtime.Shutdown()
-	factory, err := agentbridge.NewFactory(runtime, agentbridge.WithSessionID(func(string) string {
+	factory, err := agentbridge.NewAgentFactory(runtime, agentbridge.WithSessionID(func(string) string {
 		return "real-chain-smoke"
 	}))
 	if err != nil {
-		t.Fatalf("agentbridge.NewFactory: %v", err)
+		t.Fatalf("agentbridge.NewAgentFactory: %v", err)
 	}
 
 	plan := workplan.New(factory, workplan.WithDefaultPrompt("You are a concise summarizer."))
@@ -419,11 +419,11 @@ func TestRealChainWorkPlanFork(t *testing.T) {
 
 	runtime := newAssembledAgent(t, client)
 	defer runtime.Shutdown()
-	factory, err := agentbridge.NewFactory(runtime,
+	factory, err := agentbridge.NewAgentFactory(runtime,
 		agentbridge.WithSessionID(func(label string) string { return "fork-" + label }),
 	)
 	if err != nil {
-		t.Fatalf("agentbridge.NewFactory: %v", err)
+		t.Fatalf("agentbridge.NewAgentFactory: %v", err)
 	}
 
 	// Per-branch start/end timestamps; the hook below captures them so we
@@ -578,7 +578,7 @@ func minTime(times []time.Time) time.Time {
 //   - api.ChatClient with anthropic protocol hits a real /v1/messages
 //   - agent.NewWithComponents wires the real LLM with builtin tools
 //   - session.New drives a tool-calling ReAct loop
-//   - workplan/agent.NewFactory executes a 3-node plan
+//   - agent/bridge.NewAgentFactory executes a 3-node plan
 func TestRealChainAgainstAnthropicAPI(t *testing.T) {
 	baseURL, token, model, ok := loadAnthropicSettings()
 	if !ok {
@@ -618,9 +618,9 @@ func TestRealChainAgainstAnthropicAPI(t *testing.T) {
 	t.Run("workplan_three_nodes", func(t *testing.T) {
 		runtime := newAssembledAgent(t, client)
 		defer runtime.Shutdown()
-		factory, err := agentbridge.NewFactory(runtime)
+		factory, err := agentbridge.NewAgentFactory(runtime)
 		if err != nil {
-			t.Fatalf("agentbridge.NewFactory: %v", err)
+			t.Fatalf("agentbridge.NewAgentFactory: %v", err)
 		}
 		plan := workplan.New(factory, workplan.WithDefaultPrompt("You are a concise summarizer. Reply in one sentence."))
 		plan.Auto("describe", "describe in one sentence: Seele runtime").
