@@ -1,5 +1,13 @@
 # workplan/runtime/forkexec
 
+## 根事件映射
+
+`forkexec.Event` 仍作为 legacy 生命周期回调保留。若执行 context 中装配 `event.Recorder`，同一分支转换会同时映射为根级 `event.Event`。running 时申请共享 heartbeat lease，进入 completed、failed、canceled 或 panicked 后释放 lease，因此不会为每个分支创建独立 ticker。
+
+此包不拥有 Sink 或事件存储；Sink 由上层 Runner 和调用方装配。完整契约见 [`event`](../../../event/README.md)。
+
+## 概览
+
 该包执行 WorkPlan 的并发 Fork 分支，并定义隔离、并发限制和合并策略。
 
 ## 公开入口

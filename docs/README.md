@@ -14,3 +14,6 @@
 - [Seele 根能力与运行时边界](arch/09-seele-runtime-boundary.md)
 - [Seele 扩展契约与详细设计](arch/10-seele-extension-contracts.md)
 - [Seele 边界测试与验收方案](arch/11-seele-boundary-test-strategy.md)
+- [事件契约与可观测性装配](arch/12-event-contracts.md)
+- [初始版本的可扩展性与契约原则](arch/13-initial-architecture-principles.md)
+- [Seelex 集成指南](arch/14-seelex-integration-guide.md)

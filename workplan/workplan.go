@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	frameworkevent "github.com/RedHuang-0622/Seele/event"
 	"github.com/RedHuang-0622/Seele/workplan/core/edge"
 	"github.com/RedHuang-0622/Seele/workplan/core/node"
 	coreplan "github.com/RedHuang-0622/Seele/workplan/core/plan"
@@ -46,6 +47,7 @@ type WorkPlan struct {
 	ForkPolicy         forkexec.Policy
 	ForkJoinPolicy     forkexec.JoinPolicy
 	MaxForkConcurrency int
+	EventConfig        runner.EventConfig
 }
 
 // Option configures a WorkPlan instance.
@@ -84,6 +86,39 @@ func WithForkJoinPolicy(policy forkexec.JoinPolicy) Option {
 // WithMaxForkConcurrency configures automatic fork parallelism.
 func WithMaxForkConcurrency(maxConcurrent int) Option {
 	return func(wp *WorkPlan) { wp.MaxForkConcurrency = maxConcurrent }
+}
+
+// WithEventSink enables normalized root event delivery for this WorkPlan.
+// Plan identity remains caller-owned and must be non-empty when the plan runs.
+func WithEventSink(sink frameworkevent.Sink, planID string) Option {
+	return func(wp *WorkPlan) {
+		wp.EventConfig.Sink = sink
+		wp.EventConfig.PlanID = planID
+	}
+}
+
+// WithEventRunID fixes the execution identity used to correlate events.
+func WithEventRunID(runID string) Option {
+	return func(wp *WorkPlan) { wp.EventConfig.RunID = runID }
+}
+
+// WithEventHeartbeatPolicy enables shared heartbeat events for active nodes.
+func WithEventHeartbeatPolicy(policy frameworkevent.HeartbeatPolicy) Option {
+	return func(wp *WorkPlan) { wp.EventConfig.HeartbeatPolicy = policy }
+}
+
+// WithEventErrorHandler receives event Sink failures without changing plan
+// execution behavior.
+func WithEventErrorHandler(handler frameworkevent.ErrorHandler) Option {
+	return func(wp *WorkPlan) { wp.EventConfig.ErrorHandler = handler }
+}
+
+// WithEventLocators appends agent, workplan, or product locators to every
+// event emitted for this plan run.
+func WithEventLocators(locators ...frameworkevent.Locator) Option {
+	return func(wp *WorkPlan) {
+		wp.EventConfig.Locators = append(wp.EventConfig.Locators, locators...)
+	}
 }
 
 // New creates a new WorkPlan with the given AgentFactory.
@@ -266,6 +301,7 @@ func (wp *WorkPlan) Vars() map[string]string { return make(map[string]string) }
 
 // Run validates and executes the workflow graph.
 func (wp *WorkPlan) Run(ctx context.Context) (*types.WorkPlanResult, error) {
+	wp.runner.SetEventConfig(wp.EventConfig)
 	if wp.NodeHook != nil {
 		wp.runner.SetNodeHook(wp.NodeHook)
 	}
@@ -279,6 +315,7 @@ func (wp *WorkPlan) Run(ctx context.Context) (*types.WorkPlanResult, error) {
 
 // Resume continues execution from a saved checkpoint.
 func (wp *WorkPlan) Resume(ctx context.Context, snapshotID string) (*types.WorkPlanResult, error) {
+	wp.runner.SetEventConfig(wp.EventConfig)
 	return wp.runner.Resume(ctx, snapshotID)
 }
 

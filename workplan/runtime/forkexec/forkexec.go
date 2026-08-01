@@ -186,6 +186,7 @@ func (c *ForkCoordinator) RunWithContextManager(ctx context.Context, contexts *C
 	sort.Slice(specs, func(i, j int) bool { return specs[i].ID < specs[j].ID })
 
 	results := make([]BranchResult, len(specs))
+	observer := newLifecycleObserver(ctx, c)
 	forkCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	sem := make(chan struct{}, c.maxConcurrent())
@@ -208,7 +209,7 @@ func (c *ForkCoordinator) RunWithContextManager(ctx context.Context, contexts *C
 	}
 
 	for index, spec := range specs {
-		c.emit(Event{Type: StateQueued, BranchID: spec.ID, NodeID: spec.NodeID, At: time.Now()})
+		observer.emit(Event{Type: StateQueued, BranchID: spec.ID, NodeID: spec.NodeID, At: time.Now()}, "")
 		wg.Add(1)
 		go func(index int, spec Spec) {
 			defer wg.Done()
@@ -220,7 +221,7 @@ func (c *ForkCoordinator) RunWithContextManager(ctx context.Context, contexts *C
 					results[index].State = StatePanicked
 					results[index].Err = err
 					results[index].EndedAt = time.Now()
-					c.emit(Event{Type: StatePanicked, BranchID: spec.ID, NodeID: spec.NodeID, Err: err, At: results[index].EndedAt})
+					observer.emit(Event{Type: StatePanicked, BranchID: spec.ID, NodeID: spec.NodeID, Err: err, At: results[index].EndedAt}, "")
 					recordFailure(err)
 				}
 			}()
@@ -232,14 +233,14 @@ func (c *ForkCoordinator) RunWithContextManager(ctx context.Context, contexts *C
 				results[index].State = StateCanceled
 				results[index].Err = err
 				results[index].EndedAt = time.Now()
-				c.emit(Event{Type: StateCanceled, BranchID: spec.ID, NodeID: spec.NodeID, Err: err, At: results[index].EndedAt})
+				observer.emit(Event{Type: StateCanceled, BranchID: spec.ID, NodeID: spec.NodeID, Err: err, At: results[index].EndedAt}, "")
 				return
 			}
 			defer release(sem, spec.Runtime.Limiter)
 
 			results[index].State = StateStarted
 			results[index].StartedAt = time.Now()
-			c.emit(Event{Type: StateStarted, BranchID: spec.ID, NodeID: spec.NodeID, At: results[index].StartedAt})
+			observer.emit(Event{Type: StateStarted, BranchID: spec.ID, NodeID: spec.NodeID, At: results[index].StartedAt}, "")
 			output, err := spec.Execute(forkCtx, branch)
 			results[index].Output = types.ToJSON(output)
 			results[index].EndedAt = time.Now()
@@ -247,12 +248,12 @@ func (c *ForkCoordinator) RunWithContextManager(ctx context.Context, contexts *C
 				if forkCtx.Err() != nil && c.policy() == PolicyFailFast {
 					results[index].State = StateCanceled
 					results[index].Err = context.Cause(forkCtx)
-					c.emit(Event{Type: StateCanceled, BranchID: spec.ID, NodeID: spec.NodeID, Err: results[index].Err, At: results[index].EndedAt})
+					observer.emit(Event{Type: StateCanceled, BranchID: spec.ID, NodeID: spec.NodeID, Err: results[index].Err, At: results[index].EndedAt}, "")
 					return
 				}
 				results[index].State = StateFailed
 				results[index].Err = err
-				c.emit(Event{Type: StateFailed, BranchID: spec.ID, NodeID: spec.NodeID, Err: err, At: results[index].EndedAt})
+				observer.emit(Event{Type: StateFailed, BranchID: spec.ID, NodeID: spec.NodeID, Err: err, At: results[index].EndedAt}, "")
 				recordFailure(err)
 				return
 			}
@@ -260,7 +261,7 @@ func (c *ForkCoordinator) RunWithContextManager(ctx context.Context, contexts *C
 			branch.Workflow.SetPrevRaw(results[index].Output)
 			branch.Workflow.SetResultRaw(spec.ID, results[index].Output)
 			results[index].State = StateCompleted
-			c.emit(Event{Type: StateCompleted, BranchID: spec.ID, NodeID: spec.NodeID, At: results[index].EndedAt})
+			observer.emit(Event{Type: StateCompleted, BranchID: spec.ID, NodeID: spec.NodeID, At: results[index].EndedAt}, results[index].Output)
 		}(index, spec)
 	}
 	wg.Wait()

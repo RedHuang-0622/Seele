@@ -9,5 +9,8 @@
 | [09-seele-runtime-boundary.md](09-seele-runtime-boundary.md) | 五个平行根能力、依赖方向和数据流 |
 | [10-seele-extension-contracts.md](10-seele-extension-contracts.md) | Agent、WorkPlan、AccountPool、Tools、Seelex Context、Telemetry 的接口设计 |
 | [11-seele-boundary-test-strategy.md](11-seele-boundary-test-strategy.md) | 分层测试、真实 API/subagent 冒烟和验收标准 |
+| [12-event-contracts.md](12-event-contracts.md) | 结构化事件、Sink、心跳和模块 Locator 的跨模块契约 |
+| [13-initial-architecture-principles.md](13-initial-architecture-principles.md) | 初始版本的接口、事件、错误、README 与装配原则 |
+| [14-seelex-integration-guide.md](14-seelex-integration-guide.md) | Seelex 对 Agent、账户池、工具、上下文、会话、WorkPlan、事件和错误模块的集成方式 |
 
 阅读顺序：先读运行时边界，再读扩展契约，最后按测试方案验收实现。

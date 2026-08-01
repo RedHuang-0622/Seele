@@ -8,6 +8,8 @@
 
 `agent` 是 LLM、工具和账户路由的装配层。新代码使用 `NewWithComponents` 创建无副作用 runtime，再由 `session.NewSession` 创建用户会话；`agent.New(Options)` 仅保留为 legacy 基础设施入口。
 
+`EventLocator` 是 Agent 对通用 [`event.Locator`](../event/README.md) 的强类型装配实现，携带调用方提供的 Agent、Session、Account 与 Model 标识。它不创建事件、不持有 Sink，也不要求 Agent 依赖 WorkPlan；调用方可把它注入 WorkPlan 或其他 Recorder。
+
 ## 实现要点
 
 - `New` 依次创建账户池、API 网关、工具 Holder、Hub Provider 和 `ChatClient`；`Options` 支持单账户配置或 YAML 多账户配置。
@@ -22,4 +24,5 @@
 ## 公开入口与验证
 
 - `NewWithComponents` 创建无副作用 Agent；`LLM`、`Tools`、`VisibleTools`、`Dispatch` 提供 runtime 能力；调用方将该 runtime 注入 `session.NewSession`；`Shutdown` 释放 Agent 自己拥有的资源。
+- `EventLocator` 只转换为 `event.Location{Kind: "agent.runtime"}`，以便由事件 Recorder 统一附加到执行事实中。
 - 验证：`go test ./agent/...`

@@ -1,5 +1,13 @@
 # workplan/runtime/runner
 
+## 事件装配
+
+`EventConfig` 与 `WithEventSink` 让调用方装配自己持有的 Sink、Plan/Run ID、Locator、心跳策略和投递错误处理器。配置 Sink 后，`PlanID` 必须非空；`Run` 与 `Resume` 各自创建独立 Recorder，并将其放进运行 context。
+
+普通 `Run` 经 `forkexec` 输出节点生命周期事件；`Resume` 的直接节点执行路径也输出 running、终态和可选 heartbeat。Sink 投递失败只交给 `EventConfig.ErrorHandler`，不会改变 `Run`/`Resume` 的控制流结果。根事件契约见 [`event`](../../../event/README.md)。
+
+## 概览
+
 `Runner` 是 Plan 内核的执行入口，提供全新运行和从检查点恢复的能力。
 
 ## 公开接口

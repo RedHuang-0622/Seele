@@ -1,5 +1,9 @@
 # workplan/runtime
 
+`runner` 可以装配根级 `event.Sink`。它在运行 context 中挂载一个 per-run Recorder，`forkexec` 据此将分支生命周期投影为统一事件并注册共享 heartbeat lease；Sink 投递失败不会改变调度控制流。详见 [runner](runner/README.md) 与 [`event`](../../event/README.md)。
+
+## 概览
+
 `workplan/runtime` 为 Plan 内核提供校验、节点执行、依赖调度、分支隔离和 checkpoint 原语。
 
 ## 子模块
