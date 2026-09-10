@@ -129,6 +129,9 @@ func NewSession(components SessionComponents) (*Session, error) {
 	}
 
 	loop := NewReActLoop(components.Agent, session.llm, loopOptions...)
+	// 历史快照发布：观测面（宿主 UI/详情/落账投影）在 ChatStream 持锁运行
+	// 期间也能读到最新检查点，不必抢会话锁（见 HistoryIfAvailable）。
+	loop.historyPublisher = session.publishHistory
 	loop.cfg = configuration
 	loop.tracer = trace
 	loop.cache = components.Cache

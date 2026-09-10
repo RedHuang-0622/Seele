@@ -37,18 +37,30 @@ type ReActLoop struct {
 	toolResultProcessor seelectx.ToolResultProcessor
 	compressor          seelectx.Compressor
 	contextController   seelectx.ContextController
-	cfg                 SessionConfig
-	sessionID           string
-	cache               cache.Provider
-	store               storage.Storage
-	modelName           string
-	tracer              tracer.Tracer
-	telemetryHook       telemetry.Hook
-	hooks               *LoopHooks
-	respCache           *cache.ResponseCache
+	// historyPublisher 是历史快照发布器（宿主观测面用；见 WithHistoryPublisher）。
+	historyPublisher func([]types.Message)
+	cfg              SessionConfig
+	sessionID        string
+	cache            cache.Provider
+	store            storage.Storage
+	modelName        string
+	tracer           tracer.Tracer
+	telemetryHook    telemetry.Hook
+	hooks            *LoopHooks
+	respCache        *cache.ResponseCache
 }
 
 type ReActLoopOption func(*ReActLoop)
+
+// WithHistoryPublisher 注册历史快照发布器：循环在每个历史检查点
+// （模型调用前、assistant 落历史后、工具结果落历史后）把一份**已拷贝**的
+// 历史交给发布器。用途是宿主的观测面（UI/详情/落账投影）能在 ChatStream
+// 持锁运行期间读到最后一次发布的快照，而不去抢会话锁。
+//
+// 发布器在持锁的循环 goroutine 内同步调用，必须无阻塞、不可重入本 Session。
+func WithHistoryPublisher(publish func([]types.Message)) ReActLoopOption {
+	return func(rl *ReActLoop) { rl.historyPublisher = publish }
+}
 
 func NewReActLoop(a ToolRuntime, llm types.ChatCompleter, opts ...ReActLoopOption) *ReActLoop {
 	rl := &ReActLoop{
@@ -420,6 +432,9 @@ func (rl *ReActLoop) visibleTools(ctx context.Context) []types.Tool {
 }
 
 func (rl *ReActLoop) handleContextEvent(ctx context.Context, event seelectx.ContextEvent) error {
+	// 历史检查点：先把快照发布给宿主观测面（event.History 是调用方已拷贝的
+	// 副本），再走上下文控制器——控制器为 nil 时也要发布。
+	rl.publishHistory(event.History)
 	if rl.contextController == nil {
 		return nil
 	}
@@ -437,6 +452,14 @@ func (rl *ReActLoop) History() []types.Message {
 	cp := make([]types.Message, len(rl.history))
 	copy(cp, rl.history)
 	return cp
+}
+
+// publishHistory 把一份历史快照交给发布器（nil 发布器为 no-op）。
+func (rl *ReActLoop) publishHistory(history []types.Message) {
+	if rl == nil || rl.historyPublisher == nil {
+		return
+	}
+	rl.historyPublisher(history)
 }
 
 func (rl *ReActLoop) ClearHistory() {

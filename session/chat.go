@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/RedHuang-0622/Seele/seelectx/cache"
@@ -42,15 +43,24 @@ type Session struct {
 	tracer    tracer.Tracer
 	lastTrace *tracer.Tree
 
-	cfg               SessionConfig
-	history           []types.Message
-	sessionID         string
+	cfg       SessionConfig
+	history   []types.Message
+	sessionID string
+	// published 是最近一次发布的历史快照（观测面无锁读取；见
+	// HistoryIfAvailable 与 WithHistoryPublisher）。运行期间由循环在历史
+	// 检查点更新，空闲时由 HistoryIfAvailable 的直读路径顺手刷新。
+	published         atomic.Pointer[sessionHistorySnapshot]
 	cache             cache.Provider
 	store             storage.Storage
 	modelName         string
 	hooks             *LoopHooks
 	telemetryHook     telemetry.Hook
 	blockSystemPrompt bool
+}
+
+// sessionHistorySnapshot 是发布给观测面的历史快照（切片已拷贝，调用方只读）。
+type sessionHistorySnapshot struct {
+	messages []types.Message
 }
 
 // Option 配置 Session 的创建参数。
@@ -117,6 +127,7 @@ func New(a Agent, opts ...Option) *Session {
 
 	if e.loop == nil {
 		rl := NewReActLoop(a, e.llm)
+		rl.historyPublisher = e.publishHistory
 		rl.sessionID = e.sessionID
 		rl.tracer = e.tracer
 		rl.modelName = e.modelName
@@ -148,6 +159,48 @@ func (e *Session) History() []types.Message {
 		return e.loop.History()
 	}
 	return nil
+}
+
+// HistoryIfAvailable 返回当前对话历史的副本，**永不阻塞**：
+//
+//   - 会话空闲：直接读，拿到的是权威历史（顺手刷新发布面）；
+//   - 会话正忙（ChatStream 持锁跑整段 ReAct 循环）：返回循环最近一次发布的
+//     快照——它在每个历史检查点（模型调用前 / assistant 落历史后 / 工具结果
+//     落历史后）更新，因此代价是最多滞后一个检查点，而不是等整轮跑完。
+//
+// 观测面与执行面分工（调用方必须遵守）：执行路径（与 ChatStream 同一
+// goroutine，如流式回调内）用 History()；其它 goroutine 的观测路径（宿主 UI、
+// 详情读取、落账投影）用本方法。原因：ChatStream 从进函数持到出函数持有整把
+// 会话锁，一次长文流式可达数十秒，任何 History() 都会排在它后面——观测面被
+// 拖住的直接表现是"表格/详情卡住不动"。
+//
+// 注意 (nil, false) 只表示"此刻确实读不到"（尚未发布过且锁被别处短暂持有），
+// 不表示"没有历史"——调用方不要把 false 当作空历史覆盖已有缓存。
+func (e *Session) HistoryIfAvailable() ([]types.Message, bool) {
+	if e == nil || e.loop == nil {
+		return nil, false
+	}
+	if e.mu.TryLock() {
+		history := e.loop.History()
+		e.mu.Unlock()
+		// 空闲直读顺带刷新发布面：会话外（ClearHistory/Reset/AppendHistory/
+		// SetSystemPrompt 等）的历史变更由此被观测面看到。
+		e.publishHistory(history)
+		return history, true
+	}
+	if snapshot := e.published.Load(); snapshot != nil {
+		return snapshot.messages, true
+	}
+	return nil, false
+}
+
+// publishHistory 记录一份历史快照（切片已由调用方拷贝）。循环在持锁的
+// 检查点调用它，观测面据此无锁读取运行中的历史。
+func (e *Session) publishHistory(history []types.Message) {
+	if e == nil {
+		return
+	}
+	e.published.Store(&sessionHistorySnapshot{messages: history})
 }
 
 // ClearHistory 清空对话历史。
