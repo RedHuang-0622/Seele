@@ -117,10 +117,19 @@ type wireContentPart struct {
 
 // wireFile 是 OpenAI 形态的文档 part 载荷（Chat Completions 的 file.file_data）。
 //
-// 形状对不代表端点收：官方 OpenAI 的 file part 支持 PDF，兼容端点不一定——实测
-// api.deepseek.com 即便给了 file_data 也会 400（file must have a file_id or file_data）。
-// 所以「能不能发文档」是端点能力问题，该由能力声明/门控决定，而不是由 Chat
-// Completions 形状决定（裁决记录见 seelex seelebridge/attachment_live_smoke_test.go）。
+// 端点能力差异（实测 api.deepseek.com / deepseek-v4-flash，裁决记录与复跑命令见
+// seelex seelebridge/attachment_live_smoke_test.go）：
+//
+//   - 官方 OpenAI 的 file part 是**嵌套**形状（file:{file_data,filename}），支持 PDF；
+//   - 该兼容端点读的是**扁平**字段（file_data / filename / file_id 直接挂在 part 上），
+//     嵌套形状会被当成空对象，回 400 "file must have a file_id or file_data"；
+//   - 形状即便对了，它的 file 通道也只收 webp/png/jpeg/gif（错误原文列了白名单），
+//     内部图片数组说明它其实是个图片通道：PDF / text 一律 400；
+//   - /files 上传（唯一支持 purpose=user_data）同样只收图片，file_id 引用是通的；
+//   - Anthropic 兼容端点的 document block 是 200 却内容不进模型。
+//
+// 结论：「能不能发文档」是端点能力问题，该由能力声明/门控决定；没有文档通道时应当降级
+// （文本内联，见 seelex seelebridge/attachment），而不是把「形状写对了」当成「能发」。
 type wireFile struct {
 	FileData string `json:"file_data,omitempty"`
 	Filename string `json:"filename,omitempty"`
