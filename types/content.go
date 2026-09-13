@@ -116,6 +116,11 @@ type wireContentPart struct {
 }
 
 // wireFile 是 OpenAI 形态的文档 part 载荷（Chat Completions 的 file.file_data）。
+//
+// 形状对不代表端点收：官方 OpenAI 的 file part 支持 PDF，兼容端点不一定——实测
+// api.deepseek.com 即便给了 file_data 也会 400（file must have a file_id or file_data）。
+// 所以「能不能发文档」是端点能力问题，该由能力声明/门控决定，而不是由 Chat
+// Completions 形状决定（裁决记录见 seelex seelebridge/attachment_live_smoke_test.go）。
 type wireFile struct {
 	FileData string `json:"file_data,omitempty"`
 	Filename string `json:"filename,omitempty"`
