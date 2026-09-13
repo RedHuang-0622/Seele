@@ -229,6 +229,11 @@ func (c *ChatClient) Complete(ctx context.Context, messages []types.Message, too
 	if err != nil {
 		return types.Message{}, fmt.Errorf("ChatClient: read response: %w", err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		// 非 2xx 必须成为可分类错误：直接交给 ParseResponse 会把 429 当成协议
+		// 解析失败，重试层就再也拿不到状态码与 Retry-After。
+		return types.Message{}, types.NewHTTPStatusError(resp.StatusCode, data, resp.Header)
+	}
 
 	return strategy.ParseResponse(data)
 }
@@ -356,7 +361,7 @@ func (c *ChatClient) openStream(
 		body, _ := io.ReadAll(response.Body)
 		response.Body.Close()
 		releaseOnError()
-		return nil, nil, fmt.Errorf("HTTP %d: %.512s", response.StatusCode, body)
+		return nil, nil, types.NewHTTPStatusError(response.StatusCode, body, response.Header)
 	}
 
 	return newLeasedReadCloser(response.Body, lease), strategy, nil
