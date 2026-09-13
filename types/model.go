@@ -23,7 +23,7 @@ type ChatCompleter interface {
 type StreamEventType int
 
 const (
-	StreamEventText      StreamEventType = iota // 文本 delta
+	StreamEventText       StreamEventType = iota // 文本 delta
 	StreamEventToolCall                          // 工具调用（start + delta + end）
 	StreamEventToolResult                        // 工具返回结果
 	StreamEventReasoning                         // 推理内容（reasoning_content）
@@ -34,9 +34,9 @@ const (
 // StreamEvent 流式事件，封装 LLM 推送的各类增量数据。
 type StreamEvent struct {
 	Type    StreamEventType
-	Content string          // text delta / tool name / error string
-	Index   int             // tool_call index（多 tool call 并发时区分）
-	Meta    map[string]any  // 扩展信息
+	Content string         // text delta / tool name / error string
+	Index   int            // tool_call index（多 tool call 并发时区分）
+	Meta    map[string]any // 扩展信息
 }
 
 // ─────────────────────────────────────────────
@@ -55,13 +55,14 @@ type Usage struct {
 // Message 是 LLM 对话历史中的一条记录。
 // Role: "system" | "user" | "assistant" | "tool"
 type Message struct {
-	Role             string     `json:"role"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"` // 思索文段
-	Content          *string    `json:"content,omitempty"`
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"` // role="tool" 时使用
-	Name             string     `json:"name,omitempty"`         // role="tool" 时填工具名
-	Usage            *Usage     `json:"-"`                      // 不序列化，仅内部传递
+	Role             string      `json:"role"`
+	ReasoningContent string      `json:"reasoning_content,omitempty"` // 思索文段
+	Content          *string     `json:"content,omitempty"`
+	Images           []ImagePart `json:"images,omitempty"`
+	ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID       string      `json:"tool_call_id,omitempty"` // role="tool" 时使用
+	Name             string      `json:"name,omitempty"`         // role="tool" 时填工具名
+	Usage            *Usage      `json:"-"`                      // 不序列化，仅内部传递
 }
 
 // ToolCall 是 LLM assistant 消息中发起的工具调用。

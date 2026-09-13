@@ -22,9 +22,10 @@ type Cost struct {
 	// OutputTokens is the estimated completion tokens.
 	OutputTokens int `yaml:"output_tokens" json:"output_tokens"`
 
-	// Images is the number of image attachments in the request. It only
-	// affects the weighted in-flight slot, never the token estimate, because
-	// image cost is a function of pixels rather than bytes.
+	// Images is the number of image attachments in the request. The field
+	// itself only feeds the weighted in-flight slot (Weight); the per-tile
+	// token charge for images is added to InputTokens by DefaultEstimator,
+	// because image cost is a function of pixels rather than bytes.
 	Images int `yaml:"images" json:"images"`
 }
 
@@ -78,20 +79,25 @@ func (c Cost) validate() error {
 // provider's real pricing formula should replace it.
 type CostEstimator func(messages []types.Message, tools []types.Tool) Cost
 
-// DefaultEstimator estimates prompt tokens from message text and tool schemas,
-// plus a fixed completion allowance.
+// DefaultEstimator estimates prompt tokens from message text, image parts and
+// tool schemas, plus a fixed completion allowance.
 //
 // Text is priced with the same shape Seele uses elsewhere: CJK characters cost
-// roughly one token each, ASCII roughly one token per four characters. Image
-// parts are not part of the message model yet (Seele G13); when they land, this
-// function is the single place that must add the per-tile image charge, and
-// Cost.Images is already carried through admission for that purpose.
+// roughly one token each, ASCII roughly one token per four characters. Images
+// are priced per tile (see ImageTokens) and counted into Cost.Images, because
+// providers charge vision input by pixels rather than by bytes.
 func DefaultEstimator(messages []types.Message, tools []types.Tool) Cost {
 	tokens := 0
+	images := 0
 	for i := range messages {
 		message := messages[i]
 		if message.Content != nil {
 			tokens += EstimateTextTokens(*message.Content)
+		}
+		for j := range message.Images {
+			part := message.Images[j]
+			images++
+			tokens += ImageTokens(part.Width, part.Height)
 		}
 		tokens += EstimateTextTokens(message.ReasoningContent)
 		for j := range message.ToolCalls {
@@ -106,7 +112,7 @@ func DefaultEstimator(messages []types.Message, tools []types.Tool) Cost {
 			tokens += EstimateTextTokens(fmt.Sprintf("%v", parameters))
 		}
 	}
-	return Cost{Requests: 1, InputTokens: tokens}
+	return Cost{Requests: 1, InputTokens: tokens, Images: images}
 }
 
 // EstimateTextTokens is the shared text heuristic: one token per CJK rune,

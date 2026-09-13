@@ -260,7 +260,53 @@ func (s *AnthropicStrategy) ParseSSEEvent(eventType string, payload string) ([]S
 //	role="tool"  -> user + tool_result block
 //	assistant with ToolCalls -> assistant + tool_use blocks
 //	assistant text only      -> assistant + string content
-//	user                     -> user + string content
+//	user                     -> user + string content（带图时为 text + image blocks）
+// anthropicImageBlocks 把消息随附的图片投影成 Anthropic image blocks：
+// 有字节时用 base64 source，只有远端地址时用 url source。
+func anthropicImageBlocks(images []types.ImagePart) []map[string]any {
+	blocks := make([]map[string]any, 0, len(images))
+	for i := range images {
+		image := images[i]
+		var source map[string]any
+		switch {
+		case len(image.Data) > 0:
+			mimeType := image.MimeType
+			if mimeType == "" {
+				mimeType = "application/octet-stream"
+			}
+			source = map[string]any{"type": "base64", "media_type": mimeType, "data": image.Base64()}
+		case image.URL != "":
+			source = map[string]any{"type": "url", "url": image.URL}
+		default:
+			// 既无字节也无地址：跳过，而不是给 provider 发一个空 source。
+			continue
+		}
+		blocks = append(blocks, map[string]any{"type": "image", "source": source})
+	}
+	return blocks
+}
+
+// anthropicMessageBlocks 把一条消息投影成 blocks：文本段在前，随后是图片。
+func anthropicMessageBlocks(text string, images []types.ImagePart) []map[string]any {
+	blocks := make([]map[string]any, 0, len(images)+1)
+	if text != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": text})
+	}
+	return append(blocks, anthropicImageBlocks(images)...)
+}
+
+// toolResultContent 产出 tool_result 的 content：无图时是字符串（历史形态），
+// 带图时是 text + image blocks —— Anthropic 的 tool_result 接受这两种写法，
+// 而截图类工具结果正是「文字说明 + 图」的形状。
+func toolResultContent(m types.Message) any {
+	if len(m.Images) == 0 {
+		if m.Content == nil {
+			return ""
+		}
+		return *m.Content
+	}
+	return anthropicMessageBlocks(m.Text(), m.Images)
+}
 func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message, tools []types.Tool, stream bool, opts RequestOptions) ([]byte, error) {
 	var sys string
 	var msgs []anthropicMessage
@@ -285,19 +331,16 @@ func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message,
 	for _, m := range messages {
 		switch m.Role {
 		case "system":
+			// system 只接受文本：Anthropic 的 system 无 image block，随附图片在此忽略。
 			if m.Content != nil {
 				sys = *m.Content
 			}
 
 		case "tool":
-			content := ""
-			if m.Content != nil {
-				content = *m.Content
-			}
 			pendingTools = append(pendingTools, map[string]any{
 				"type":        "tool_result",
 				"tool_use_id": m.ToolCallID,
-				"content":     content,
+				"content":     toolResultContent(m),
 			})
 
 		case "assistant":
@@ -339,6 +382,14 @@ func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message,
 			}
 
 		default:
+			if len(m.Images) > 0 {
+				blocks, err := json.Marshal(anthropicMessageBlocks(m.Text(), m.Images))
+				if err != nil {
+					return nil, fmt.Errorf("anthropic BuildRequest: marshal %s blocks: %w", m.Role, err)
+				}
+				msgs = append(msgs, anthropicMessage{Role: m.Role, Content: blocks})
+				break
+			}
 			if m.Content != nil {
 				content, err := json.Marshal(*m.Content)
 				if err != nil {

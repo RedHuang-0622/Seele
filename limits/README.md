@@ -23,6 +23,7 @@
 | `Params.Normalize()` / `Validate()` | 派生值填充与非法值拒绝（`ErrInvalidParams`） |
 | `Duration` | 同时接受 `30s` 与 `30`（秒）的时长类型 |
 | `Cost` / `CostEstimator` / `DefaultEstimator` | 单次调用的额度模型与估算器 |
+| `ImageTokens` | 单张图片按 512×512 tile 折算的 token 估算；尺寸未知时走兜底值，绝不返回 0 |
 | `Gate` | 一个准入点：加权并发 + 请求桶 + 令牌桶，参数可运行时改 |
 | `Stats` | 并发/队列/速率/估算 vs 实付 token/重试/超桶请求等计数 |
 | `Permit` | 一次准入；`Release()` 幂等、`Settle(usage)` 用真实用量结算 |
@@ -36,7 +37,7 @@
 - **0 = 不限**：`MaxConcurrency`、`RequestsPerMin`、`TokensPerMin` 为 0 时该维度不设限。
   `Normalize()` 只补齐**无法表达**的派生值（桶容量），绝不替调用方发明上限；
   推荐值只在 `DefaultParams()` 里。
-- **`ImageWeight`**：每张图片折算的在途权重，0 表示不计权重；负值非法。
+- **`ImageWeight`**：每张图片折算的**在途权重**（并发维度），0 表示不计权重；负值非法。图片的 token 维度由 `DefaultEstimator` 按 `ImageTokens`（512×512 tile，尺寸未知走兜底）计入 `InputTokens`，并累加 `Cost.Images` 张数——两个维度都按像素而非字节计价。
   图片只影响并发权重、不影响 token 估算——图片成本由**像素/tile**决定，与字节无关。
 - **`QueueTimeout` = 0**：不排队，立即失败（`ErrQueueTimeout`）；> 0 时是**整个准入**的预算
   （并发等待 + 速率等待共享同一个 deadline）。
