@@ -42,7 +42,7 @@ func TestMessageWithFilesWireShape(t *testing.T) {
 	message := Message{
 		Role:    "user",
 		Content: &text,
-		Files:  []FilePart{{MimeType: "image/png", Data: []byte{1, 2, 3}}},
+		Files:   []FilePart{{MimeType: "image/png", Data: []byte{1, 2, 3}}},
 	}
 	data, err := json.Marshal(message)
 	if err != nil {
