@@ -279,7 +279,9 @@ func anthropicFileBlocks(files []types.FilePart) []map[string]any {
 		case file.URL != "":
 			source = map[string]any{"type": "url", "url": file.URL}
 		default:
-			// 既无字节也无地址：跳过，而不是给 provider 发一个空 source。
+			// 既无字节也无地址（例如只有 Files API 的 file_id）：跳过而不是发空 source。
+			// Anthropic 侧引用 file_id 要用 source.type="file" 并带 anthropic-beta
+			// files-api-2025-04-14 头，本策略暂未发该头，等真机验证过再接。
 			continue
 		}
 		blockType := "image"

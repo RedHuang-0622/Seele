@@ -119,9 +119,9 @@ func TestMessageUnmarshalKinds(t *testing.T) {
 			want: []FilePart{{Kind: FileKindDocument, URL: "https://example.com/spec.pdf"}},
 		},
 		{
-			name: "只有 file_id 时跳过",
+			name: "只有 file_id 时保住引用（重发历史要靠它把附件带回去）",
 			wire: `{"role":"user","content":[{"type":"input_file","file_id":"file-123"}]}`,
-			want: nil,
+			want: []FilePart{{Kind: FileKindDocument, FileID: "file-123"}},
 		},
 	}
 	for _, testCase := range cases {

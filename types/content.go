@@ -68,8 +68,17 @@ func (p FilePart) Validate() error {
 	default:
 		return fmt.Errorf("types: unknown file kind %q", kind)
 	}
-	if len(p.Data) == 0 && p.URL == "" {
-		return fmt.Errorf("types: file part carries neither bytes nor url")
+	carriers := 0
+	for _, present := range []bool{len(p.Data) > 0, p.URL != "", p.FileID != ""} {
+		if present {
+			carriers++
+		}
+	}
+	switch {
+	case carriers == 0:
+		return fmt.Errorf("types: file part carries neither bytes, url nor file id")
+	case carriers > 1:
+		return fmt.Errorf("types: file part must carry exactly one of bytes/url/file id (内联与 file_id 互斥)")
 	}
 	return nil
 }
@@ -90,6 +99,10 @@ type FilePart struct {
 	Detail string `json:"detail,omitempty"`
 	// Name 是溯源名（如截图文件名），仅本地可见。
 	Name string `json:"name,omitempty"`
+	// FileID 是 Files API 上传后的引用（形如 file-api-...）。它与 Data/URL 互斥：
+	// 有引用就不再内联字节。图片超过内联上限（本端点 32 MiB）或要在多个请求里
+	// 复用时走这条路，端点对 file_id 引用的单图上限更宽（本端点 64 MiB）。
+	FileID string `json:"file_id,omitempty"`
 }
 
 // Base64 返回图片字节的标准 base64 编码（不含 data URL 前缀）。
@@ -113,6 +126,9 @@ type wireContentPart struct {
 	Text     string        `json:"text,omitempty"`
 	ImageURL *wireImageURL `json:"image_url,omitempty"`
 	File     *wireFile     `json:"file,omitempty"`
+	// FileID 是**扁平** file 块的引用（{"type":"file","file_id":"file-api-..."}），
+	// 与嵌套的 File 载荷互斥。官方文档与真机实测一致：端点只认扁平这一种。
+	FileID string `json:"file_id,omitempty"`
 }
 
 // wireFile 是 OpenAI 形态的文档 part 载荷（Chat Completions 的 file.file_data）。
@@ -183,6 +199,10 @@ func (m Message) marshalContent() (json.RawMessage, error) {
 	}
 	for i := range m.Files {
 		file := m.Files[i]
+		if file.FileID != "" {
+			parts = append(parts, wireContentPart{Type: "file", FileID: file.FileID})
+			continue
+		}
 		switch file.EffectiveKind() {
 		case FileKindImage:
 			parts = append(parts, wireContentPart{
@@ -292,6 +312,7 @@ func parseWirePart(raw json.RawMessage) (string, *FilePart, error) {
 		} `json:"file"`
 		FileData string `json:"file_data"`
 		FileURL  string `json:"file_url"`
+		FileID   string `json:"file_id"`
 		Filename string `json:"filename"`
 	}
 	if err := json.Unmarshal(raw, &probe); err != nil {
@@ -342,7 +363,15 @@ func parseWirePart(raw json.RawMessage) (string, *FilePart, error) {
 		if probe.FileURL != "" {
 			return "", &FilePart{Kind: FileKindDocument, URL: probe.FileURL, Name: filename}, nil
 		}
-		// 只有 file_id 时本地拿不到字节，模型无法据此重建附件：跳过而不是报错。
+		// 只有 file_id：本地拿不到字节，但引用必须留住——重发历史时靠它把附件带回去。
+		// 种类无法从 wire 推出（端点的 file 通道也可能是图片），保守记为文档。
+		fileID := probe.FileID
+		if probe.File != nil && probe.File.FileID != "" {
+			fileID = probe.File.FileID
+		}
+		if fileID != "" {
+			return "", &FilePart{Kind: FileKindDocument, FileID: fileID, Name: filename}, nil
+		}
 		return "", nil, nil
 	default:
 		// 未建模的 part 类型：跳过而不是让整条消息解析失败。
