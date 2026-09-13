@@ -261,51 +261,56 @@ func (s *AnthropicStrategy) ParseSSEEvent(eventType string, payload string) ([]S
 //	assistant with ToolCalls -> assistant + tool_use blocks
 //	assistant text only      -> assistant + string content
 //	user                     -> user + string content（带图时为 text + image blocks）
-// anthropicImageBlocks 把消息随附的图片投影成 Anthropic image blocks：
+//
+// anthropicFileBlocks 把消息随附的图片投影成 Anthropic image blocks：
 // 有字节时用 base64 source，只有远端地址时用 url source。
-func anthropicImageBlocks(images []types.ImagePart) []map[string]any {
-	blocks := make([]map[string]any, 0, len(images))
-	for i := range images {
-		image := images[i]
+func anthropicFileBlocks(files []types.FilePart) []map[string]any {
+	blocks := make([]map[string]any, 0, len(files))
+	for i := range files {
+		file := files[i]
 		var source map[string]any
 		switch {
-		case len(image.Data) > 0:
-			mimeType := image.MimeType
+		case len(file.Data) > 0:
+			mimeType := file.MimeType
 			if mimeType == "" {
 				mimeType = "application/octet-stream"
 			}
-			source = map[string]any{"type": "base64", "media_type": mimeType, "data": image.Base64()}
-		case image.URL != "":
-			source = map[string]any{"type": "url", "url": image.URL}
+			source = map[string]any{"type": "base64", "media_type": mimeType, "data": file.Base64()}
+		case file.URL != "":
+			source = map[string]any{"type": "url", "url": file.URL}
 		default:
 			// 既无字节也无地址：跳过，而不是给 provider 发一个空 source。
 			continue
 		}
-		blocks = append(blocks, map[string]any{"type": "image", "source": source})
+		blockType := "image"
+		if file.EffectiveKind() == types.FileKindDocument {
+			blockType = "document"
+		}
+		blocks = append(blocks, map[string]any{"type": blockType, "source": source})
 	}
 	return blocks
 }
 
 // anthropicMessageBlocks 把一条消息投影成 blocks：文本段在前，随后是图片。
-func anthropicMessageBlocks(text string, images []types.ImagePart) []map[string]any {
-	blocks := make([]map[string]any, 0, len(images)+1)
+func anthropicMessageBlocks(text string, files []types.FilePart) []map[string]any {
+	blocks := make([]map[string]any, 0, len(files)+1)
 	if text != "" {
 		blocks = append(blocks, map[string]any{"type": "text", "text": text})
 	}
-	return append(blocks, anthropicImageBlocks(images)...)
+	return append(blocks, anthropicFileBlocks(files)...)
 }
 
 // toolResultContent 产出 tool_result 的 content：无图时是字符串（历史形态），
 // 带图时是 text + image blocks —— Anthropic 的 tool_result 接受这两种写法，
 // 而截图类工具结果正是「文字说明 + 图」的形状。
 func toolResultContent(m types.Message) any {
-	if len(m.Images) == 0 {
+	if len(m.Files) == 0 {
 		if m.Content == nil {
 			return ""
 		}
 		return *m.Content
 	}
-	return anthropicMessageBlocks(m.Text(), m.Images)
+	return anthropicMessageBlocks(m.Text(), m.Files)
 }
 func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message, tools []types.Tool, stream bool, opts RequestOptions) ([]byte, error) {
 	var sys string
@@ -382,8 +387,8 @@ func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message,
 			}
 
 		default:
-			if len(m.Images) > 0 {
-				blocks, err := json.Marshal(anthropicMessageBlocks(m.Text(), m.Images))
+			if len(m.Files) > 0 {
+				blocks, err := json.Marshal(anthropicMessageBlocks(m.Text(), m.Files))
 				if err != nil {
 					return nil, fmt.Errorf("anthropic BuildRequest: marshal %s blocks: %w", m.Role, err)
 				}

@@ -37,12 +37,12 @@ func TestMessageEmptyContentStillEmitted(t *testing.T) {
 	}
 }
 
-func TestMessageWithImagesWireShape(t *testing.T) {
+func TestMessageWithFilesWireShape(t *testing.T) {
 	text := "这是什么"
 	message := Message{
 		Role:    "user",
 		Content: &text,
-		Images:  []ImagePart{{MimeType: "image/png", Data: []byte{1, 2, 3}}},
+		Files:  []FilePart{{MimeType: "image/png", Data: []byte{1, 2, 3}}},
 	}
 	data, err := json.Marshal(message)
 	if err != nil {
@@ -74,19 +74,19 @@ func TestMessageWithImagesWireShape(t *testing.T) {
 	}
 }
 
-func TestImagePartEncoding(t *testing.T) {
-	part := ImagePart{MimeType: "image/png", Data: []byte{1, 2, 3}}
+func TestFilePartEncoding(t *testing.T) {
+	part := FilePart{MimeType: "image/png", Data: []byte{1, 2, 3}}
 	if got, want := part.Base64(), "AQID"; got != want {
 		t.Fatalf("Base64 = %q, want %q", got, want)
 	}
 	if got, want := part.DataURL(), "data:image/png;base64,AQID"; got != want {
 		t.Fatalf("DataURL = %q, want %q", got, want)
 	}
-	remote := ImagePart{URL: "https://example.com/a.png"}
+	remote := FilePart{URL: "https://example.com/a.png"}
 	if got, want := remote.DataURL(), "https://example.com/a.png"; got != want {
 		t.Fatalf("remote DataURL = %q, want %q", got, want)
 	}
-	untyped := ImagePart{Data: []byte{1}}
+	untyped := FilePart{Data: []byte{1}}
 	if got, want := untyped.DataURL(), "data:application/octet-stream;base64,AQ=="; got != want {
 		t.Fatalf("untyped DataURL = %q, want %q", got, want)
 	}
@@ -107,7 +107,7 @@ func TestMessageUnmarshalAcceptsBothContentShapes(t *testing.T) {
 	if message.Text() != "看图" || message.ImageCount() != 1 {
 		t.Fatalf("openai parts = %q images=%d, want 看图/1", message.Text(), message.ImageCount())
 	}
-	image := message.Images[0]
+	image := message.Files[0]
 	if image.MimeType != "image/png" || string(image.Data) != "\x01\x02\x03" || image.Detail != "high" {
 		t.Fatalf("openai image = %+v", image)
 	}
@@ -118,15 +118,15 @@ func TestMessageUnmarshalAcceptsBothContentShapes(t *testing.T) {
 	if message.Content != nil || message.ImageCount() != 1 {
 		t.Fatalf("anthropic parts content=%v images=%d, want nil/1", message.Content, message.ImageCount())
 	}
-	if message.Images[0].MimeType != "image/jpeg" || string(message.Images[0].Data) != "\x01\x02\x03" {
-		t.Fatalf("anthropic image = %+v", message.Images[0])
+	if message.Files[0].MimeType != "image/jpeg" || string(message.Files[0].Data) != "\x01\x02\x03" {
+		t.Fatalf("anthropic image = %+v", message.Files[0])
 	}
 
 	if err := json.Unmarshal([]byte(`{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}`), &message); err != nil {
 		t.Fatalf("Unmarshal url source: %v", err)
 	}
-	if message.ImageCount() != 1 || message.Images[0].URL != "https://example.com/a.png" {
-		t.Fatalf("url source image = %+v", message.Images)
+	if message.ImageCount() != 1 || message.Files[0].URL != "https://example.com/a.png" {
+		t.Fatalf("url source image = %+v", message.Files)
 	}
 }
 
@@ -140,7 +140,7 @@ func TestMessageUnmarshalSkipsUnmodelledParts(t *testing.T) {
 	}
 }
 
-func TestMessageUnmarshalRejectsMalformedImagePart(t *testing.T) {
+func TestMessageUnmarshalRejectsMalformedFilePart(t *testing.T) {
 	var message Message
 	if err := json.Unmarshal([]byte(`{"role":"user","content":[{"type":"image_url"}]}`), &message); err == nil {
 		t.Fatal("expected error for image_url part without url")
@@ -149,7 +149,7 @@ func TestMessageUnmarshalRejectsMalformedImagePart(t *testing.T) {
 
 func TestMessageRoundTripKeepsTextAndImages(t *testing.T) {
 	text := "看图"
-	original := Message{Role: "user", Content: &text, Images: []ImagePart{{MimeType: "image/png", Data: []byte{1, 2, 3}}}}
+	original := Message{Role: "user", Content: &text, Files: []FilePart{{MimeType: "image/png", Data: []byte{1, 2, 3}}}}
 	data, err := json.Marshal(original)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -161,19 +161,19 @@ func TestMessageRoundTripKeepsTextAndImages(t *testing.T) {
 	if restored.Text() != original.Text() || restored.ImageCount() != 1 {
 		t.Fatalf("round trip = %q images=%d", restored.Text(), restored.ImageCount())
 	}
-	if restored.Images[0].MimeType != "image/png" || string(restored.Images[0].Data) != "\x01\x02\x03" {
-		t.Fatalf("round trip image = %+v", restored.Images[0])
+	if restored.Files[0].MimeType != "image/png" || string(restored.Files[0].Data) != "\x01\x02\x03" {
+		t.Fatalf("round trip image = %+v", restored.Files[0])
 	}
 }
 
 func TestMessageConvenienceHelpers(t *testing.T) {
-	message := Message{Role: "user"}.WithText("看图").WithImages(ImagePart{MimeType: "image/png", Data: []byte{1}})
+	message := Message{Role: "user"}.WithText("看图").WithFiles(FilePart{MimeType: "image/png", Data: []byte{1}})
 	if message.Text() != "看图" || message.ImageCount() != 1 {
 		t.Fatalf("helpers = %q images=%d", message.Text(), message.ImageCount())
 	}
-	message = message.WithImages(ImagePart{MimeType: "image/png", Data: []byte{2}})
+	message = message.WithFiles(FilePart{MimeType: "image/png", Data: []byte{2}})
 	if message.ImageCount() != 2 {
-		t.Fatalf("WithImages should append, got %d", message.ImageCount())
+		t.Fatalf("WithFiles should append, got %d", message.ImageCount())
 	}
 	if (Message{Role: "user"}).Text() != "" {
 		t.Fatal("nil Content should read as empty text")

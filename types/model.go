@@ -55,14 +55,14 @@ type Usage struct {
 // Message 是 LLM 对话历史中的一条记录。
 // Role: "system" | "user" | "assistant" | "tool"
 type Message struct {
-	Role             string      `json:"role"`
-	ReasoningContent string      `json:"reasoning_content,omitempty"` // 思索文段
-	Content          *string     `json:"content,omitempty"`
-	Images           []ImagePart `json:"images,omitempty"`
-	ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`
-	ToolCallID       string      `json:"tool_call_id,omitempty"` // role="tool" 时使用
-	Name             string      `json:"name,omitempty"`         // role="tool" 时填工具名
-	Usage            *Usage      `json:"-"`                      // 不序列化，仅内部传递
+	Role             string     `json:"role"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"` // 思索文段
+	Content          *string    `json:"content,omitempty"`
+	Files            []FilePart `json:"files,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"` // role="tool" 时使用
+	Name             string     `json:"name,omitempty"`         // role="tool" 时填工具名
+	Usage            *Usage     `json:"-"`                      // 不序列化，仅内部传递
 }
 
 // ToolCall 是 LLM assistant 消息中发起的工具调用。

@@ -32,7 +32,7 @@ func TestDefaultEstimatorCountsImagesPerTile(t *testing.T) {
 	messages := []types.Message{{
 		Role:    "user",
 		Content: &text,
-		Images: []types.ImagePart{{
+		Files: []types.FilePart{{
 			MimeType: "image/png",
 			Data:     []byte{1},
 			Width:    1024,

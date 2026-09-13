@@ -94,8 +94,14 @@ func DefaultEstimator(messages []types.Message, tools []types.Tool) Cost {
 		if message.Content != nil {
 			tokens += EstimateTextTokens(*message.Content)
 		}
-		for j := range message.Images {
-			part := message.Images[j]
+		for j := range message.Files {
+			part := message.Files[j]
+
+			if !part.IsImage() {
+				// 文档的计价口径（页 / 抽出文本）与图片（像素 tile）不同，不能混入
+				// Cost.Images；等文档发射能力落地再补独立计数。
+				continue
+			}
 			images++
 			tokens += ImageTokens(part.Width, part.Height)
 		}
