@@ -111,7 +111,7 @@ stats := assembly.Snapshot()
 go test ./limits/... -count=1 -race
 # 真实 provider 冒烟（opt-in，需要 seelex 的 accounts.yaml）
 $env:SEELEX_SMOKE_ACCOUNTS='G:\Program\go\seelex\config\accounts.yaml'
-go test -tags livesmoke ./limits/... -run TestLiveSmoke -count=1 -v
+go test -tags livesmoke ./test/... -run TestLiveLimitsSmoke -count=1 -v
 ```
 
 ## 边界行为一览（都有对应测试）

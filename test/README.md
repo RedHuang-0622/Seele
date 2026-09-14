@@ -15,3 +15,6 @@
 ## 验证
 
 - `go test ./test/... -count=1`
+- 需要真实 provider 的用例以构建标签与环境变量显式启用，默认跳过：
+  `$env:SEELEX_SMOKE_ACCOUNTS='<accounts.yaml 路径>'; go test -tags livesmoke ./test/... -run TestLiveLimitsSmoke -count=1 -v`
+  （凭据只从该文件读取，任何测试都不得打印 key。）

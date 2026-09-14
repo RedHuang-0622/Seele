@@ -2,6 +2,56 @@
 
 ---
 
+## v0.2.0 (2026-09-14) — 多模态附件与限流装配层
+
+> **主题：`limits` 准入装配层 + `types` 附件载体（`FilePart` / `FileKind` / `FileID`）+ 非 2xx 可分类错误**
+
+### 🏗️ 01 — `limits`：限流与并发的路数装配层
+
+把「现在允不允许发、发了算多少额度」从 `agent/core/api` 里已标 Deprecated 的 `Account.MaxRPM` 抽出来，做成可装饰任意 `types.ChatCompleter` 的独立层。与 `accountpool` 的分工保持清晰：账号池回答「用哪个账号」，`limits` 回答「现在允不允许发、发了算多少额度」。参数、装配与边界语义见 [`limits/README.md`](limits/README.md)。
+
+- `Params` / `RetryPolicy` / `DefaultParams()`：YAML/JSON tag 齐全的参数模型（RPM、TPM、加权在途、排队超时、重试）；`0 = 不限`，`Normalize()` 只补无法表达的派生值（桶容量），推荐值只在 `DefaultParams()` 里给。
+- `Assembly` 与 `Wrap` / `WrapFor` / `WrapAll` / `WrapComplete`：按 key（账号、角色、节点）装配 gate；`WrapComplete` 接受只保证 `Complete` 的窄接口（如 seelex 的 `agent.Completer`），具体实现具备流式能力时仍走真流式。
+- `Gate` / `Permit` / `Stats`：准入顺序为「加权在途槽位 → 请求速率桶 → 令牌速率桶」，三者共享同一 deadline；先占槽位再扣桶，速率等待失败退还槽位；`Release()` 幂等，`Settle(usage)` 用真实用量结算估算差额。
+- 失败一律返回可 `errors.Is` 匹配的哨兵错误（`ErrConcurrencyExceeded`、`ErrRateLimited`，以及包裹两者的 `ErrQueueTimeout`），语义都是「稍后可以重试」。
+- `SetParams` / `SetRate` / `SetConcurrency` / `SetBurst` / `SetKeyParams` / `SetEnabled` / `Snapshot`：参数全运行时可改，不打断在途请求；`SetParams` 是全局覆盖。
+- `Cost` / `CostEstimator` / `DefaultEstimator`：图片按 512×512 tile 折算 token（尺寸未知走兜底值，绝不返回 0），`Cost.Images` 只计加权在途权重。
+
+### 🏗️ 02 — `types`：消息级多模态附件
+
+- `ImagePart` → `FilePart`，新增 `FileKind`（`image` / `document`）与 `FilePart.FileID`；`Message.Images` → `Message.Files`、`WithImages` → `WithFiles`。
+- 纯文本消息的 JSON 形状逐字节不变（`"content":"…"`），只有携带附件才展开为 content parts 数组：OpenAI 形态走 `image_url` 或 `file.file_data`，Anthropic 策略按 kind 走 `image` 或 `document`。
+- Files API 引用按端点实测走**扁平** `{"type":"file","file_id":"file-api-..."}`（与内联载荷互斥）；回读时保留 `file_id`——旧行为直接丢弃，重发历史会静默少一张附件。
+- 反解新增 OpenAI `file`、Responses `input_file`（含顶层 `file_data` / `file_url`）与 Anthropic `document`；`Validate()` 在请求前拦下「种类与 MIME 打架」「既无字节又无地址」「内联与 file_id 同时存在」。
+
+### ✨ 03 — 非 2xx 成为可分类错误
+
+- 新增 `types.HTTPStatusError`（含 `Retry-After` 解析；错误文本仍是历史形状 `HTTP %d: …`，日志与既有测试不受影响）。
+- `agent/core/api` 的同步与流式两处不再把非 2xx 交给 `ParseResponse`（那会把 429 当成协议解析失败），重试层因此能拿到状态码与 `Retry-After`。
+- 新增可单测的重试分类：`StatusOf` / `RetryAfterOf` / `IsRetryable` / `RetryDelay`，默认尊重 provider 的 `Retry-After`。
+
+### 💥 破坏性变更
+
+| 旧 | 新 |
+| --- | --- |
+| `types.ImagePart` | `types.FilePart`（新增 `Kind`、`FileID`） |
+| `types.Message.Images` | `types.Message.Files` |
+| `Message.WithImages` | `Message.WithFiles` |
+
+### ⚠️ 已知缺口
+
+- 文档 / PDF 附件只有单测覆盖：可用账号均为 openai 兼容端点，尚无 Anthropic / Gemini / 官方 OpenAI 账号做真机验证。
+- 各家的数值型限额（PDF 页数与字节、图片像素上限）与 MIME 白名单尚未编码。
+- 流式按估算计费（Seele 现有 SSE 处理不暴露 usage）；需要精确计费的产品应改用 `Gate.Acquire` 自行准入与 `Permit.Settle`。
+- Anthropic 侧引用 `file_id` 需 `anthropic-beta: files-api-2025-04-14` 头，该策略暂未发送，故该分支跳过而不是发空 source。
+- `limits` 目前是可选层，尚未接入产品装配点。
+
+### 📊 变更统计
+
+34 文件，+5860 / −13；新增 `limits` 包（18 个文件）。验证：`go build ./...`、`go vet ./...` 通过，`go test ./limits/... ./types/... ./agent/core/api/... -count=1`（含 `-race`）全绿。
+
+---
+
 ## v0.3.0 (2026-06-14) — 架构重构
 
 > **主题：策略模式工具层 + WorkPlan 图引擎 + SchemaOf**

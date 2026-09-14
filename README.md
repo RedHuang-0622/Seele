@@ -15,6 +15,7 @@ Seele 提供无产品语义的 Agent runtime：LLM client、工具调度、WorkP
 | `tools` | Function Calling 接口、注册、分发、超时、权限和 provider 适配 | 文件、Git、工作区等产品环境工具 |
 | `workplan` | 通用 Node/Edge、DAG 校验、调度和 codec | Agent/Task 产品语义 |
 | `accountpool` | P2C 账号选择、并发 lease 和负载均衡 | 产品费用账本和请求中转 |
+| `limits` | provider 成本准入：RPM、TPM、加权在途并发、排队超时与 429 重试分类，可装饰任意 `types.ChatCompleter` | 账号选择与路由、产品费用归集 |
 | `seelectx` | 可装配的 history、切片、QuickChat 和上下文构建原语 | 在 ReActLoop 内隐式触发产品压缩 |
 | `event` | 通用结构化事件、Sink、共享心跳和模块 Locator 扩展点 | EventStore、Task、KV 投影、日志 UI 或产品告警 |
 | `errors` | 跨模块统一结构化错误 | 业务层错误策略 |
@@ -73,6 +74,7 @@ result, err := runner.New(plan).Run(ctx)
 - [`workplan/README.md`](workplan/README.md)：WorkPlan 内核与数据传输。
 - [`workplan/codec/README.md`](workplan/codec/README.md)：产品 DSL、泛型 NodeFactory 和错误契约。
 - [`session/README.md`](session/README.md)：会话装配、working history 与 ReAct 生命周期。
+- [`limits/README.md`](limits/README.md)：限流与并发准入的参数、装配与重试语义。
 - [`event/README.md`](event/README.md)：结构化事件、Sink、心跳与 Locator 装配。
 - [`docs/README.md`](docs/README.md)：跨模块架构文档索引。
 - [`docs/arch/14-seelex-integration-guide.md`](docs/arch/14-seelex-integration-guide.md)：Seelex 对各根能力模块的装配与生命周期指南。
