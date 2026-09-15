@@ -14,5 +14,6 @@
 | [08_composable_agent/](08_composable_agent/README.md) | 离线显式 Agent 装配、内置工具与 Telemetry |
 | [09_context_pipeline/](09_context_pipeline/README.md) | 离线上下文拼装、结果筛选与显式压缩 |
 | [10_workplan_codec/](10_workplan_codec/README.md) | 离线自定义 Node、JSON codec 与 DAG 执行 |
+| [11_permission_middleware/](11_permission_middleware/README.md) | 离线自由装配、engine 授权与中间件判定 |
 
-`01`–`07` 中需要真实模型的示例请准备本地配置；任何密钥均应通过未跟踪配置文件提供。`08`–`10` 完全离线，可直接运行和测试。
+`01`–`07` 中需要真实模型的示例请准备本地配置；任何密钥均应通过未跟踪配置文件提供。`08`–`11` 完全离线，可直接运行和测试。

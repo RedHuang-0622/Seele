@@ -100,6 +100,23 @@ func (h *Holder) Tools() []types.Tool {
 	return h.state.Load().toolList
 }
 
+// Entry 按名称返回工具条目（含可选 Meta）。第二个返回值为是否存在。
+// 这是只读快照查询，供网关等上层读取工具元数据。
+func (h *Holder) Entry(name string) (interfaces.ToolEntry, bool) {
+	entry, ok := h.state.Load().toolMap[name]
+	return entry, ok
+}
+
+// Entries 返回名称到工具条目的浅拷贝快照（Meta 指针共享）。
+func (h *Holder) Entries() map[string]interfaces.ToolEntry {
+	st := h.state.Load()
+	entries := make(map[string]interfaces.ToolEntry, len(st.toolMap))
+	for name, entry := range st.toolMap {
+		entries[name] = entry
+	}
+	return entries
+}
+
 // Dispatch 通过 map 查找 handler 并执行。瞬时错误自动重试。
 //
 // 超时策略：

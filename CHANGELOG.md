@@ -2,6 +2,68 @@
 
 ---
 
+## v0.3.0 (2026-09-16) — 工具权限模型（Linux 式 rwx + sudo）
+
+> **主题：`tools/permission` 从扁平 `allow/ask/deny` 升格为「主体 × 路由组 × 位 + sudo」；`tools` 元数据面与 `tools/gateway` 挂载点同步扩展，全部加法、零破坏**
+
+目标：产品层（Seelex）不再维护任何旁路的「工具可见性硬编码名单」，只用框架即可表达「谁能用哪些工具、以什么位、是否需要 sudo 口令」。
+
+### 🏗️ 01 — `tools`：可选元数据面
+
+- `ToolEntry` 新增可选指针字段 `Meta *ToolMeta`；未声明时为零（`nil`），旧 provider 行为不变。
+- 新增 `ToolMeta{Kind, Groups, Bits, Visibility, Resource, Signal}`、`ToolKind`（`read/write/control/admin`）、位常量 `BitRead=4/BitWrite=2/BitExecute=1`、控制信号 `term/stop/chld/pause`。
+- 新增 `MetaMiddleware` + `WithMetaMiddleware`：中间件可按 `meta.Kind/Groups` 路由，无需产品名单。
+- `Registry.Snapshot` 深拷贝 `Meta`；新增哨兵错误 `ErrToolNotVisible`、`ErrPermissionDenied`。
+
+### 🏗️ 02 — `tools/permission`：Linux 式权限模型
+
+- `Subject`（不透明标识，`""` = 匿名）、`SubjectRoot`。
+- `PermissionGroup{Name, Match, Mode, Default, Resource}` 成为一等路由维度。
+- `SubjectGrant` / `GrantBit{Bits, Resources}` / `SudoMode{none/password/nopasswd}`。
+- `PermissionConfig` 新增 `Groups`、`Subjects`、`MissingBit`（零值 = `ask`）。
+- `PermissionRule` 新增可选 `Bits *uint8`。
+- `PermissionChecker.CheckFor(subject, tool, args)`（主体维度）与 `VisibleFor(subject, tool)`（断位 = 不在 PATH）；`Check` 保留为 `CheckFor("", ...)` 的薄封装。
+- 求值顺序：route（组，LMRW）→ 判位（断位走 `MissingBit`）→ `Rules`（最后、最细，覆盖组默认）。
+- `ApprovalResponse.Scope`（`once/tool/session/args`，空 = `once`）与 `ElevationEvent` / `ElevationAuditor` / `SetElevationAuditor` / `GrantElevation`：每次提权必发审计，`session` 仅同 subject+group 复用。
+
+### 🏗️ 03 — `tools/gateway` / `tools/holder`：装配点
+
+- `DefaultGateway.SetSubjectResolver` / `SetBitEnforcer`（R1 / R8 挂载点；框架内不含任何路径解析逻辑）。
+- `checkPermission` 改为返回可 `errors.Is` 辨别的两类错误（断位 ⇒ `ErrToolNotVisible`，位齐被拒 ⇒ `ErrPermissionDenied`）。
+- `VisibleTools` 叠加主体可见性：断位工具与非 root 的控制类工具不再返回。
+- 控制类工具（`Meta.Kind == control`）默认仅 root 可路由；`ToolMeta(name)` 把 `Signal` 透出给上层 loop。
+- `assessRisk` 优先读 `ToolMeta.Kind`，无 Meta 时回退旧 switch。
+- `holder.Holder` 新增只读 `Entry` / `Entries` 访问器（供网关读取元数据）。
+
+### 🏗️ 04 —— 中间件判定与「执行选择页面」
+
+- 新增 `permission.Gate` / `Gate.Middleware` / `Gate.Decide`：判定集中为 `tools.MetaMiddleware`，装配完全自由；授权主体是 session 下的 engine（`Engine` / `WithEngine` / `EngineResolver`）。
+- 新增英文拒绝错误 `DenialError` / `InvisibilityError`：统一前缀 `permission denied: cannot complete the invocation of tool "X"`，断位追加 `: the tool is not in this engine's namespace`；可 `errors.Is` 区分 `ErrPermissionDenied` / `ErrToolNotVisible`。
+- 拒绝 ⇒ 执行选择页面：未设 `Gate.DenyWithoutPrompt` 时，任何拒绝（不可见 / 策略拒绝 / 控制类 / enforcer 的 deny）先呈现 `ApprovalHandler`；通过只获得**单次操作的提权**（不写 allow 缓存、不记提权），`full_access` 亦然。
+- 提权由 harness 完成：新增 `Elevator` 接口与默认实现 `CheckerElevator`；`SetElevationSource` / `Elevator()` / `Elevated` 可整体接管提权读写。
+- `Gate.Enforcer`：`BitEnforcer` 接入 `Gate.evaluate`，最先判定（`ok=false` 表示不干预、回退到位判定），与 `DefaultGateway` 同顺序、同语义。
+- 审批请求信息齐备：`ApprovalContext.Context` 原样透传调用 ctx；`NewApprovalRequest` 填齐 `ID` / `SessionID`（`WithSessionID`）/ `Timeout`（`Gate.Timeout`，缺省 `DefaultApprovalTimeout`）/ `Risk`（`RiskOf`）/ `Preview`（`FormatPreview`）；`DefaultGateway` 与中间件共用该构造函数（纯填充，字段无增删）。
+- `NewChannelApprovalHandler`：先挂回执通道再投递请求，等待时同时监听请求超时与 ctx 取消（两者都视作拒绝）。
+- 新增离线示例 `example_Implement/11_permission_middleware`：拒绝→选择页面、`full_access` 仍询问、harness 持有提权台账三段演示。
+- 验证：`tools/permission` 与 `tools/gateway` 新增 14 项测试（8 个测试函数）（enforcer 优先级 / ctx 透传 / 请求字段 / channel 适配器边界），`go test ./tools/... -count=1` 与 `-race` 全绿。
+
+### ✅ 兼容性
+
+- 无破坏性变更：`PermissionConfig{Mode, Rules}` 字面量、`Check`、`NewPermissionChecker`、`AddAllowRule`、`DefaultApproveOptions`、`ApprovalRequest` 字段、`WithCallTimeout/WithMiddleware/WithDispatchRetries` 均原样保留且行为不变；`Check` 旧测试一行未改仍全绿。
+- 所有新类型零值安全（缺省 = 现有行为）。
+
+### 📊 验证
+
+- `go build ./...`、`go test ./tools/...`、`go vet ./tools/...` 全绿。
+- 新增 table-driven 测试：判定矩阵 `{main,sub}×{ro,rw,ctl,adm}`、只写 Groups 表达默认动作、`errors.Is` 两类错误、`Scope=once|session` + 审计回调、`VisibleTools` 断位过滤、`MetaMiddleware` 路由、元数据快照隔离。
+
+### ⚠️ 已知事项
+
+- CHANGELOG 中原有一条更早的 `## v0.3.0 (2026-06-14) — 架构重构` 条目（与本次改动无关），编号与本次冲突，待维护者裁决是否重编号。
+- 迁移指南见 [`docs/arch/15-tool-permission-model.md`](docs/arch/15-tool-permission-model.md) 第 9 节（Seelex v0.2.0 → v0.3.0）。
+
+---
+
 ## v0.2.0 (2026-09-14) — 多模态附件与限流装配层
 
 > **主题：`limits` 准入装配层 + `types` 附件载体（`FilePart` / `FileKind` / `FileID`）+ 非 2xx 可分类错误**

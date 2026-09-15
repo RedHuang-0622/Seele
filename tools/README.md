@@ -10,7 +10,7 @@
 | [`adapter/`](adapter/README.md) | 把通用 catalog/invoker 适配为 MCP、microHub、Skills provider |
 | [`holder/`](holder/README.md) | Provider 注册、工具索引、内联函数与插件可见性 |
 | [`gateway/`](gateway/README.md) | 在 Holder 上装配权限、审批和可见性边界 |
-| [`permission/`](permission/README.md) | 通用 allow/ask/deny 规则与审批类型 |
+| [`permission/`](permission/README.md) | 主体 × 路由组 × 位（rwx）+ sudo 的权限模型与审批类型 |
 | [`mcp/`](mcp/README.md) | MCP stdio/SSE 连接、工具发现、调用与熔断 |
 | [`microhub/`](microhub/README.md) | microHub registry、路由和 gRPC 调用适配 |
 
@@ -22,6 +22,9 @@
 | `ToolProvider`、`FunctionProvider` | 提供普通 Function Calling 工具集合 |
 | `Registry`、`Dispatcher` | 建立工具快照并按名称执行调用 |
 | `Middleware` | 注入 trace、审查、输出过滤或指标 |
+| `MetaMiddleware`、`WithMetaMiddleware` | 让中间件读取 `ToolMeta` 而不改 provider 合约 |
+| `ToolMeta`、`ToolKind`、`BitRead/BitWrite/BitExecute` | 可选工具元数据：种类、路由组、所需位、可见主体、控制信号 |
+| `ErrToolNotVisible`、`ErrPermissionDenied` | 用 `errors.Is` 区分“不在 PATH”与“EPERM” |
 | `SchemaOf`、`EnumOf` | 生成 Function Calling 使用的 JSON Schema 子集 |
 
 ## 实现细节
@@ -29,6 +32,7 @@
 - 根 `Registry` 在注册和显式 `Refresh` 时发布快照，分发时不持锁执行 handler。
 - `builtin.Provider` 只包含产品无关、无工作区写入能力的工具，并且不会被 Agent 隐式注册。
 - `holder.Holder` 保留现有插件装配 API；`gateway.DefaultGateway` 在它之上执行权限与审批检查。
+- `ToolEntry.Meta`（`*ToolMeta`，可选）承载种类 / 路由组 / 位 / 可见主体 / 控制信号；`Registry.Snapshot` 深拷贝它，`WithMetaMiddleware` 在普通中间件之外把它透传给中间件。未声明 `Meta` 的旧 provider 收到零值，行为不变。
 - MCP、microHub 与 Skills 都实现根 `ToolProvider`，因此 `agent` 只依赖调用方注入的工具运行时，不需要了解具体协议。
 - 远程 provider 的连接、刷新和关闭均由调用方显式控制；根工具系统不会读取 Agent history 或工作区。
 

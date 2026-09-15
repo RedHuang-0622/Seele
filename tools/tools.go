@@ -21,7 +21,59 @@ var (
 	ErrDuplicateProvider = errors.New("duplicate tool provider")
 	ErrInvalidEntry      = errors.New("invalid tool entry")
 	ErrUnavailable       = errors.New("tool temporarily unavailable")
+
+	// ErrToolNotVisible reports that a tool exists but is not routable for the
+	// current subject because it lacks the required permission bits ("not in
+	// PATH"). Callers separate it from ErrPermissionDenied via errors.Is.
+	ErrToolNotVisible = errors.New("tool not visible to subject")
+
+	// ErrPermissionDenied reports that the required bits were present but the
+	// resolved policy still refused the call ("EPERM").
+	ErrPermissionDenied = errors.New("permission denied")
 )
+
+// Permission bits mirror the Linux rwx model: r=4, w=2, x=1. A tool declares
+// what it needs through ToolMeta.Bits; a subject is granted bits through
+// permission.SubjectGrant. The numeric values are intentionally stable.
+const (
+	BitRead    uint8 = 4
+	BitWrite   uint8 = 2
+	BitExecute uint8 = 1
+)
+
+// ToolKind classifies a tool so that policy and middleware can route it without
+// hard-coding tool names. The zero value means "unclassified".
+type ToolKind string
+
+const (
+	ToolKindRead    ToolKind = "read"
+	ToolKindWrite   ToolKind = "write"
+	ToolKindControl ToolKind = "control"
+	ToolKindAdmin   ToolKind = "admin"
+)
+
+// Control signals, meaningful only when ToolMeta.Kind == ToolKindControl. The
+// framework never interprets them; they are surfaced to the upper loop through
+// the gateway meta accessor.
+const (
+	SignalTerm  = "term"  // normal shutdown
+	SignalStop  = "stop"  // suspend
+	SignalChild = "chld"  // in-flight checkpoint
+	SignalPause = "pause" // hand over to a human
+)
+
+// ToolMeta is optional, pointer-carried metadata for a ToolEntry. It is the one
+// place where a provider declares routing groups, required permission bits,
+// visibility scope, resource and control signal. A nil *ToolMeta is the zero
+// state and preserves the pre-v0.3.0 behaviour exactly.
+type ToolMeta struct {
+	Kind       ToolKind // read | write | control | admin ("" = unclassified)
+	Groups     []string // routing groups this tool belongs to
+	Bits       uint8    // required permission bits (r=4 w=2 x=1); 0 = none
+	Visibility []string // visible subjects; empty = everyone
+	Resource   string   // "project" | "desktop" | "" (no resource constraint)
+	Signal     string   // control signal, only when Kind == ToolKindControl
+}
 
 // ToolHandler executes a function-calling request. ArgumentsJSON is kept
 // opaque so a provider can choose its own validation and decoding policy.
@@ -45,6 +97,11 @@ type ToolEntry struct {
 	Handler      ToolHandler
 	OutputSchema map[string]interface{}
 	Metadata     map[string]string
+
+	// Meta is optional, additive metadata used by the permission model. It is a
+	// pointer so that old named literals keep compiling and a missing value is
+	// the safe zero state.
+	Meta *ToolMeta
 }
 
 // ToolProvider is the synchronous provider contract. Providers may refresh
@@ -94,6 +151,12 @@ type Dispatcher interface {
 // Middleware decorates one handler without changing provider contracts.
 type Middleware func(name string, next ToolHandler) ToolHandler
 
+// MetaMiddleware decorates one handler and additionally receives the tool's
+// ToolMeta, so a middleware can route on meta.Kind / meta.Groups without the
+// registry leaking a name-based lookup. The meta value is the zero ToolMeta
+// when the provider did not declare one, keeping old providers unchanged.
+type MetaMiddleware func(name string, meta ToolMeta, next ToolHandler) ToolHandler
+
 // Snapshot is an immutable view used by callers to assemble model requests.
 type Snapshot struct {
 	Definitions []seeletypes.Tool
@@ -108,6 +171,7 @@ type Registry struct {
 	providers         map[string]ToolProvider
 	state             Snapshot
 	middlewares       []Middleware
+	metaMiddlewares   []MetaMiddleware
 	dispatchRetries   int
 	dispatchRetryWait time.Duration
 	callTimeout       time.Duration
@@ -138,6 +202,15 @@ func WithCallTimeout(timeout time.Duration) RegistryOption {
 func WithMiddleware(mw ...Middleware) RegistryOption {
 	return func(r *Registry) {
 		r.middlewares = append(r.middlewares, mw...)
+	}
+}
+
+// WithMetaMiddleware registers middlewares that also receive the tool's
+// ToolMeta. They wrap the plain middlewares, so a meta middleware can inspect
+// routing metadata before the request reaches the handler.
+func WithMetaMiddleware(mw ...MetaMiddleware) RegistryOption {
+	return func(r *Registry) {
+		r.metaMiddlewares = append(r.metaMiddlewares, mw...)
 	}
 }
 
@@ -220,6 +293,7 @@ func (r *Registry) rebuildLocked() error {
 				return fmt.Errorf("%w: tool %q", ErrDuplicateTool, name)
 			}
 			entry.Handler = chain(name, entry.Handler, r.middlewares)
+			entry.Handler = chainMeta(name, entry.Meta, entry.Handler, r.metaMiddlewares)
 			entries[name] = entry
 			if name[0] != '_' {
 				definitions = append(definitions, entry.Definition)
@@ -239,6 +313,24 @@ func chain(name string, handler ToolHandler, middlewares []Middleware) ToolHandl
 	return handler
 }
 
+// chainMeta wraps the handler with meta-aware middlewares. A nil *ToolMeta is
+// passed through as the zero ToolMeta so old providers behave identically.
+func chainMeta(name string, meta *ToolMeta, handler ToolHandler, middlewares []MetaMiddleware) ToolHandler {
+	if len(middlewares) == 0 {
+		return handler
+	}
+	value := ToolMeta{}
+	if meta != nil {
+		value = *meta
+	}
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		if middlewares[i] != nil {
+			handler = middlewares[i](name, value, handler)
+		}
+	}
+	return handler
+}
+
 func (r *Registry) Snapshot() Snapshot {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -251,6 +343,7 @@ func (r *Registry) Snapshot() Snapshot {
 		entry.Definition = cloneDefinition(entry.Definition)
 		entry.OutputSchema = cloneSchema(entry.OutputSchema)
 		entry.Metadata = cloneStrings(entry.Metadata)
+		entry.Meta = cloneMeta(entry.Meta)
 		entries[name] = entry
 	}
 	return Snapshot{Definitions: definitions, Entries: entries}
@@ -371,4 +464,14 @@ func cloneStrings(values map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func cloneMeta(meta *ToolMeta) *ToolMeta {
+	if meta == nil {
+		return nil
+	}
+	cloned := *meta
+	cloned.Groups = append([]string(nil), meta.Groups...)
+	cloned.Visibility = append([]string(nil), meta.Visibility...)
+	return &cloned
 }

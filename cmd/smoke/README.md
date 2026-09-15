@@ -45,6 +45,26 @@ go test ./cmd/smoke -run 'TestRealChain(ReActToolCalling|WorkPlanImportExport)$'
 
 命令通过 Session Hook 捕获真实工具调用和执行效果。模型只返回非空文本但没有调用指定工具时，冒烟测试会失败。
 
+## 权限冒烟
+
+`permission_smoke_test.go` 用真 `DefaultGateway` 权限门控驱动整条装配链路
+（Session/ReAct → Agent → Gateway.Dispatch）：
+
+- 离线（无凭据，始终可跑）：主体位不足 → `ErrToolNotVisible`；位齐 → 执行；
+  控制类工具仅 `root` 可路由；审批通过授予的 session 提权被后续调用复用。
+- 真实 API（`RUN_REAL_API_SMOKE=true` + 凭据）：让真实模型发起工具调用，断言
+  同一门控结论。
+
+```powershell
+# 离线权限冒烟
+go test ./cmd/smoke -run Permission -v -count=1
+
+# 含真实 API 权限用例
+$env:RUN_REAL_API_SMOKE = "true"
+$env:SMOKE_CONFIG = "<absolute-path-to-accounts.yaml>"
+go test ./cmd/smoke -run 'Permission' -v -count=1 -timeout 180s
+```
+
 ## 实现细节
 
 - 命令使用 `agent.NewWithComponents` 显式装配 `ChatClient`、`holder`、`gateway` 和 `builtin.Provider`，不会启动 microHub 或隐式加载产品工具。

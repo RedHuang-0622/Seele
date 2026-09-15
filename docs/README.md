@@ -17,3 +17,4 @@
 - [事件契约与可观测性装配](arch/12-event-contracts.md)
 - [初始版本的可扩展性与契约原则](arch/13-initial-architecture-principles.md)
 - [Seelex 集成指南](arch/14-seelex-integration-guide.md)
+- [工具权限模型](arch/15-tool-permission-model.md)

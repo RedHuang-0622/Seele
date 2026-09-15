@@ -10,6 +10,7 @@
 | `Register`、`Unregister` | 管理 Provider |
 | `RegisterInline` | 将普通 Go 函数注册为 Function Calling 工具 |
 | `Tools`、`Dispatch` | 导出模型定义并按名称调用 handler |
+| `Entry`、`Entries` | 按名 / 全量读取工具条目（含可选 `Meta`） |
 | `PluginManager` | 用 include/exclude 规则控制工具集合 |
 
 ## 实现细节
@@ -17,6 +18,7 @@
 - Provider 变化时重建名称到 `ToolEntry` 的快照，读路径通过原子指针完成 O(1) 查找。
 - 分发只对 `tools.ErrUnavailable` 重试，并把 timeout 派生到 handler 的 `context.Context`。
 - `_` 开头的内部工具保留分发能力，但不会出现在 LLM 可见定义列表中。
+- `Entry` / `Entries` 返回只读快照（含可选 `Meta`），供网关读取工具元数据。
 
 ## 依赖与验证
 

@@ -12,5 +12,6 @@
 | [12-event-contracts.md](12-event-contracts.md) | 结构化事件、Sink、心跳和模块 Locator 的跨模块契约 |
 | [13-initial-architecture-principles.md](13-initial-architecture-principles.md) | 初始版本的接口、事件、错误、README 与装配原则 |
 | [14-seelex-integration-guide.md](14-seelex-integration-guide.md) | Seelex 对 Agent、账户池、工具、上下文、会话、WorkPlan、事件和错误模块的集成方式 |
+| [15-tool-permission-model.md](15-tool-permission-model.md) | 工具权限模型：主体 × 路由组 × 位 + sudo，两类不可用错误与迁移指南 |
 
 阅读顺序：先读运行时边界，再读扩展契约，最后按测试方案验收实现。
