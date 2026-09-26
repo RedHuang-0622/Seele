@@ -49,7 +49,12 @@ type Session struct {
 	// published 是最近一次发布的历史快照（观测面无锁读取；见
 	// HistoryIfAvailable 与 WithHistoryPublisher）。运行期间由循环在历史
 	// 检查点更新，空闲时由 HistoryIfAvailable 的直读路径顺手刷新。
-	published         atomic.Pointer[sessionHistorySnapshot]
+	published atomic.Pointer[sessionHistorySnapshot]
+	// inLoopSeq / inLoopActive 是环内历史把手的守卫（见 inloop.go）：前者是
+	// 单调递增的回合序号，后者标记此刻是否有回合进行中。两者只由
+	// enterInLoop / exitInLoop 在持锁期间写。
+	inLoopSeq         atomic.Uint64
+	inLoopActive      atomic.Bool
 	cache             cache.Provider
 	store             storage.Storage
 	modelName         string
@@ -264,6 +269,10 @@ func (e *Session) ExportTrace() *tracer.Tree {
 func (e *Session) Chat(ctx context.Context, userInput string) (string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// 锁已持有 → 注入环内把手。exitInLoop 在 Unlock 之前执行（defer LIFO），
+	// 保证「进行中」标志的复位发生在锁内。
+	ctx = e.enterInLoop(ctx)
+	defer e.exitInLoop()
 	reply, err := e.loop.Run(ctx, userInput, nil)
 	e.lastTrace = e.tracer.Export(ctx)
 	return reply, err
@@ -273,6 +282,8 @@ func (e *Session) Chat(ctx context.Context, userInput string) (string, error) {
 func (e *Session) ChatStream(ctx context.Context, userInput string, onChunk func(string)) (string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	ctx = e.enterInLoop(ctx)
+	defer e.exitInLoop()
 	reply, err := e.loop.Run(ctx, userInput, onChunk)
 	e.lastTrace = e.tracer.Export(ctx)
 	return reply, err
@@ -307,6 +318,12 @@ func (e *Session) AppendHistory(msg types.Message) {
 func (e *Session) SetSystemPrompt(prompt string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.setSystemPromptLocked(prompt)
+}
+
+// setSystemPromptLocked 是 SetSystemPrompt 的实现体：调用方必须已持有 e.mu
+// （环内把手 InLoop.SetSystemPrompt 与公开方法共用它，两条路径不会分叉）。
+func (e *Session) setSystemPromptLocked(prompt string) {
 	rl, ok := e.loop.(*ReActLoop)
 	if !ok {
 		return

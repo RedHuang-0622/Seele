@@ -454,6 +454,17 @@ func (rl *ReActLoop) History() []types.Message {
 	return cp
 }
 
+// ReplaceHistory 就地覆盖工作历史，表达式与 ContextController 的
+// ReplaceHistory 决策落地时（handleContextEvent）完全一致，因此「循环内策略
+// 折叠」与「宿主环内折叠」写入的是同一份形状。
+//
+// 本方法**不取任何锁**：ReAct 循环自己从不加锁，历史由 Session.mu 保护。只有
+// 已经持有该锁的路径可以调用它——正式入口是 InLoop.ReplaceHistory（凭 Chat /
+// ChatStream 注入的 ctx 取把手），不要在其它 goroutine 上直接调本方法。
+func (rl *ReActLoop) ReplaceHistory(history []types.Message) {
+	rl.history = append(rl.history[:0], history...)
+}
+
 // publishHistory 把一份历史快照交给发布器（nil 发布器为 no-op）。
 func (rl *ReActLoop) publishHistory(history []types.Message) {
 	if rl == nil || rl.historyPublisher == nil {

@@ -9,6 +9,7 @@
 | `NewSession` | 从 `SessionComponents` 创建显式会话 |
 | `Session.Chat` / `ChatStream` | 执行一次同步或流式对话 |
 | `Session.HistoryIfAvailable` | 观测面非阻塞读取历史（会话忙时返回最近发布的检查点快照） |
+| `InLoopFrom(ctx)` | 环内历史把手（`History` / `ReplaceHistory` / `SetSystemPrompt`）：只在 `Chat`/`ChatStream` 注入的 ctx 上是活的，用于回合内当场改写 working history |
 | `WithHistoryPublisher` | 循环历史检查点发布器（宿主可自行接收检查点快照） |
 | `Session.Reset` | 显式清空 working history 与已注入的 durable history，开始新会话 |
 | `NewReActLoop` | 创建底层 ReAct 执行循环 |
@@ -35,8 +36,12 @@
 
 | 路径 | 用哪个 | 语义 |
 | --- | --- | --- |
-| 执行面（与 `ChatStream` 同 goroutine，如流式回调内） | `History()` | 阻塞等待，拿到的一定是最新历史 |
+| 执行面（与 `ChatStream` 同 goroutine，如流式回调、工具 handler 内） | `ContextController` 的 `ReplaceHistory` 决策，或 `InLoopFrom(ctx)` | 不取锁：改的就是本轮正在用的那份历史，当场生效 |
 | 观测面（其它 goroutine：UI/详情/投影/落账） | `HistoryIfAvailable()` | 立刻返回：空闲 → 权威历史；运行中 → 最近一次发布的检查点快照 |
+
+**执行面不能用 `Session.History()`**：它和 `ChatStream` 用的是同一把非重入
+`Mutex`，同 goroutine 二次进入就是永久自锁（表现：会话永远"运行中"，取消 ctx
+也退不出来）。历史读写要落在执行面，只有下面两条路。
 
 检查点发布点是循环里的三处：模型调用前（`ContextBeforeModel`）、assistant 落
 历史后（`ContextAfterAssistant`）、工具结果落历史后（`ContextAfterTool`）。
