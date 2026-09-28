@@ -33,9 +33,13 @@ type Agent interface {
 
 // Session is the user-facing conversation object.
 type Session struct {
-	// mu serializes one ordered conversation. Use separate Sessions for
-	// parallel work; a ChatStream callback must not re-enter this Session.
+	// mu 只护 Session 自己的短状态（lastTrace、闸门惰性初始化）。回合串行不靠它：
+	// Chat / ChatStream 领的是容量 1 的回合令牌通道（turn），没有任何会话锁被整轮
+	// 持有（见 turn.go）。
 	mu sync.Mutex
+
+	// turn 是回合闸门：一轮一枚令牌，用通道代替「把会话锁征用整轮」。
+	turn chan struct{}
 
 	agent     Agent
 	llm       types.ChatCompleter
@@ -50,11 +54,6 @@ type Session struct {
 	// HistoryIfAvailable 与 WithHistoryPublisher）。运行期间由循环在历史
 	// 检查点更新，空闲时由 HistoryIfAvailable 的直读路径顺手刷新。
 	published atomic.Pointer[sessionHistorySnapshot]
-	// inLoopSeq / inLoopActive 是环内历史把手的守卫（见 inloop.go）：前者是
-	// 单调递增的回合序号，后者标记此刻是否有回合进行中。两者只由
-	// enterInLoop / exitInLoop 在持锁期间写。
-	inLoopSeq         atomic.Uint64
-	inLoopActive      atomic.Bool
 	cache             cache.Provider
 	store             storage.Storage
 	modelName         string
@@ -120,6 +119,7 @@ func New(a Agent, opts ...Option) *Session {
 		agent:     a,
 		cfg:       DefaultSessionConfig(),
 		sessionID: fmt.Sprintf("sess_%d", time.Now().UnixNano()),
+		turn:      make(chan struct{}, 1),
 		tracer:    &tracer.NoopTracer{},
 	}
 	if a != nil {
@@ -141,6 +141,7 @@ func New(a Agent, opts ...Option) *Session {
 		rl.store = e.store
 		rl.hooks = e.hooks
 		rl.telemetryHook = e.telemetryHook
+		rl.blockSystemPrompt = e.blockSystemPrompt
 		if e.cfg.MaxLoops != DefaultSessionConfig().MaxLoops {
 			rl.cfg.MaxLoops = e.cfg.MaxLoops
 		}
@@ -156,14 +157,40 @@ func New(a Agent, opts ...Option) *Session {
 // AgentRuntime returns the assembled agent used by this Session.
 func (e *Session) AgentRuntime() Agent { return e.agent }
 
-// History 返回当前对话历史。
+// History 返回当前对话历史的拷贝。**永不阻塞**：工作历史由循环的工作状态短临界区
+// 保护，回合在飞时也一样立刻返回。
+//
+// 环内的工具 handler / LoopHooks / ContextController 与环外的 UI、折叠路径走的是
+// 同一个方法、同一份数据（旧模型下环内调用是同 goroutine 自锁，绕开它需要一张注入
+// ctx 的把手；那个模型连同把手一起删掉了，见 turn.go）。
 func (e *Session) History() []types.Message {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.loop != nil {
-		return e.loop.History()
+	if e == nil || e.loop == nil {
+		return nil
 	}
-	return nil
+	return e.loop.History()
+}
+
+// ReplaceHistory 就地替换工作历史：会话空闲 → 当场生效；回合在飞 → 挂进循环的检查点
+// 队列并**立即返回**，由循环在下一个安全检查点落地（同回合的下一次请求读到的就是替换
+// 结果）。会丢掉在飞 tool_call 单元的替换被拒（ErrInFlightToolCallDropped）且历史不动。
+//
+// 自定义 Loop 未实现该能力时报 ErrLoopUnsupported。
+func (e *Session) ReplaceHistory(history []types.Message) error {
+	capable, ok := e.historyCapability()
+	if !ok {
+		return ErrLoopUnsupported
+	}
+	return capable.ReplaceHistory(history)
+}
+
+// historyCapability 返回底层 Loop 的工作历史能力。ReActLoop 实现它；自定义 Loop 未
+// 实现时 ok=false，写路径按各自语义退化（见 turn.go 的 workingHistory）。
+func (e *Session) historyCapability() (workingHistory, bool) {
+	if e == nil || e.loop == nil {
+		return nil, false
+	}
+	capable, ok := e.loop.(workingHistory)
+	return capable, ok
 }
 
 // HistoryIfAvailable 返回当前对话历史的副本，**永不阻塞**：
@@ -208,17 +235,12 @@ func (e *Session) publishHistory(history []types.Message) {
 	e.published.Store(&sessionHistorySnapshot{messages: history})
 }
 
-// ClearHistory 清空对话历史。
+// ClearHistory 清空对话历史（保留 system 消息）。
 func (e *Session) ClearHistory() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.clearHistoryLocked()
-}
-
-func (e *Session) clearHistoryLocked() {
-	if e.loop != nil {
-		e.loop.ClearHistory()
+	if e == nil || e.loop == nil {
+		return
 	}
+	e.loop.ClearHistory()
 }
 
 // Reset clears both the in-memory working history and the caller-owned
@@ -226,11 +248,12 @@ func (e *Session) clearHistoryLocked() {
 // starting a fresh conversation; ClearHistory only changes the current
 // working view for compatibility with the lower-level Loop API.
 func (e *Session) Reset(ctx context.Context) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	if e == nil || e.loop == nil {
+		return nil
+	}
 	rl, ok := e.loop.(*ReActLoop)
 	if !ok {
-		e.clearHistoryLocked()
+		e.loop.ClearHistory()
 		return nil
 	}
 	if rl.historyOwner != nil {
@@ -267,81 +290,69 @@ func (e *Session) ExportTrace() *tracer.Tree {
 
 // Chat 执行 ReAct 循环，返回最终文本回复。
 func (e *Session) Chat(ctx context.Context, userInput string) (string, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	// 锁已持有 → 注入环内把手。exitInLoop 在 Unlock 之前执行（defer LIFO），
-	// 保证「进行中」标志的复位发生在锁内。
-	ctx = e.enterInLoop(ctx)
-	defer e.exitInLoop()
+	if err := e.acquireTurn(ctx); err != nil {
+		return "", err
+	}
+	defer e.releaseTurn()
 	reply, err := e.loop.Run(ctx, userInput, nil)
-	e.lastTrace = e.tracer.Export(ctx)
+	e.rememberTrace(ctx)
 	return reply, err
 }
 
 // ChatStream 执行流式 ReAct 循环。
 func (e *Session) ChatStream(ctx context.Context, userInput string, onChunk func(string)) (string, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	ctx = e.enterInLoop(ctx)
-	defer e.exitInLoop()
+	if err := e.acquireTurn(ctx); err != nil {
+		return "", err
+	}
+	defer e.releaseTurn()
 	reply, err := e.loop.Run(ctx, userInput, onChunk)
-	e.lastTrace = e.tracer.Export(ctx)
+	e.rememberTrace(ctx)
 	return reply, err
+}
+
+// rememberTrace 记录本轮追踪树（短临界区；ExportTrace 取同一把锁读）。
+func (e *Session) rememberTrace(ctx context.Context) {
+	tree := e.tracer.Export(ctx)
+	e.mu.Lock()
+	e.lastTrace = tree
+	e.mu.Unlock()
 }
 
 // SetMaxLoops 动态设置最大 tool_call 循环次数。
 // 0 表示使用默认值（25）。
 func (e *Session) SetMaxLoops(n int) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	rl, ok := e.loop.(*ReActLoop)
-	if !ok {
+	if e == nil || e.loop == nil {
 		return
 	}
-	if n <= 0 {
-		n = 25
-	}
-	rl.cfg.MaxLoops = n
-}
-
-// AppendHistory 追加消息到对话历史。
-func (e *Session) AppendHistory(msg types.Message) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
 	if rl, ok := e.loop.(*ReActLoop); ok {
-		rl.history = append(rl.history, msg)
+		rl.SetMaxLoops(n)
 	}
 }
 
-// SetSystemPrompt 动态替换 system prompt。
-// 找到已有 system 消息替换，没有则追加到历史开头。
-func (e *Session) SetSystemPrompt(prompt string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.setSystemPromptLocked(prompt)
-}
-
-// setSystemPromptLocked 是 SetSystemPrompt 的实现体：调用方必须已持有 e.mu
-// （环内把手 InLoop.SetSystemPrompt 与公开方法共用它，两条路径不会分叉）。
-func (e *Session) setSystemPromptLocked(prompt string) {
-	rl, ok := e.loop.(*ReActLoop)
-	if !ok {
+// AppendHistory 追加一条消息到对话历史：空闲当场落地，回合在飞排队到下一个检查点
+// （回合里插消息若落进「tool_calls 已发、结果未落」的中间态会造孤儿）。
+func (e *Session) AppendHistory(msg types.Message) {
+	if capable, ok := e.historyCapability(); ok {
+		capable.AppendHistory(msg)
 		return
 	}
-	msg := types.Message{Role: "system", Content: &prompt}
-	if e.blockSystemPrompt {
-		for i := range rl.promptBlocks {
-			if rl.promptBlocks[i].Name == "system" {
-				rl.promptBlocks[i].Messages = []types.Message{msg}
-				return
-			}
-		}
+	if rl, ok := e.loop.(*ReActLoop); ok {
+		rl.AppendHistory(msg)
 	}
-	for i, m := range rl.history {
-		if m.Role == "system" {
-			rl.history[i] = msg
-			return
-		}
+}
+
+// SetSystemPrompt 动态替换 system prompt：找到已有 system 消息替换，没有则前插；会话
+// 把 prompt 静态挂在 promptBlocks 上时改块。落点规则与 ReplaceHistory 一致（空闲当场、
+// 回合在飞排队到下一个检查点）。
+func (e *Session) SetSystemPrompt(prompt string) {
+	if e == nil {
+		return
 	}
-	rl.history = append([]types.Message{msg}, rl.history...)
+	if capable, ok := e.historyCapability(); ok {
+		capable.SetSystemPrompt(prompt)
+		return
+	}
+	if rl, ok := e.loop.(*ReActLoop); ok {
+		rl.SetSystemPrompt(prompt)
+	}
 }

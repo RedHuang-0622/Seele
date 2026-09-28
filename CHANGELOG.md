@@ -2,30 +2,32 @@
 
 ---
 
-## Unreleased — `session`：环内历史把手 `InLoop`（加法，零破坏）
+## Unreleased — `session`：回合闸门 + 工作状态短临界区（删除环内历史把手 `InLoop`）
 
-> **主题：让宿主在"回合进行中"这一唯一持锁时刻读写 working history，不再二次取 `Session.mu`，也不再靠"下一次装载"兑现**
+> **主题：把「整轮持有会话锁」从根上换掉——回合准入改用容量 1 的令牌通道，工作状态收敛成短临界区，环内环外走同一套历史方法**
 
-背景：`Chat`/`ChatStream` 从进函数持锁到出函数，工具 `Dispatch` 与全部 `LoopHooks`、`ContextController` 回调都在同一 goroutine、同一把锁内。宿主在这条路径上调 `Session.History()/ReplaceHistory()/AppendHistory()/SetSystemPrompt()` = 同 goroutine 抢自己已持有的非重入锁 = 永久自锁（Seelex 的 `compact_context` 就踩在这上面，且它顺手攥着宿主的端口锁，把故障面从"这一轮没回复"放大到整进程）。
+背景：`Chat`/`ChatStream` 从进函数持锁到出函数，工具 `Dispatch` 与全部 `LoopHooks`、`ContextController` 回调都在同一 goroutine、同一把锁内。宿主在这条路径上调 `Session.History()/ReplaceHistory()/AppendHistory()/SetSystemPrompt()` = 同 goroutine 抢自己已持有的非重入锁 = 永久自锁（Seelex 的 `compact_context` 就踩在这上面，且它顺手攥着宿主的端口锁，把故障面从「这一轮没回复」放大到整进程）。上一版给引擎注入「环内把手」绕开它，那是绕症状；这一版换掉准入方式本身。
 
-### 🏗️ 01 — `session/inloop.go`：已持锁的历史通道
+### 🏗️ 01 — `session/turn.go`：回合闸门与检查点队列
 
-- `Chat`/`ChatStream` 取锁后把手注入本轮 ctx（`enterInLoop`），出锁前复位（`exitInLoop`，defer LIFO 保证复位在锁内）。
-- `InLoopFrom(ctx) (*InLoop, bool)` 是唯一取用方式：`ok=false` = 该 ctx 不来自进行中的回合。"我在不在环内"由引擎作证，宿主不需要用调用计数/时间戳去猜。
-- 三个动作：`History()`（拷贝，不取锁）、`ReplaceHistory(...)`（就地覆盖，表达式与 `handleContextEvent` 落地 `ContextController` 决策时一致，并重新发布观测面快照）、`SetSystemPrompt(...)`（与公开方法共用新抽出的 `setSystemPromptLocked`，两条路径不会分叉）。
-- 守卫：`inLoopSeq`（单调回合序号）+ `inLoopActive`（进行中标志）两枚原子量。只靠序号并在出回合清零是错的——下一回合会从 1 重数，上一回合泄漏的把手会被误判有效。
-- 下界：替换若会丢掉「assistant 已带 `tool_calls`、其结果尚未 append」的在飞单元 → `ErrInLoopInFlightDropped`，且历史不动（否则紧随其后 append 的 tool 消息成孤儿，provider 直接拒请求）。
-- 边界：把手不校验 goroutine（Go 无可靠身份），只允许在本轮调用栈内使用；`ErrLoopUnsupported` 表示自定义 `Loop` 未实现就地替换。
-- `ReActLoop` 新增 `ReplaceHistory`（无锁，正式入口是把手）。
+- 回合闸门：`Session.turn` 是容量 1 的令牌通道（`turn.go` 的 `acquireTurn`/`releaseTurn`，惰性初始化）。`Chat`/`ChatStream` 先领令牌（排队时感知 ctx，取消即返回，不僵在锁上），跑完整轮后归还：同一会话仍然串行，但**没有任何会话锁被整轮持有**。
+- 工作状态短临界区：`ReActLoop.stateMu` 只护 `history` / `promptBlocks` / `cfg`；临界区里绝不调用模型、工具、回调、发布器或持久化。
+- 写命令两种落点：空闲当场落地；回合在飞挂进 `pending` 队列，由循环在安全检查点落地——工具派发返回后（追加 tool 结果之前）与每次模型请求之前；回合收口（含提前 return）时把剩余命令一次落地。替换命令会清掉更早排队的命令（替换本来就覆盖整份历史）。
+- `ErrInFlightToolCallDropped`：替换若丢掉在飞 `tool_call` 单元（结果尚未 append）则拒收且历史不动。提交时校验；安全检查点上这份状态与提交时刻一致，所以那一次校验就是全部校验。
+- `ErrLoopUnsupported`：自定义 `Loop` 未实现 `workingHistory` 时替换明确报错，不回退成「追加两条」这种近似。
+
+### 🏗️ 02 — 删除环内把手，历史方法归一
+
+- 删除 `session/inloop.go`：`InLoopFrom` / `InLoop` / `enterInLoop` / `exitInLoop` / `ErrNotInLoop` / `ErrInLoopExpired` / `ErrInLoopInFlightDropped` 与 `inLoopSeq`、`inLoopActive` 两枚守卫原子量一并删除。
+- `Session.History()` 永不阻塞（只取短临界区）；新增 `Session.ReplaceHistory([]types.Message) error`；`AppendHistory` / `SetSystemPrompt` 与替换同一条路由（`ReActLoop.ReplaceHistory` 由无返回值改为返回 `error`）。
+- `Session.Chat` / `ChatStream` 换用回合闸门；`ExportTrace` 与写入 `lastTrace` 仍走 `Session.mu`（短临界区）。
 
 ### ✅ 验证
 
-- `session/inloop_test.go`：环内读写 + 同回合下一次请求即见折叠结果；被拒不改动历史；回合结束后旧 ctx 取不到把手；环外/`nil` ctx 一律不可用。
-- `go test ./session/ -count=1` 全绿。`TestRealChain*`/`TestTraceReal` 需有效账号，缺 key 时 401 属环境性。
-- 发布后消费方（Seelex）需去掉临时 `replace` 并回归 `require` 版本号。
+- `session/turn_test.go`：环内读历史立即返回；环内替换排队并在同回合的下一次请求生效（终态 4 条：帧 + 在飞 assistant + tool 结果 + 收尾 assistant）；丢掉在飞尾部被拒且历史不动；空闲替换立即生效；环内 `AppendHistory`/`SetSystemPrompt` 不自锁；闸门串行且 ctx 取消即返回。
+- `go build ./...`、`go vet ./session/...` 干净；`go test ./session/ -count=1` 与 `-race` 全绿。
 
 ---
-
 ## v0.3.0 (2026-09-16) — 工具权限模型（Linux 式 rwx + sudo）
 
 > **主题：`tools/permission` 从扁平 `allow/ask/deny` 升格为「主体 × 路由组 × 位 + sudo」；`tools` 元数据面与 `tools/gateway` 挂载点同步扩展，全部加法、零破坏**

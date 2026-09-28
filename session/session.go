@@ -91,6 +91,7 @@ func NewSession(components SessionComponents) (*Session, error) {
 	}
 
 	session := &Session{
+		turn:              make(chan struct{}, 1),
 		agent:             components.Agent,
 		llm:               components.Agent.LLM(),
 		cfg:               configuration,
@@ -138,6 +139,7 @@ func NewSession(components SessionComponents) (*Session, error) {
 	loop.respCache = cache.NewResponseCache(components.Cache)
 	loop.store = components.Store
 	loop.hooks = components.Hooks
+	loop.blockSystemPrompt = session.blockSystemPrompt
 	session.loop = loop
 	return session, nil
 }
