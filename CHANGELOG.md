@@ -2,6 +2,87 @@
 
 ---
 
+## Unreleased —— `jobs`：异步作业根能力（契约 + Manager + `jobs_manage`）
+
+> **主题：把「一次长任务」升格为框架一等对象——派发 / 观察 / 取回 / 终止 / 销项共用一份契约与同一张表；框架只给契约与管理面，派发工具与执行体留给产品**
+
+分工判据：**管理侧通用、派发侧产品化**。「观察 / 取回 / 终止 / 销项」对任何作业语义一致 ⇒ 进框架；
+与具体命令和提示词语义绑定的派发工具（`bash_bg` / `read_batch` / `fork_subagents`）留在产品。
+因此 `jobs` **不含**任何派发工具、**不含**任何执行体，也**不 import 任何产品包**（边界门禁）。
+
+### 🏗 01 — `jobs`：契约
+
+- `Kind`（开放字符串；框架只解释 `process` / `inline`）、`State`（`running` / `done` / `failed` / `killed`）、
+  `Handle`（`a<seq>`，seq 单调；禁用 `len(table)` 推——驱逐后会重号）
+- `Scope{Session, Subject}`：**两个并列字段，不拼字符串**——`Session` 是隔离与回收粒度、`Subject` 是主体
+  分组（`emp_<role>`）；两者都参加鉴权，`Spec.Node` / `Spec.Batch` 只做归属打点（照抄会话键与批次印章的分工）
+- `Spec{Kind, Scope, Node, Batch, Description, Payload, Index, Dedup, OutputPath, Handle}`（`Handle` 登记时回填）；`Record` 是只读投影
+  （状态 / 退出码 / 归属 / `OutputRef`（输出文件路径）/ 字节-行-游标 / 截断 / 终态摘要 ≤512 B）
+- `Manager`：`Dispatch / Declare / Start / Observe / Peek / Fetch / Complete / Kill / Done / Snapshot /
+  Reclaim / Events / ScopeOf / RetiredState / Close`
+- `Executor`：`Kind() Kind` + `Start(ctx, Spec, Sink) error`；
+  `Sink`：`Note / SignalBytes / Exit / Complete`
+  （`Exit` 是对文档三方法形态的必要补充：`Complete(state, summary)` 装不下 `Record.ExitCode`，
+  而「一律合成 124/137」会把 I-2 要求的区分抹掉）
+
+### 🏗 02 — `jobs.Manager`：表 + 状态机 + 四动作
+
+- 收尾**恰好一次**：正常退出 / 硬超时 / 被杀 / 执行体 panic 四条路都必须落到一次终态迁移；
+  执行体未自行收敛时由 Manager 合成终态，不留「永远 running 的假行」
+- 硬超时合成 `exit=124`、被杀合成 `exit=137`，并以注记写进输出文件（否则模型只看到「突然结束」）
+- 输出有界：超上限丢弃字节但仍向写入方报「已消费」（基础设施限制不得伪装成命令失败）；
+  增量走文件偏移游标，读取在 UTF-8 边界回退，不把多字节字符劈成两半
+- 作用域两档：`Snapshot(Scope{Session})` 与 `Snapshot(Scope{Session, Subject})`、`Reclaim` 同理；
+  取回 / 终止 / 销项一律**拒绝跨作用域**（照抄既有 `run.sessionID != sessionID` 的判据）
+- `Events()` 是**变更信号口**：容量 1、latest-wins，不推进游标、不进上下文；**事件流的构建留在产品侧**（框架不 import `event`：能力只能在构造期定下实现，拿不到会话，append 不到尾部，只能回填）
+
+### 🏗 03 — `jobs/builtin`：`jobs_manage`
+
+- 产品中立的通用管理工具：`observe`（不带 handle = 列本作用域在册作业）、`fetch`（消费式增量）、
+  `kill`、`done`（幂等；在跑作业拒收——终态只由执行体判定）
+- 出参是中性 JSON 投影，产品据此渲染自己的工作表格口径；`ToolMeta` 可用 `WithMeta` 覆盖以对齐产品权限模型
+
+### 🏗 04 — 门面化增补：登记-启动两段式 / 外部终态 / 只读增量 / 墓碑读面 / 输出归属
+
+第一版只有 `Dispatch`（登记即起执行体）。当**产品自己拥有执行体**（产品起进程、自己收尾）时，
+忠实的门面化需要下面五条；它们不改既有语义，只补"产品拥有执行体"这条路的缺口：
+
+- `Declare(ctx, Spec) (Handle, error)` + `Start(ctx, Handle) error`：登记与启动拆开。
+  `Dispatch` 会**立即**起执行体，产品便无法在"派发回执"里如实报告"执行体起不来"（那会变成一个
+  永远 running 的假行）；`Declare` 只登记（且**不要求** `Description`），`Start` 幂等地起已登记作业的执行体
+- `Complete(ctx, Handle, State, int, string) error`：**外部终态入口**（`Sink.Complete` 的孪生）。
+  终态原本只能由执行体经 `Sink` 判定；产品自有的执行体在 `Sink` 之外，需要一个按句柄的终态入口。
+  与 `Sink.Complete` 汇入唯一的 `finalize`，重复调用幂等；非终态入参归一为 `failed`；拒绝跨 `Scope`
+- `Peek(ctx, Handle, FetchBudget) (string, Record, error)`：**只读增量**（`Fetch` 的孪生）。
+  `Fetch` 是"读增量 + 推进游标 + 终态即销项"的一体动作；两段式工具面（读 → 提交）与探针需要
+  **不推进、不销项**的只读读取。两者共享同一条读取实现，只差"是否提交/销项"
+- `RetiredState(Handle) (State, bool)`：销项墓碑的**字面量读面**。销项后只剩 `ErrRetired` 读不到
+  终态；重复 `done`/`fetch` 的幂等回执需要说明"它以什么状态结束"
+- `Spec.OutputPath` + `Record.OutputRef` + 销项删文件：**输出归属**。缺省 Manager 自建
+  `<outputDir>/<handle>.log`（现于销项/驱逐/Close 时删除，`Close` 亦回收自建目录）；`Spec.OutputPath`
+  非空时改由产品拥有该文件——Manager 不建写句柄、只按偏移读，于是"登记期间目录可被 `RemoveAll`"
+  （Windows 上 `os.OpenFile` 不带 `FILE_SHARE_DELETE`）成立，文件生命周期归产品。`Record.OutputRef`
+  两种形态下都如实报出路径
+- `Spec.Handle`（登记时回填）：执行体拿到**自己的句柄**。管理者在派发之后才产生句柄，执行体若要在
+  执行侧维护一张按句柄索引的侧表（进程树 / 取消口 / 命令原文 / Index），`Spec.Handle` 是它唯一
+  能看到句柄的地方（调用方自填的值会被覆盖）
+- `Declare` 出来但既未 `Start` 也未 `Complete` 的作业，`Kill` 会**直接**合成 `killed` 终态
+  （没有执行体可取消，不必等一个永远不会回报的 goroutine）
+
+### ✅ 验证
+
+- `go build ./...`、`go vet ./jobs/...` 干净；`go test ./jobs/... -count=1`、`-race` 全绿
+- `jobs/manager_test.go`：往返取回并销项、增量消费、去重折叠、跨作用域拒绝、两档 Snapshot/Reclaim、
+  硬上限 124、被杀 137、panic 收尾、`done` 幂等且拒在跑、在途上限、未知 kind / 空描述拒绝、输出封顶不改终态；
+  增补面另有：`Declare` 不起执行体且允许空描述、`Start` 幂等、`Complete` 外部终态与幂等、`Complete` 拒跨作用域、
+  未启动作业 `Kill` 直接终态、`Peek` 不推进游标不销项、`Spec.Handle` 标识自身、外部 `OutputPath` 归产品所有、
+  Manager 自有输出于销项后删除
+- `jobs/builtin/manage_test.go`：工具形态与元数据、observe → fetch → 销项全链、越权与未知 op / handle 拒绝、未知字段拒绝
+- 契约细节见 `docs/arch/16-jobs-contracts.md`（§2.1 门面化增补）；包内说明见 `jobs/README.md`
+
+---
+
+
 ## Unreleased — `session`：回合闸门 + 工作状态短临界区（删除环内历史把手 `InLoop`）
 
 > **主题：把「整轮持有会话锁」从根上换掉——回合准入改用容量 1 的令牌通道，工作状态收敛成短临界区，环内环外走同一套历史方法**
