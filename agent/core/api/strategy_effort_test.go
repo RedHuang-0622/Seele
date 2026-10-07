@@ -67,3 +67,27 @@ func TestRequestOptsCarriesReasoningEffort(t *testing.T) {
 		t.Fatalf("requestOpts dropped the effort: %q", opts.ReasoningEffort)
 	}
 }
+
+// TestChatClientReasoningEffortIsOverridable 钉住"运行期改强度真的生效"：
+// 构造期值只是初值，SetReasoningEffort 之后 requestOpts 必须用新值——这是
+// `session` 档位（跟随会话 effort）的唯一落点，写歪了主角色就永远是空值不下发。
+func TestChatClientReasoningEffortIsOverridable(t *testing.T) {
+	client := NewChatClient(types.LLMConfig{ReasoningEffort: "low"})
+	if got := client.ReasoningEffort(); got != "low" {
+		t.Fatalf("constructor value must be the initial effort, got %q", got)
+	}
+	if got := client.requestOpts(nil).ReasoningEffort; got != "low" {
+		t.Fatalf("requestOpts must see the constructor value, got %q", got)
+	}
+
+	client.SetReasoningEffort("high")
+	if got := client.requestOpts(nil).ReasoningEffort; got != "high" {
+		t.Fatalf("requestOpts must see the overridden effort, got %q", got)
+	}
+
+	// 空串 = 不下发（provider 走自己的默认），必须能把一个已设的值清掉。
+	client.SetReasoningEffort("")
+	if got := client.requestOpts(nil).ReasoningEffort; got != "" {
+		t.Fatalf("empty effort must clear the wire value, got %q", got)
+	}
+}

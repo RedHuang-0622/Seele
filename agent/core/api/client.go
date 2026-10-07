@@ -32,6 +32,11 @@ type ChatClient struct {
 	strategy        ProviderStrategy // 传输层策略，nil 时通过 effectiveStrategy 自动选择
 	provider        ProviderType     // llm_config.provider: 锁死本轮消息格式，优先于 account.Provider
 	providerFilter  ProviderType     // 非空时只从 pool 获取该 provider 的账号
+	// reasoningEffort 是**运行时可变的**思考强度：`session` 档位（跟随会话 effort）
+	// 的值在构造期还不存在，所以它不能只躺在 Cfg 里。Cfg.ReasoningEffort 只作构造
+	// 期初值，运行期读值一律走 ReasoningEffort()（同一把读锁）。
+	effortMu        sync.RWMutex
+	reasoningEffort string
 }
 
 // WithAccountPool 设置账号池，返回自身以便链式调用。
@@ -103,8 +108,9 @@ func NewChatClient(cfg types.LLMConfig) *ChatClient {
 		timeout = 60
 	}
 	return &ChatClient{
-		Cfg:    cfg,
-		Client: &http.Client{Timeout: time.Duration(timeout) * time.Second},
+		Cfg:             cfg,
+		reasoningEffort: cfg.ReasoningEffort,
+		Client:          &http.Client{Timeout: time.Duration(timeout) * time.Second},
 	}
 }
 
@@ -201,7 +207,7 @@ func (c *ChatClient) Complete(ctx context.Context, messages []types.Message, too
 		apiKey = acct.APIKey
 	}
 
-	raw, err := strategy.BuildRequest(effectiveModel(c.Cfg, acct), messages, tools, false, requestOpts(c.Cfg, acct))
+	raw, err := strategy.BuildRequest(effectiveModel(c.Cfg, acct), messages, tools, false, c.requestOpts(acct))
 	if err != nil {
 		return types.Message{}, fmt.Errorf("ChatClient: build request: %w", err)
 	}
@@ -332,7 +338,7 @@ func (c *ChatClient) openStream(
 		apiKey = acct.APIKey
 	}
 
-	raw, err := strategy.BuildRequest(effectiveModel(c.Cfg, acct), messages, tools, true, requestOpts(c.Cfg, acct))
+	raw, err := strategy.BuildRequest(effectiveModel(c.Cfg, acct), messages, tools, true, c.requestOpts(acct))
 	if err != nil {
 		releaseOnError()
 		return nil, nil, fmt.Errorf("marshal stream request: %w", err)
@@ -486,6 +492,32 @@ func (c *ChatClient) completeStreamInternal(
 
 // requestOpts 从 ChatClient 配置和 Account 合并出请求级参数。
 // Account 级设置优先于全局配置。
+// SetReasoningEffort 设置发往 provider 的思考强度（wire 词表：low/medium/high/max）。
+// 空串 = 不下发，由 provider 走自己的默认。
+//
+// 线程安全：可在请求在途时调用。正在读配置的 goroutine 走同一把读锁，改值不会与
+// 它在途的请求竞争——已经发出的请求保持原样，下一次请求用新值。
+func (c *ChatClient) SetReasoningEffort(effort string) {
+	c.effortMu.Lock()
+	c.reasoningEffort = effort
+	c.effortMu.Unlock()
+}
+
+// ReasoningEffort 返回当前生效的思考强度（空串 = 不下发）。
+func (c *ChatClient) ReasoningEffort() string {
+	c.effortMu.RLock()
+	defer c.effortMu.RUnlock()
+	return c.reasoningEffort
+}
+
+// requestOpts 在包级 requestOpts 之上叠加**运行时可变的**思考强度：
+// 采样参数（max_tokens / temperature）以 Account 覆盖为准，思考强度以最新的
+// SetReasoningEffort 为准——两处覆盖语义不同，所以不合并进包级函数。
+func (c *ChatClient) requestOpts(acct *Account) RequestOptions {
+	opts := requestOpts(c.Cfg, acct)
+	opts.ReasoningEffort = c.ReasoningEffort()
+	return opts
+}
 func requestOpts(cfg types.LLMConfig, acct *Account) RequestOptions {
 	opts := RequestOptions{
 		MaxTokens:       cfg.MaxTokens,
