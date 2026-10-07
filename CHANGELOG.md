@@ -2,6 +2,37 @@
 
 ---
 
+## v0.3.4 (2026-10-08) —— `api`：reasoning_effort 真正上到 wire 且运行期可切换
+
+> **主题：把 effort 档位从「构造期常量」变成「构造期初值 + 运行期可变状态」——配置里写的强度真的出现在请求体里，且请求在途时也能改**
+
+### 🏗 01 — 让 `reasoning_effort` 真正上到 wire
+
+- `LLMConfig` 与 `RequestOptions` 增 `ReasoningEffort`；`client.requestOpts` 把 `Cfg` 的值填进 `opts`
+- openai：请求体增 `reasoning_effort`；anthropic：请求体增顶层 `output_config.effort`（官方口径，无需 beta header）
+- 空值靠 `omitempty` 整个省略，不改变既有请求形态
+- 动机：此前 `BuildRequest` 收下 `opts` 却一个字段都没读，provider 策略与调用方之间有一条静默断开
+  （`AnthropicStrategy` 读 `opts`、`OpenAIStrategy` 不读，同一件事两份行为）
+- 范围纪律：openai 侧仍不发 `max_tokens` / `temperature`（沿用既有本地预算口径，服务端按自己默认出），
+  本次只接入 `reasoning_effort`
+
+### 🏗 02 — `ChatClient` 运行期可切换强度
+
+- `ChatClient` 增 `effortMu` 保护 `reasoningEffort` 字段；`Cfg.ReasoningEffort` 降级为构造期初值，
+  运行期读值一律走 `ReasoningEffort()`（同一把读锁）
+- 新增 `SetReasoningEffort` / `ReasoningEffort`，可在请求在途时调用；空串 = 不下发
+- 两个请求入口改用 `(*ChatClient).requestOpts`，它在包级 `requestOpts` 之上叠加运行期强度
+  （采样参数仍以 `Account` 覆盖为准，语义不同故不合并）
+- 动机：session 档位（跟随会话 effort）的值在构造期还不存在；`Cfg` 是公开字段，直接改会与在途请求的读形成数据竞争
+
+### ✅ 验证
+
+- `go build ./...`、`go vet ./agent/core/api/... ./types/...` 干净；`go test ./agent/core/api/... ./types/... -count=1`、`-race` 全绿
+- `agent/core/api/strategy_effort_test.go`：两臂各钉一条——非空必上线、空必省略
+- `TestChatClientReasoningEffortIsOverridable`：钉住改值真的进 `requestOpts`，且空串能把已设的值清掉
+
+---
+
 ## v0.3.3 (2026-10-03) —— `jobs`：异步作业根能力（契约 + Manager + `jobs_manage`）
 
 > **主题：把「一次长任务」升格为框架一等对象——派发 / 观察 / 取回 / 终止 / 销项共用一份契约与同一张表；框架只给契约与管理面，派发工具与执行体留给产品**
