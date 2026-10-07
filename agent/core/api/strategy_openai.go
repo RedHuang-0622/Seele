@@ -12,21 +12,23 @@ import (
 
 // openaiCompletionRequest 对应 POST /chat/completions 的同步请求体。
 type openaiCompletionRequest struct {
-	Model       string          `json:"model"`
-	Messages    []types.Message `json:"messages"`
-	Tools       []types.Tool    `json:"tools,omitempty"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Temperature float64         `json:"temperature,omitempty"`
+	Model           string          `json:"model"`
+	Messages        []types.Message `json:"messages"`
+	Tools           []types.Tool    `json:"tools,omitempty"`
+	MaxTokens       int             `json:"max_tokens,omitempty"`
+	Temperature     float64         `json:"temperature,omitempty"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
 }
 
 // openaiStreamRequest 对应 POST /chat/completions 的流式请求体（含 stream:true）。
 type openaiStreamRequest struct {
-	Model       string          `json:"model"`
-	Messages    []types.Message `json:"messages"`
-	Tools       []types.Tool    `json:"tools,omitempty"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Temperature float64         `json:"temperature,omitempty"`
-	Stream      bool            `json:"stream"`
+	Model           string          `json:"model"`
+	Messages        []types.Message `json:"messages"`
+	Tools           []types.Tool    `json:"tools,omitempty"`
+	MaxTokens       int             `json:"max_tokens,omitempty"`
+	Temperature     float64         `json:"temperature,omitempty"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
+	Stream          bool            `json:"stream"`
 }
 
 type openaiUsage struct {
@@ -103,6 +105,9 @@ func (s *OpenAIStrategy) BuildRequest(model string, messages []types.Message, to
 		if len(tools) > 0 {
 			req.Tools = tools
 		}
+		if opts.ReasoningEffort != "" {
+			req.ReasoningEffort = opts.ReasoningEffort
+		}
 		return json.Marshal(req)
 	}
 	req := openaiCompletionRequest{
@@ -111,6 +116,9 @@ func (s *OpenAIStrategy) BuildRequest(model string, messages []types.Message, to
 	}
 	if len(tools) > 0 {
 		req.Tools = tools
+	}
+	if opts.ReasoningEffort != "" {
+		req.ReasoningEffort = opts.ReasoningEffort
 	}
 	return json.Marshal(req)
 }

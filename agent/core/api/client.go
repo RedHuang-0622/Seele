@@ -488,8 +488,9 @@ func (c *ChatClient) completeStreamInternal(
 // Account 级设置优先于全局配置。
 func requestOpts(cfg types.LLMConfig, acct *Account) RequestOptions {
 	opts := RequestOptions{
-		MaxTokens:   cfg.MaxTokens,
-		Temperature: cfg.Temperature,
+		MaxTokens:       cfg.MaxTokens,
+		Temperature:     cfg.Temperature,
+		ReasoningEffort: cfg.ReasoningEffort,
 	}
 	if acct != nil {
 		if acct.MaxTokens > 0 {

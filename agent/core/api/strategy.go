@@ -33,8 +33,9 @@ type SSEEvent struct {
 // RequestOptions 携带每次 LLM 请求的可选参数。
 // ChatClient 从 Account 或自身 Cfg 收集后传给 BuildRequest。
 type RequestOptions struct {
-	MaxTokens   int
-	Temperature float64
+	MaxTokens       int
+	Temperature     float64
+	ReasoningEffort string
 }
 
 // ProviderStrategy 处理 LLM API 传输层协议差异。

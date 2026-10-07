@@ -122,12 +122,13 @@ type AppConfig struct {
 
 // LLMConfig 对应 config.yaml 的 agent 块。
 type LLMConfig struct {
-	BaseURL     string  `yaml:"ai_url"`     // agent.ai_url
-	APIKey      string  `yaml:"ai_api_key"` // agent.ai_api_key
-	Model       string  `yaml:"ai_name"`    // agent.ai_name
-	MaxTokens   int     `yaml:"max_tokens"`
-	Timeout     int     `yaml:"timeout"`
-	Temperature float64 `yaml:"temperature"`
+	BaseURL         string  `yaml:"ai_url"`     // agent.ai_url
+	APIKey          string  `yaml:"ai_api_key"` // agent.ai_api_key
+	Model           string  `yaml:"ai_name"`    // agent.ai_name
+	MaxTokens       int     `yaml:"max_tokens"`
+	Timeout         int     `yaml:"timeout"`
+	Temperature     float64 `yaml:"temperature"`
+	ReasoningEffort string  `yaml:"reasoning_effort"`
 }
 
 // HubConfig 是 microHub 的连接配置。

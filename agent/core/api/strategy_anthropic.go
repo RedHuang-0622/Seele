@@ -14,14 +14,15 @@ type anthropicMessage struct {
 }
 
 type anthropicRequest struct {
-	Model       string             `json:"model"`
-	Messages    []anthropicMessage `json:"messages"`
-	MaxTokens   int                `json:"max_tokens"`
-	System      string             `json:"system,omitempty"`
-	Stream      bool               `json:"stream,omitempty"`
-	Temperature float64            `json:"temperature,omitempty"`
-	Tools       json.RawMessage    `json:"tools,omitempty"`
-	ToolChoice  json.RawMessage    `json:"tool_choice,omitempty"`
+	Model        string                 `json:"model"`
+	Messages     []anthropicMessage     `json:"messages"`
+	MaxTokens    int                    `json:"max_tokens"`
+	System       string                 `json:"system,omitempty"`
+	Stream       bool                   `json:"stream,omitempty"`
+	Temperature  float64                `json:"temperature,omitempty"`
+	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+	Tools        json.RawMessage        `json:"tools,omitempty"`
+	ToolChoice   json.RawMessage        `json:"tool_choice,omitempty"`
 }
 
 type anthropicContentBlock struct {
@@ -49,6 +50,11 @@ type anthropicResponse struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
+}
+
+// anthropicOutputConfig is Anthropic top-level output_config (no beta header).
+type anthropicOutputConfig struct {
+	Effort string `json:"effort"`
 }
 
 type AnthropicStrategy struct{}
@@ -435,6 +441,9 @@ func (s *AnthropicStrategy) BuildRequest(model string, messages []types.Message,
 				req.ToolChoice = json.RawMessage(`{"type":"auto"}`)
 			}
 		}
+	}
+	if opts.ReasoningEffort != "" {
+		req.OutputConfig = &anthropicOutputConfig{Effort: opts.ReasoningEffort}
 	}
 	return json.Marshal(req)
 }
