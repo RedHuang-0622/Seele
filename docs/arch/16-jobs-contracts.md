@@ -25,13 +25,14 @@
 
 - `Kind`：开放字符串。框架只解释 `KindProcess` / `KindInline`，其余（如 `worker` / `seat`）由产品注册。
 - `State`：`running` / `done` / `failed` / `killed`；终态只由执行体判定。
-- `Handle`：`a<seq>`，seq 单调，**永不落盘**。
+- `Handle`：**由产品注入的 `Namer` 命名**（`WithNamer`），框架不自造形状；铸造时携带单调 `seq`，**永不落盘**。
 - `Scope{Session, Subject}`：两个**并列字段**，不拼字符串（避免自造分隔符的转义与碰撞面）。
 - `Spec{Kind, Scope, Node, Batch, Description, Payload, Index, Dedup, OutputPath, Handle}`
-  （`Handle` 由 Manager 登记时回填，执行体经它认领自己的作业）。
+  （`Handle` 由 Manager 在登记时经 `Namer` 回填，执行体经它认领自己的作业）。
 - `Record`：只读投影（状态、退出码、归属、`OutputRef`（输出文件路径）、字节/行/游标、截断、终态摘要 ≤512B）。
 - `Manager`：`Dispatch / Declare / Start / Observe / Peek / Fetch / Complete / Kill / Done / Snapshot / Reclaim / Events / ScopeOf / RetiredState / Close`。
 - `Executor`：`Kind() Kind` + `Start(ctx, Spec, Sink) error`。
+- `Namer`：`Name(spec Spec, seq int) Handle`，**必须注入**（`WithNamer`；缺失即 `ErrNoNamer`）。
 - `Sink`：`Note` / `SignalBytes` / `Exit` / `Complete`。
 
 > `Exit` 是对设计稿三方法（`Note`/`SignalBytes`/`Complete`）的**必要补充**：
@@ -59,6 +60,19 @@
 `Peek` 与 `Fetch` 共享同一条读取实现（只差"是否提交/销项"）。`Declare` 出来的作业若既未
 `Start` 也未 `Complete`，`Kill` 会**直接**合成 `killed` 终态（没有执行体可取消，不必等一个
 永远不会回报的 goroutine）。
+
+### 2.2 命名归属（Namer）
+
+句柄是**产品的词汇**，不是框架的：同一进程里可能并存多张作业表，只有产品知道哪些命名空间
+绝不能互相混。因此框架不再自造句柄形状——Manager 用构造期注入的 `Namer`（`WithNamer`）为
+每条作业取名，`New` 对缺失注入直接拒绝（`ErrNoNamer`）。
+
+- **调用时机**：登记时恰好一次，携带该次 `Spec` 与 Manager 的单调 `seq`；**在 Manager 的锁内
+  调用**（`seq` 与插入的原子性由此成立），因此实现须廉价、并发安全、不得回调 Manager。
+- **去重命中不调用**：复用那条在跑作业的句柄。
+- **回填校验**：空句柄 → `ErrInvalidHandle`；已在册的句柄 → `ErrDuplicateHandle`。一条身份
+  不允许指向两条作业——"句柄跨表不唯一"正是静默误操作的根因（例：seelex 的 teammate 作业
+  `bteam-7`、后台工具作业 `bt-7`；在此之前两张表都铸 `a7`）。
 
 ## 3. 作用域与鉴权
 
@@ -88,7 +102,7 @@
 |---|---|
 | I-1 | 收尾恰好一次：正常退出 / 硬超时 / 被杀 / 执行体 panic 四条路都必须落到一次终态迁移 |
 | I-2 | 硬超时合成 `exit=124`、被杀合成 `exit=137`，并注记写进输出文件 |
-| I-3 | 句柄 `a<seq>`，seq 单调（禁用 `len(table)` 推——驱逐后会重号）；去重键仅 running 期间生效 |
+| I-3 | 句柄由注入的 `Namer` 在登记时命名，铸造用单调 `seq`（禁用 `len(table)` 推——驱逐后会重号）；空或已在册的命名一律拒绝；去重键仅 running 期间生效 |
 | I-4 | 记录/句柄只在内存，永不落盘 |
 | I-5 | 回收 = 作用域销毁；`Close` 取消全部在途作业 |
 | I-6 | 输出有界：超上限丢弃字节，但仍向写入方报"已消费"（不把基础设施限制伪装成命令失败） |

@@ -2,6 +2,33 @@
 
 ---
 
+## v0.3.5 (未发布) —— `jobs`：句柄命名权交给产品（Namer 注入）
+
+> **主题：把"作业叫什么名字"从框架里删掉——句柄是产品的词汇，框架只保证"登记原子 + 一条身份不对应两条作业"**
+
+### 🏗 01 — `jobs.Namer`：命名成为注入项
+
+- 新增 `jobs.Namer`（`Name(spec Spec, seq int) Handle`）与选项 `jobs.WithNamer`；构造期缺失即
+  `ErrNoNamer`（`New` 直接拒绝，不留"第一次派发才炸"的坑）
+- 删除框架自命名：`manager.register` 不再铸 `Handle("a" + seq)`，改为取注入 `Namer` 的答案；
+  调用仍在 Manager 锁内进行，`seq` 递增与插入的原子性不变
+- 新增两条回填校验：空句柄 → `ErrInvalidHandle`；已在册句柄 → `ErrDuplicateHandle`。
+  **一条身份不允许指向两条作业**——句柄跨表不唯一时，把 A 表的句柄交给 B 表的管理工具会静默命中
+  一条无关作业（这正是 seelex 侧审计到的那起静默销项）
+- 破坏性变更：`jobs.New` 现在必须带 `WithNamer`。库内调用点只有 `jobs/manager_test.go` 与
+  `jobs/builtin/manage_test.go`，已各自改为测试自带命名策略（框架不再提供任何命名默认值）
+
+### 🧩 02 — 契约文档与用例
+
+- `jobs/README.md` 增 `Naming` 一节、Usage 片段补 `WithNamer`、不变式 I-3 改写为"句柄来自注入的
+  `Namer`，登记时取一次"
+- `docs/arch/16-jobs-contracts.md`：契约清单增 `Namer`、`Handle` 条目改写、增 §2.2「命名归属」
+- 新增 `jobs/namer_test.go`：缺失注入被拒 / 命名真的决定句柄（含"调用方自填 `Spec.Handle` 被忽略"）
+  / 空名被拒且不落表 / 重名被拒且不影响已登记作业
+- `jobs_manage` 的 handle 参数说明去掉 "such as a12"（句柄形状不再是框架知识）
+
+---
+
 ## v0.3.4 (2026-10-08) —— `api`：reasoning_effort 真正上到 wire 且运行期可切换
 
 > **主题：把 effort 档位从「构造期常量」变成「构造期初值 + 运行期可变状态」——配置里写的强度真的出现在请求体里，且请求在途时也能改**

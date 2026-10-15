@@ -70,6 +70,7 @@ func (l Limits) withDefaults() Limits {
 // options is the mutable configuration assembled by Option values.
 type options struct {
 	executors       map[Kind]Executor
+	namer           Namer
 	limits          Limits
 	scopeResolver   func(context.Context) Scope
 	subjectResolver func(context.Context) string
@@ -96,6 +97,11 @@ func WithExecutor(executor Executor) Option {
 		o.executors[executor.Kind()] = executor
 	}
 }
+
+// WithNamer registers the Namer that names every job this manager registers
+// (see Namer). It is required: naming is the product's vocabulary, so there is
+// no framework default to fall back on.
+func WithNamer(namer Namer) Option { return func(o *options) { o.namer = namer } }
 
 // WithLimits overrides the resource limits.
 func WithLimits(limits Limits) Option { return func(o *options) { o.limits = limits } }

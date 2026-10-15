@@ -28,6 +28,7 @@ ships the manager and `jobs_manage`, and **no dispatcher and no executor**.
 
 ```go
 manager, err := jobs.New(
+    jobs.WithNamer(myNamer),                // product-supplied: naming is not the framework's
     jobs.WithExecutor(myProcessExecutor),   // product-supplied
     jobs.WithExecutor(myWorkerExecutor),
     jobs.WithSessionResolver(sessionKeyFromContext),
@@ -44,6 +45,34 @@ handle, err := manager.Dispatch(ctx, jobs.Spec{
     Payload:     json.RawMessage(`{"command":"go test ./..."}`),
 })
 ```
+
+## Naming
+
+A handle is the product's vocabulary, so the framework no longer invents one:
+the manager asks the `Namer` it was built with (`WithNamer`) for every handle it
+registers, passing the dispatch's `Spec` and its own monotonic `seq`. `New`
+refuses a manager without a namer (`ErrNoNamer`) — the alternative is a manager
+that can only fail later, at the first dispatch.
+
+```go
+type Namer interface {
+    Name(spec jobs.Spec, seq int) Handle
+}
+```
+
+Why the product names them: one process can hold several job tables, and only the
+product knows which namespaces must never be confused. Seelex keeps teammate jobs
+as `bteam-7` and background commands as `bt-7`; before this change both tables
+minted `a7`, so a handle from one table could be handed to the other table's
+management tool and silently act on an unrelated job.
+
+`Name` runs under the manager's lock, once per registration (the dedup path
+reuses the running job's handle and never calls it), so it must be cheap, safe
+for concurrent dispatches, and must not call back into the manager. Its answer is
+validated: an empty handle is refused with `ErrInvalidHandle`, and one that is
+already registered with `ErrDuplicateHandle` — a duplicated handle would give two
+jobs a single identity, which is exactly the defect the injection exists to
+prevent.
 
 ## Dispatch, or declare-then-start
 
@@ -106,7 +135,7 @@ Two-tier queries:
 |---|---|
 | I-1 | finalization happens exactly once, on all four paths (normal exit, hard cap, kill, executor panic) |
 | I-2 | a hard cap synthesises `exit=124` and a kill `exit=137`, and the cause is noted in the output file |
-| I-3 | handles are `a<seq>` with a monotonic counter (never `len(table)`); dedup applies only while the existing job runs |
+| I-3 | the handle is the injected `Namer`'s answer, taken once per registration with the manager's monotonic counter (never `len(table)`, which repeats after eviction); an empty or already-registered answer is refused; dedup applies only while the existing job runs |
 | I-4 | records and handles live in memory only; persisting them would leave forever-running ghost rows |
 | I-5 | reclamation is scope destruction (`Reclaim`), and `Close` cancels every live job |
 | I-6 | output is bounded; over-cap bytes are dropped while still reported as written |

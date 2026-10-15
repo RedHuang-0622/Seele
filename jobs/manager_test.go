@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -16,10 +17,14 @@ import (
 // key, so isolation tests can switch identity without a product.
 func testManager(t *testing.T, executors ...Executor) Manager {
 	t.Helper()
-	opts := make([]Option, 0, len(executors)+2)
+	opts := make([]Option, 0, len(executors)+3)
 	for _, executor := range executors {
 		opts = append(opts, WithExecutor(executor))
 	}
+	// The handle shape is a product decision, so these tests declare their own:
+	// "a<seq>" keeps the fixtures readable without the framework carrying a
+	// default it cannot justify.
+	opts = append(opts, WithNamer(testNamer{}))
 	opts = append(opts, WithScopeResolver(func(ctx context.Context) Scope {
 		scope, _ := ctx.Value(scopeKey{}).(Scope)
 		return scope
@@ -30,6 +35,18 @@ func testManager(t *testing.T, executors ...Executor) Manager {
 	}
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	return manager
+}
+
+// testNamer is the package's own naming policy: a prefix plus the registration
+// seq. It is deliberately test-local — Seele ships no naming default.
+type testNamer struct{ prefix string }
+
+func (n testNamer) Name(spec Spec, seq int) Handle {
+	prefix := n.prefix
+	if prefix == "" {
+		prefix = "a"
+	}
+	return Handle(prefix + strconv.Itoa(seq))
 }
 
 // internals exposes the concrete manager to white-box tests.

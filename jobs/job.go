@@ -60,6 +60,9 @@ func (s State) Terminal() bool {
 }
 
 // Handle identifies one dispatched job for its whole in-memory lifetime.
+// Names are the product's vocabulary, not the framework's: the manager obtains
+// every handle from the Namer it was built with (see WithNamer), so a shape
+// like "a1" is a product's choice rather than a framework default.
 // Handles are never persisted (invariant I-4): a persisted handle would leave a
 // permanently "running" ghost row after a restart.
 type Handle string
@@ -131,11 +134,12 @@ type Spec struct {
 	//
 	// Empty means the manager creates and owns <outputDir>/<handle>.log.
 	OutputPath string
-	// Handle is the job's identity, **assigned by the manager** when the job is
-	// registered. It is filled in before the executor's Start is called, so an
-	// executor that keeps a per-job side table (a process tree, a cancel hook,
-	// the raw command, an index) keys it by this value. A caller-supplied value
-	// is overwritten: the handle is proof of registration, not an input.
+	// Handle is the job's identity, **assigned by the manager's Namer** when the
+	// job is registered (see Namer and WithNamer). It is filled in before the
+	// executor's Start is called, so an executor that keeps a per-job side table
+	// (a process tree, a cancel hook, the raw command, an index) keys it by this
+	// value. A caller-supplied value is overwritten: the handle is proof of
+	// registration, not an input.
 	Handle Handle
 }
 
@@ -197,6 +201,14 @@ var (
 	ErrEmptySession  = errors.New("jobs: scope.session is required")
 	ErrEmptyDesc     = errors.New("jobs: spec.description is required")
 	ErrExecutorPanic = errors.New("jobs: executor panicked")
+	// ErrNoNamer refuses a manager built without the Namer that names its jobs.
+	ErrNoNamer = errors.New("jobs: a Namer is required")
+	// ErrInvalidHandle refuses a namer answer that cannot identify a job.
+	ErrInvalidHandle = errors.New("jobs: namer returned an empty handle")
+	// ErrDuplicateHandle refuses a namer answer that collides with a job that is
+	// already registered. Accepting it would give two jobs one identity, which is
+	// the defect the naming contract exists to prevent.
+	ErrDuplicateHandle = errors.New("jobs: namer returned an already-registered handle")
 )
 
 // CloseTimeoutDefault bounds how long Close waits for live jobs to observe

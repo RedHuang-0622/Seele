@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -116,7 +115,10 @@ type manager struct {
 	seq          int
 	closed       bool
 
-	executors       map[Kind]Executor
+	executors map[Kind]Executor
+	// namer is required (see Namer / WithNamer): the manager never invents a
+	// handle shape of its own.
+	namer           Namer
 	limits          Limits
 	scopeResolver   func(context.Context) Scope
 	subjectResolver func(context.Context) string
@@ -164,7 +166,9 @@ type run struct {
 // for the manager to be useful, but an executor-less manager is accepted: the
 // refusal then happens at Dispatch with ErrUnknownKind (which is a clearer
 // failure than a construction error for a product that registers executors
-// lazily).
+// lazily). A Namer, by contrast, is refused up front (ErrNoNamer): the manager
+// has nothing of its own to name jobs with, so a manager without one could only
+// fail later, and it would do it at the worst possible moment.
 func New(opts ...Option) (Manager, error) {
 	config := options{}
 	config.limits = DefaultLimits()
@@ -173,6 +177,9 @@ func New(opts ...Option) (Manager, error) {
 		if option != nil {
 			option(&config)
 		}
+	}
+	if config.namer == nil {
+		return nil, ErrNoNamer
 	}
 	limits := config.limits.withDefaults()
 	dir := config.outputDir
@@ -191,6 +198,7 @@ func New(opts ...Option) (Manager, error) {
 		table:           map[Handle]*run{},
 		retired:         map[Handle]State{},
 		executors:       config.executors,
+		namer:           config.namer,
 		limits:          limits,
 		scopeResolver:   config.scopeResolver,
 		subjectResolver: config.subjectResolver,
@@ -264,7 +272,20 @@ func (m *manager) register(ctx context.Context, spec Spec, start bool) (Handle, 
 		return "", nil, nil, fmt.Errorf("%w (in_flight=%d)", ErrInFlightLimit, limit)
 	}
 	m.seq++
-	handle := Handle("a" + strconv.Itoa(m.seq))
+	// The name comes from the product's Namer (see Namer). It is called under
+	// the lock, so seq and the collision check stay atomic with the insert: two
+	// concurrent dispatches can never be named off the same seq, and a namer
+	// that repeats itself is refused instead of aliasing two jobs onto one
+	// identity.
+	handle := m.namer.Name(spec, m.seq)
+	if handle == "" {
+		m.mu.Unlock()
+		return "", nil, nil, ErrInvalidHandle
+	}
+	if _, taken := m.table[handle]; taken {
+		m.mu.Unlock()
+		return "", nil, nil, fmt.Errorf("%w: %q", ErrDuplicateHandle, handle)
+	}
 	// The handle is assigned here and visible to the executor through
 	// Spec.Handle (and to every projection through Record.Handle).
 	spec.Handle = handle

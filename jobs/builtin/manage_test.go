@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ func newTestManager(t *testing.T, executor jobs.Executor) jobs.Manager {
 	t.Helper()
 	manager, err := jobs.New(
 		jobs.WithExecutor(executor),
+		jobs.WithNamer(testNamer{}),
 		jobs.WithScopeResolver(func(ctx context.Context) jobs.Scope {
 			scope, _ := ctx.Value(scopeKey{}).(jobs.Scope)
 			return scope
@@ -27,6 +29,13 @@ func newTestManager(t *testing.T, executor jobs.Executor) jobs.Manager {
 	}
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	return manager
+}
+
+// testNamer is this package's own handle policy (the framework ships none).
+type testNamer struct{}
+
+func (testNamer) Name(spec jobs.Spec, seq int) jobs.Handle {
+	return jobs.Handle("a" + strconv.Itoa(seq))
 }
 
 // call runs the jobs_manage handler and decodes the response.

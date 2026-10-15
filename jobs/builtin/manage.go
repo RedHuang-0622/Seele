@@ -28,7 +28,7 @@ const (
 // manageArguments is the tool's input.
 type manageArguments struct {
 	Op       string `json:"op" desc:"observe | fetch | kill | done" enum:"observe,fetch,kill,done"`
-	Handle   string `json:"handle,omitempty" desc:"job handle such as a12; omit it with op=observe to list the caller scope's jobs"`
+	Handle   string `json:"handle,omitempty" desc:"the handle the dispatch returned; omit it with op=observe to list the caller scope's jobs"`
 	WaitMS   int    `json:"wait_ms,omitempty" desc:"op=fetch wait budget in ms: 0 = default, negative = return immediately, above the ceiling is clamped"`
 	MaxBytes int    `json:"max_bytes,omitempty" desc:"op=fetch byte budget for this call; 0 = default"`
 }
