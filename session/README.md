@@ -22,6 +22,10 @@
 - 会话只持有调用方注入的 `Agent` 和可选 history；`agent.Agent` 只是这一接口的一种实现，不隐式创建全局 provider。
 - `ClearHistory` 仅清空当前 working view 以兼容底层 Loop；需要同时清除持久快照时使用可返回错误的 `Reset(ctx)`。
 - ReActLoop 默认不主动压缩上下文；压缩必须通过显式 Compressor 或 ContextController 装配。
+- 工具调用轮保留模型实际生成的 `content`、`reasoning_content` 与
+  `tool_calls`。三者共同构成 provider 的模型输出；下一请求必须完整复现，
+  才能命中 DeepSeek 在 model-output 结束位置建立的 cache prefix unit。正文为空
+  时保持空，不补占位。
 
 ## 并发约束
 

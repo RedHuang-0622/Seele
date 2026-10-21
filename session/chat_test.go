@@ -29,6 +29,7 @@ import (
 
 type mockLLMResponse struct {
 	content   string
+	reasoning string
 	toolCalls []types.ToolCall
 }
 
@@ -141,6 +142,12 @@ func (m *mockLLMServer) EnqueueToolCalls(tcs []types.ToolCall) {
 	m.queue = append(m.queue, mockLLMResponse{toolCalls: tcs})
 }
 
+func (m *mockLLMServer) EnqueueToolCallsWithContent(content, reasoning string, tcs []types.ToolCall) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.queue = append(m.queue, mockLLMResponse{content: content, reasoning: reasoning, toolCalls: tcs})
+}
+
 func (m *mockLLMServer) pop() mockLLMResponse {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -172,10 +179,17 @@ func (m *mockLLMServer) handler(w http.ResponseWriter, r *http.Request) {
 		"role": "assistant",
 	}
 	if len(resp.toolCalls) > 0 {
-		msg["content"] = nil
+		if resp.content == "" {
+			msg["content"] = nil
+		} else {
+			msg["content"] = resp.content
+		}
 		msg["tool_calls"] = resp.toolCalls
 	} else {
 		msg["content"] = resp.content
+	}
+	if resp.reasoning != "" {
+		msg["reasoning_content"] = resp.reasoning
 	}
 
 	if req.Stream {
@@ -187,6 +201,36 @@ func (m *mockLLMServer) handler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if resp.content != "" {
+			contentData, _ := json.Marshal(map[string]interface{}{
+				"choices": []map[string]interface{}{
+					{
+						"index": 0,
+						"delta": map[string]interface{}{
+							"content": resp.content,
+						},
+						"finish_reason": nil,
+					},
+				},
+			})
+			fmt.Fprintf(w, "data: %s\n\n", contentData)
+			flusher.Flush()
+		}
+		if resp.reasoning != "" {
+			reasoningData, _ := json.Marshal(map[string]interface{}{
+				"choices": []map[string]interface{}{
+					{
+						"index": 0,
+						"delta": map[string]interface{}{
+							"reasoning_content": resp.reasoning,
+						},
+						"finish_reason": nil,
+					},
+				},
+			})
+			fmt.Fprintf(w, "data: %s\n\n", reasoningData)
+			flusher.Flush()
+		}
 		if len(resp.toolCalls) > 0 {
 			// One SSE frame per tool call delta
 			for i, tc := range resp.toolCalls {
@@ -214,7 +258,7 @@ func (m *mockLLMServer) handler(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprintf(w, "data: %s\n\n", deltaData)
 				flusher.Flush()
 			}
-		} else {
+		} else if resp.content == "" {
 			// Text content frame
 			textData, _ := json.Marshal(map[string]interface{}{
 				"choices": []map[string]interface{}{
@@ -386,6 +430,85 @@ func TestEngine_Chat_WithToolCalls(t *testing.T) {
 		t.Fatal("Chat() with tool calls returned empty reply")
 	}
 	t.Logf("Tool call Chat reply: %q", reply)
+}
+
+// TestEngine_ChatStream_ToolCallReplaysModelOutputContent guards DeepSeek's
+// model-output cache boundary: the next request must reproduce the assistant
+// content that the provider actually generated alongside its tool calls.
+func TestEngine_ChatStream_ToolCallReplaysModelOutputContent(t *testing.T) {
+	mockSrv := newMockLLMServer()
+	defer mockSrv.Close()
+
+	a, err := newTestAgent(mockSrv.URL())
+	if err != nil {
+		t.Fatalf("agent.New() failed: %v", err)
+	}
+	defer a.Shutdown()
+
+	a.RegisterTool(
+		"echo_tool",
+		"A test tool that echoes input",
+		map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		func(context.Context, string) (string, error) { return `{"status":"ok"}`, nil },
+	)
+
+	const (
+		narration = "I will inspect the relevant file before changing it."
+		reasoning = "The requested path needs to be read first."
+	)
+	call := types.ToolCall{
+		ID:   "call_preserve_1",
+		Type: "function",
+		Function: types.ToolCallFunction{
+			Name:      "echo_tool",
+			Arguments: `{"input":"hello"}`,
+		},
+	}
+	mockSrv.EnqueueToolCallsWithContent(narration, reasoning, []types.ToolCall{call})
+	mockSrv.EnqueueText("Tool call completed successfully.")
+
+	eng := New(a)
+	reply, err := eng.ChatStream(context.Background(), "Use echo tool", func(string) {})
+	if err != nil {
+		t.Fatalf("ChatStream() with tool calls failed: %v", err)
+	}
+	if reply == "" {
+		t.Fatal("ChatStream() with tool calls returned empty reply")
+	}
+
+	history := eng.History()
+	var assistant *types.Message
+	for index := range history {
+		if history[index].Role == "assistant" && len(history[index].ToolCalls) > 0 {
+			assistant = &history[index]
+			break
+		}
+	}
+	if assistant == nil {
+		t.Fatalf("tool-call assistant missing from history: %+v", history)
+	}
+	if assistant.Content == nil || *assistant.Content != narration {
+		t.Fatalf("history assistant content = %v, want provider output %q", assistant.Content, narration)
+	}
+	if assistant.ReasoningContent != reasoning {
+		t.Fatalf("history assistant reasoning = %q, want %q", assistant.ReasoningContent, reasoning)
+	}
+
+	seen := mockSrv.Seen()
+	if len(seen) < 2 {
+		t.Fatalf("captured requests = %d, want at least 2", len(seen))
+	}
+	var replayed *types.Message
+	for index := range seen[1].Messages {
+		message := &seen[1].Messages[index]
+		if message.Role == "assistant" && len(message.ToolCalls) > 0 {
+			replayed = message
+			break
+		}
+	}
+	if replayed == nil || replayed.Content == nil || *replayed.Content != narration {
+		t.Fatalf("second request lost provider output content: %+v", replayed)
+	}
 }
 
 // TestEngine_Chat_EmptyInput verifies the engine handles an empty user

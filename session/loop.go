@@ -811,7 +811,10 @@ func (rl *ReActLoop) callLLM(ctx context.Context, tools []types.Tool, onChunk fu
 			return types.Message{}, err
 		}
 		if len(toolCalls) > 0 {
-			msg := types.Message{Role: "assistant", Content: nil, ToolCalls: toolCalls}
+			msg := types.Message{Role: "assistant", ToolCalls: toolCalls}
+			if content != "" {
+				msg.Content = &content
+			}
 			if reasoningContent != "" {
 				msg.ReasoningContent = reasoningContent
 			}

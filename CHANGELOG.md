@@ -2,6 +2,19 @@
 
 ---
 
+## v0.3.6 (2026-10-21) — `session`：工具轮保留完整模型输出
+
+- `ReActLoop.callLLM` 的流式 `tool_calls` 分支不再丢弃 assistant `content`；
+  现在与 `reasoning_content`、`tool_calls` 一起写入 working history。
+- 动机：DeepSeek 在 user input 结束和 model output 结束分别建立 cache prefix
+  unit。只保留 tool_calls 会让下一请求只能命中较小的 user-input 单元，丢掉每次
+  工具调用的 model-output 缓存。
+- 空 `content` 仍保持为空，不补占位。
+- 新增 `TestEngine_ChatStream_ToolCallReplaysModelOutputContent`：同一响应生成
+  content/reasoning/tool_calls，断言 history 与第二次 provider 请求完整复现。
+
+---
+
 ## v0.3.5 (2026-10-20) — `jobs`：句柄命名权交给产品（Namer 注入）
 
 > **主题：把"作业叫什么名字"从框架里删掉——句柄是产品的词汇，框架只保证"登记原子 + 一条身份不对应两条作业"**
